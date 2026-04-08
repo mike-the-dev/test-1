@@ -1,0 +1,2 @@
+- [Core Service Foundation](project_core_foundation.md) — What was built in the initial foundation: config, DynamoDB, Anthropic, Discord layers
+- [DynamoDB test client construction](feedback_dynamodb_test_client.md) — Use `DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" }))` in test modules; `from({} as never)` crashes at runtime

@@ -1,0 +1,1 @@
+- [Project Architecture Overview](project_architecture.md) — Discord-only entry point, DynamoDB single-item-per-session history, Anthropic SDK wrapped in service

@@ -1,0 +1,2 @@
+- [DynamoDB as-assertion handling](feedback_as_assertions.md) — how to remove banned `as` casts at DynamoDB SDK read boundaries without breaking type safety
+- [Domain type prefixing in ChatSession.ts](project_type_prefixing.md) — all types in ChatSession.ts must be prefixed with ChatSession (e.g. IdentityRecord → ChatSessionIdentityRecord)

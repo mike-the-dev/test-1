@@ -1,0 +1,1 @@
+- [Test Setup](project_test_setup.md) — NestJS Jest config, `--forceExit` usage, and current test coverage state

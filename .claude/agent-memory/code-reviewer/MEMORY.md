@@ -1,0 +1,1 @@
+- [Core Service Foundation Architecture](project_architecture.md) — Three-layer config pattern, DynamoDB/Anthropic/Discord service design, and orchestration flow decisions
