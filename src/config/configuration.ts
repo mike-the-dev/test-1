@@ -19,6 +19,11 @@ const configuration = () => ({
     botToken: process.env.DISCORD_BOT_TOKEN,
     guildId: process.env.DISCORD_GUILD_ID,
   },
+  sendgrid: {
+    apiKey: process.env.SENDGRID_API_KEY || "",
+    fromEmail: process.env.SENDGRID_FROM_EMAIL || "",
+    fromName: process.env.SENDGRID_FROM_NAME || "",
+  },
 });
 
 export default configuration;

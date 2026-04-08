@@ -10,6 +10,9 @@ export const envSchema = z.object({
   ANTHROPIC_MODEL: z.string().optional(),
   DISCORD_BOT_TOKEN: z.string().optional(),
   DISCORD_GUILD_ID: z.string().optional(),
+  SENDGRID_API_KEY: z.string().optional(),
+  SENDGRID_FROM_EMAIL: z.string().optional(),
+  SENDGRID_FROM_NAME: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
