@@ -9,13 +9,17 @@ import { validate } from "./config/env.validation";
 import { DatabaseConfigService } from "./services/database-config.service";
 import { AnthropicConfigService } from "./services/anthropic-config.service";
 import { DiscordConfigService } from "./services/discord-config.service";
+import { SendGridConfigService } from "./services/sendgrid-config.service";
 import { DynamoDBProvider } from "./providers/dynamodb.provider";
 import { AnthropicService } from "./services/anthropic.service";
 import { ChatSessionService } from "./services/chat-session.service";
-import { IdentityService } from "./services/identity.service";
 import { DiscordService } from "./services/discord.service";
+import { EmailService } from "./services/email.service";
+import { IdentityService } from "./services/identity.service";
 import { ToolRegistryService } from "./tools/tool-registry.service";
 import { SaveUserFactTool } from "./tools/save-user-fact.tool";
+import { CollectContactInfoTool } from "./tools/collect-contact-info.tool";
+import { SendEmailTool } from "./tools/send-email.tool";
 
 @Module({
   imports: [
@@ -33,12 +37,16 @@ import { SaveUserFactTool } from "./tools/save-user-fact.tool";
     DatabaseConfigService,
     AnthropicConfigService,
     DiscordConfigService,
+    SendGridConfigService,
     DynamoDBProvider,
     AnthropicService,
     ChatSessionService,
-    IdentityService,
     DiscordService,
+    EmailService,
+    IdentityService,
     SaveUserFactTool,
+    CollectContactInfoTool,
+    SendEmailTool,
     ToolRegistryService,
   ],
 })
