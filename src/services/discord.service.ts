@@ -1,5 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from "@nestjs/common";
-import { Client, GatewayIntentBits, Message } from "discord.js";
+import { Client, GatewayIntentBits, Message, Partials } from "discord.js";
+
+import { RawGatewayPacket } from "../types/Discord";
 
 import { DiscordConfigService } from "./discord-config.service";
 import { IdentityService } from "./identity.service";
@@ -20,12 +22,63 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
       ],
+      partials: [Partials.Channel, Partials.Message, Partials.User],
     });
   }
 
   async onModuleInit(): Promise<void> {
+    // discord.js v14.26.2 silently drops DM messageCreate events even with
+    // Partials.Channel/Message/User enabled. We dispatch DMs directly from the
+    // raw gateway packet as a workaround. Guild messages still flow through the
+    // normal messageCreate handler below.
+    this.client.on("raw", async (packet: RawGatewayPacket) => {
+      if (packet.t !== "MESSAGE_CREATE") {
+        return;
+      }
+      if (!packet.d || packet.d.guild_id) {
+        return;
+      }
+      if (packet.d.author?.bot) {
+        return;
+      }
+
+      const authorId = packet.d.author?.id;
+      const channelId = packet.d.channel_id;
+      const content = packet.d.content ?? "";
+
+      if (!authorId || !channelId) {
+        return;
+      }
+
+      try {
+        this.logger.debug(`Received DM [user=${authorId} channel=${channelId}]`);
+
+        const sessionUlid = await this.identityService.lookupOrCreateSession(
+          "discord",
+          authorId,
+        );
+
+        const reply = await this.chatSessionService.handleMessage(sessionUlid, content);
+
+        const user = await this.client.users.fetch(authorId);
+        await user.send(reply);
+
+        this.logger.log(`Replied to DM [user=${authorId}]`);
+      } catch (error) {
+        this.logger.error(`Failed to handle DM [user=${authorId}]`, error);
+      }
+    });
+
     this.client.on("messageCreate", async (message: Message) => {
+      // DMs are handled by the raw packet handler above. Once discord.js caches
+      // the DM channel, messageCreate will also fire for it — skip here to avoid
+      // double-processing.
+      if (!message.guildId) {
+        return;
+      }
+
       if (message.author.bot) {
         return;
       }
