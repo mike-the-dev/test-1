@@ -5,10 +5,12 @@ import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
 import { saveUserFactInputSchema } from "../validation/tool.schema";
+import { ChatToolProvider } from "./chat-tool.decorator";
 
 const USER_FACT_SK_PREFIX = "USER_FACT#";
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 
+@ChatToolProvider()
 @Injectable()
 export class SaveUserFactTool implements ChatTool {
   private readonly logger = new Logger(SaveUserFactTool.name);
@@ -68,8 +70,7 @@ export class SaveUserFactTool implements ChatTool {
     } catch (error) {
       this.logger.error(`SaveUserFactTool DynamoDB write failed [sessionUlid=${context.sessionUlid}]`, error);
 
-      const errorRecord: { message?: unknown } = error as { message?: unknown };
-      const message = typeof errorRecord.message === "string" ? errorRecord.message : "unknown error";
+      const message = error instanceof Error ? error.message : "unknown error";
 
       return { result: `Failed to save fact: ${message}`, isError: true };
     }

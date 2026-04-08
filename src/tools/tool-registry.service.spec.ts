@@ -1,6 +1,8 @@
 import { Test, TestingModule } from "@nestjs/testing";
+import { DiscoveryService, Reflector } from "@nestjs/core";
 
-import { ToolRegistryService, CHAT_TOOLS_TOKEN } from "./tool-registry.service";
+import { ToolRegistryService } from "./tool-registry.service";
+import { CHAT_TOOL_METADATA } from "./chat-tool.decorator";
 
 const TEST_CONTEXT = { sessionUlid: "01TESTSESSION0000000000000" };
 
@@ -13,6 +15,43 @@ const makeMockTool = (name: string) => {
   };
 };
 
+class FakeMetatype {}
+
+const makeDiscoveryMock = (tools: ReturnType<typeof makeMockTool>[]) => {
+  const wrappers = tools.map((tool) => {
+    return { metatype: FakeMetatype, instance: tool };
+  });
+
+  return { getProviders: jest.fn().mockReturnValue(wrappers) };
+};
+
+const makeReflectorMock = (returnValue: boolean | undefined) => {
+  return {
+    get: jest.fn((key: string, target: Function) => {
+      if (key === CHAT_TOOL_METADATA && target === FakeMetatype) {
+        return returnValue;
+      }
+
+      return undefined;
+    }),
+  };
+};
+
+const buildRegistry = async (
+  discoveryMock: ReturnType<typeof makeDiscoveryMock>,
+  reflectorMock: ReturnType<typeof makeReflectorMock>,
+): Promise<ToolRegistryService> => {
+  const module: TestingModule = await Test.createTestingModule({
+    providers: [
+      ToolRegistryService,
+      { provide: DiscoveryService, useValue: discoveryMock },
+      { provide: Reflector, useValue: reflectorMock },
+    ],
+  }).compile();
+
+  return module.get<ToolRegistryService>(ToolRegistryService);
+};
+
 describe("ToolRegistryService", () => {
   let registry: ToolRegistryService;
   let mockTool: ReturnType<typeof makeMockTool>;
@@ -20,17 +59,9 @@ describe("ToolRegistryService", () => {
   beforeEach(async () => {
     mockTool = makeMockTool("test_tool");
 
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ToolRegistryService,
-        {
-          provide: CHAT_TOOLS_TOKEN,
-          useValue: [mockTool],
-        },
-      ],
-    }).compile();
+    registry = await buildRegistry(makeDiscoveryMock([mockTool]), makeReflectorMock(true));
 
-    registry = module.get<ToolRegistryService>(ToolRegistryService);
+    registry.onModuleInit();
   });
 
   describe("getAll", () => {
@@ -90,24 +121,37 @@ describe("ToolRegistryService", () => {
     });
 
     it("selects the correct tool when multiple tools are registered", async () => {
+      const firstTool = makeMockTool("first_tool");
       const secondTool = makeMockTool("second_tool");
 
-      const moduleWithTwo: TestingModule = await Test.createTestingModule({
-        providers: [
-          ToolRegistryService,
-          {
-            provide: CHAT_TOOLS_TOKEN,
-            useValue: [mockTool, secondTool],
-          },
-        ],
-      }).compile();
+      const registryWithTwo = await buildRegistry(
+        makeDiscoveryMock([firstTool, secondTool]),
+        makeReflectorMock(true),
+      );
 
-      const registryWithTwo = moduleWithTwo.get<ToolRegistryService>(ToolRegistryService);
+      registryWithTwo.onModuleInit();
 
       await registryWithTwo.execute("second_tool", {}, TEST_CONTEXT);
 
       expect(secondTool.execute).toHaveBeenCalledTimes(1);
-      expect(mockTool.execute).not.toHaveBeenCalled();
+      expect(firstTool.execute).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("onModuleInit", () => {
+    it("logs a warning when no tools are discovered", async () => {
+      const emptyRegistry = await buildRegistry(
+        { getProviders: jest.fn().mockReturnValue([]) },
+        makeReflectorMock(undefined),
+      );
+
+      const warnSpy = jest.spyOn(emptyRegistry["logger"], "warn");
+
+      emptyRegistry.onModuleInit();
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        "No chat tools discovered. Verify that tool classes are decorated with @ChatToolProvider() and registered in AppModule providers.",
+      );
     });
   });
 });

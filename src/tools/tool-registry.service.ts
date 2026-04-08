@@ -1,14 +1,57 @@
-import { Injectable, Inject, Logger } from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { DiscoveryService, Reflector } from "@nestjs/core";
 
 import { ChatTool, ChatToolDefinition, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
-
-export const CHAT_TOOLS_TOKEN = "CHAT_TOOLS";
+import { CHAT_TOOL_METADATA } from "./chat-tool.decorator";
 
 @Injectable()
-export class ToolRegistryService {
+export class ToolRegistryService implements OnModuleInit {
   private readonly logger = new Logger(ToolRegistryService.name);
 
-  constructor(@Inject(CHAT_TOOLS_TOKEN) private readonly tools: ChatTool[]) {}
+  private tools: ChatTool[] = [];
+
+  constructor(
+    private readonly discoveryService: DiscoveryService,
+    private readonly reflector: Reflector,
+  ) {}
+
+  onModuleInit(): void {
+    const wrappers = this.discoveryService.getProviders();
+
+    const toolWrappers = wrappers.filter((wrapper) => {
+      const metatype = wrapper.metatype;
+
+      if (metatype === null || metatype === undefined) {
+        return false;
+      }
+
+      return this.reflector.get(CHAT_TOOL_METADATA, metatype) === true;
+    });
+
+    const discovered = toolWrappers.map((wrapper) => {
+      return wrapper.instance;
+    });
+
+    const validInstances = discovered.filter((instance) => {
+      return instance !== null && instance !== undefined;
+    });
+
+    this.tools = validInstances;
+
+    const count = this.tools.length;
+    const toolNames = this.tools.map((tool) => {
+      return tool.name;
+    });
+    const names = toolNames.join(", ");
+
+    this.logger.log(`Discovered chat tools [count=${count} names=${names}]`);
+
+    if (count === 0) {
+      this.logger.warn(
+        "No chat tools discovered. Verify that tool classes are decorated with @ChatToolProvider() and registered in AppModule providers.",
+      );
+    }
+  }
 
   getAll(): ChatTool[] {
     return this.tools;

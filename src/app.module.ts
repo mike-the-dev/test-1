@@ -1,5 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { DiscoveryModule } from "@nestjs/core";
+
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
 import configuration from "./config/configuration";
@@ -12,7 +14,7 @@ import { AnthropicService } from "./services/anthropic.service";
 import { ChatSessionService } from "./services/chat-session.service";
 import { IdentityService } from "./services/identity.service";
 import { DiscordService } from "./services/discord.service";
-import { ToolRegistryService, CHAT_TOOLS_TOKEN } from "./tools/tool-registry.service";
+import { ToolRegistryService } from "./tools/tool-registry.service";
 import { SaveUserFactTool } from "./tools/save-user-fact.tool";
 
 @Module({
@@ -23,6 +25,7 @@ import { SaveUserFactTool } from "./tools/save-user-fact.tool";
       load: [configuration],
       validate,
     }),
+    DiscoveryModule,
   ],
   controllers: [AppController],
   providers: [
@@ -36,13 +39,6 @@ import { SaveUserFactTool } from "./tools/save-user-fact.tool";
     IdentityService,
     DiscordService,
     SaveUserFactTool,
-    {
-      provide: CHAT_TOOLS_TOKEN,
-      useFactory: (saveUserFact: SaveUserFactTool) => {
-        return [saveUserFact];
-      },
-      inject: [SaveUserFactTool],
-    },
     ToolRegistryService,
   ],
 })
