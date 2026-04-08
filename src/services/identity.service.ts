@@ -1,4 +1,4 @@
-import { Injectable, Inject } from "@nestjs/common";
+import { Injectable, Inject, Logger } from "@nestjs/common";
 import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ulid } from "ulid";
 
@@ -23,6 +23,8 @@ function isConditionalCheckFailed(error: unknown): boolean {
 
 @Injectable()
 export class IdentityService {
+  private readonly logger = new Logger(IdentityService.name);
+
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
@@ -31,6 +33,8 @@ export class IdentityService {
   async lookupOrCreateSession(source: string, externalId: string): Promise<string> {
     const table = this.databaseConfig.conversationsTable;
     const pk = `${IDENTITY_PK_PREFIX}${source}#${externalId}`;
+
+    this.logger.debug(`Looking up identity [source=${source} externalId=${externalId}]`);
 
     const existingResult = await this.dynamoDb.send(
       new GetCommand({
@@ -42,10 +46,15 @@ export class IdentityService {
     if (existingResult.Item) {
       const sessionUlid: string = existingResult.Item.sessionUlid;
 
+      this.logger.debug(`Found existing session [sessionUlid=${sessionUlid} source=${source} externalId=${externalId}]`);
+
       return sessionUlid;
     }
 
     const sessionUlid = ulid();
+
+    this.logger.log(`Creating new session [sessionUlid=${sessionUlid} source=${source} externalId=${externalId}]`);
+
     const now = new Date().toISOString();
 
     const identityItem = {
@@ -75,10 +84,10 @@ export class IdentityService {
         const winnerSessionUlid = winnerResult.Item?.sessionUlid;
 
         if (!winnerSessionUlid) {
-          throw new Error(
-            "Identity record missing after ConditionalCheckFailedException — possible concurrent delete",
-          );
+          throw new Error("Identity record missing after ConditionalCheckFailedException — possible concurrent delete");
         }
+
+        this.logger.warn(`Race condition recovered on identity creation [source=${source} externalId=${externalId} sessionUlid=${winnerSessionUlid}]`);
 
         return winnerSessionUlid;
       }

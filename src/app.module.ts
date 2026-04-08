@@ -12,6 +12,8 @@ import { AnthropicService } from "./services/anthropic.service";
 import { ChatSessionService } from "./services/chat-session.service";
 import { IdentityService } from "./services/identity.service";
 import { DiscordService } from "./services/discord.service";
+import { ToolRegistryService, CHAT_TOOLS_TOKEN } from "./tools/tool-registry.service";
+import { SaveUserFactTool } from "./tools/save-user-fact.tool";
 
 @Module({
   imports: [
@@ -33,6 +35,15 @@ import { DiscordService } from "./services/discord.service";
     ChatSessionService,
     IdentityService,
     DiscordService,
+    SaveUserFactTool,
+    {
+      provide: CHAT_TOOLS_TOKEN,
+      useFactory: (saveUserFact: SaveUserFactTool) => {
+        return [saveUserFact];
+      },
+      inject: [SaveUserFactTool],
+    },
+    ToolRegistryService,
   ],
 })
 export class AppModule {}

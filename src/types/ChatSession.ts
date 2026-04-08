@@ -1,8 +1,30 @@
+import { ChatContentBlock } from "./ChatContent";
+
 export type ChatSessionRole = "user" | "assistant";
 
+/**
+ * In-memory representation of a chat message.
+ * Content is a plain string for legacy/simple messages or a parsed block array
+ * for messages involving tool use.
+ */
 export interface ChatSessionMessage {
   role: ChatSessionRole;
-  content: string;
+  content: string | ChatContentBlock[];
+}
+
+/** Parsed content block array — the structured form of stored message content. */
+export type ChatSessionMessageContent = ChatContentBlock[];
+
+/** A message whose content is always a structured block array. Used for new messages in the persistence loop. */
+export interface ChatSessionNewMessage {
+  role: ChatSessionRole;
+  content: ChatContentBlock[];
+}
+
+/** Slim response shape returned from AnthropicService to ChatSessionService. */
+export interface ChatAnthropicResponse {
+  content: ChatContentBlock[];
+  stop_reason: string;
 }
 
 export interface ChatSessionIdentityRecord {
