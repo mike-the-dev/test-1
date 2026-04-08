@@ -40,3 +40,25 @@ Metadata UpdateExpression pattern: `SET createdAt = if_not_exists(createdAt, :no
 History query: `ScanIndexForward: false, Limit: 50`, then reverse array in code for chronological order before passing to Anthropic.
 
 Adding a new frontend channel requires only: implement `lookupOrCreateSession("web", userId)` in a new controller/gateway + call `chatSessionService.handleMessage(sessionUlid, content)`. No changes to ChatSessionService.
+
+## Tool Use Architecture (Phase 1)
+
+Multi-provider DI pattern for tools:
+- `CHAT_TOOLS_TOKEN = "CHAT_TOOLS"` injection token in `tool-registry.service.ts`
+- Each tool registered via `{ provide: CHAT_TOOLS_TOKEN, useClass: ..., multi: true }` OR via `useFactory` + `inject` if the tool needs NestJS DI (SaveUserFactTool uses useFactory pattern in AppModule — see app.module.ts)
+- `ToolRegistryService` receives `@Inject(CHAT_TOOLS_TOKEN) private readonly tools: ChatTool[]`
+- Adding a Phase 2 tool: create file, register in AppModule via useFactory — zero changes to ToolRegistryService or ChatSessionService
+
+Tool loop protocol (Anthropic):
+- `stop_reason: "tool_use"` → execute all tool_use blocks, build ONE user message with ALL tool_result blocks (tool_results only, no text prefix), append, repeat
+- `stop_reason: "end_turn"` → break loop
+- `MAX_TOOL_LOOP_ITERATIONS = 10` safeguard
+- All new messages (initial user, each assistant, each tool_result user) tracked in `newMessages[]` for bulk DynamoDB persist after loop
+
+DynamoDB content serialization:
+- New messages stored as `JSON.stringify(ChatContentBlock[])` in the `content` field
+- Legacy plain-string items handled by try/catch around JSON.parse; on failure wrap as `[{ type: "text", text: rawContent }]`
+
+USER_FACT items: `PK=CHAT_SESSION#<sessionUlid>`, `SK=USER_FACT#<key>`, `value=<value>`, `updatedAt` — PutCommand overwrites, no history kept (by design).
+
+Domain type `ChatAnthropicResponse { content: ChatContentBlock[]; stop_reason: string }` lives in `src/types/ChatSession.ts` — bridges AnthropicService and ChatSessionService without coupling to SDK types.

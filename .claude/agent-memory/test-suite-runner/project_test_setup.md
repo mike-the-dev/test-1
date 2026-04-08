@@ -10,4 +10,4 @@ Test command: `npm test -- --forceExit` (plain `npm test` works too; `--forceExi
 
 **How to apply:** Always pass `--forceExit` when running the full suite to get a clean exit. If the open-handles warning appears without it, note it but don't treat it as a failure.
 
-As of 2026-04-07 (post-refactor): 3 test suites, 14 tests total. Refactor introduced channel-agnostic chat-session.service.ts, identity.service.ts, renamed IdentityRecord → ChatSessionIdentityRecord, and removed `as` casts in favor of variable type annotations. All 14 tests passed cleanly after this refactor.
+As of 2026-04-08 (post-Phase-1-tool-use): 5 test suites, 38 tests total. New suites added for SaveUserFactTool and ToolRegistryService. ERROR-level log output in test runs is expected — tests for SaveUserFactTool and ToolRegistryService intentionally exercise error paths (DynamoDB failure, unexpected tool crash) and the NestJS Logger emits them to stderr. These are not test failures. All 38 tests pass cleanly.

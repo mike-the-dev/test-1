@@ -18,6 +18,8 @@ PK (String) + SK (String) keys. Three item types:
 - `CHAT_SESSION#<sessionUlid>` / `MESSAGE#<messageUlid>` — one item per message
 - `CHAT_SESSION#<sessionUlid>` / `METADATA` — session metadata
 
+**DynamoDB USER_FACT items (added in Phase 1 tool use):** `CHAT_SESSION#<sessionUlid>` / `USER_FACT#<key>` — key-value facts about the user saved by the `save_user_fact` tool. PutCommand overwrites on same key (facts are updatable by design).
+
 **Previous DynamoDB model (pre-refactor):** Single item per session keyed by `sessionId`
 (partition key only, no SK), containing a `messages` array. Table must be recreated with
 PK+SK composite keys before the refactor can be tested.

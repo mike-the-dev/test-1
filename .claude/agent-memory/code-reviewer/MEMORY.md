@@ -1,1 +1,2 @@
 - [Core Service Foundation Architecture](project_architecture.md) — Three-layer config pattern, DynamoDB/Anthropic/Discord service design, and orchestration flow decisions
+- [Structured Logging Conventions](project_logging_conventions.md) — Logger field placement, log level gating, privacy rules, key=value format, and try/catch re-throw pattern
