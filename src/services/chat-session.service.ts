@@ -1,11 +1,12 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
-import { DynamoDBDocumentClient, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { AnthropicService } from "./anthropic.service";
 import { DatabaseConfigService } from "./database-config.service";
 import { ToolRegistryService } from "../tools/tool-registry.service";
+import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ChatSessionMessageRecord, ChatSessionNewMessage } from "../types/ChatSession";
 import { ChatContentBlock, ChatToolResultContentBlock, ChatToolUseContentBlock } from "../types/ChatContent";
 
@@ -14,8 +15,7 @@ const MAX_HISTORY_MESSAGES = 50;
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const MESSAGE_SK_PREFIX = "MESSAGE#";
 const METADATA_SK = "METADATA";
-const SYSTEM_PROMPT =
-  "You are a helpful AI assistant with access to tools for saving information about the user. Use tools when appropriate, and respond naturally otherwise.";
+const DEFAULT_AGENT_NAME = "lead_capture";
 
 function buildUserTextMessage(text: string): ChatSessionNewMessage {
   return { role: "user", content: [{ type: "text", text }] };
@@ -46,6 +46,7 @@ export class ChatSessionService {
     private readonly anthropicService: AnthropicService,
     private readonly databaseConfig: DatabaseConfigService,
     private readonly toolRegistry: ToolRegistryService,
+    private readonly agentRegistry: AgentRegistryService,
   ) {}
 
   async handleMessage(sessionUlid: string, userMessage: string): Promise<string> {
@@ -54,6 +55,38 @@ export class ChatSessionService {
       const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
 
       this.logger.debug(`Handling message [sessionUlid=${sessionUlid}]`);
+
+      const metadataResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: table,
+          Key: { PK: sessionPk, SK: METADATA_SK },
+        }),
+      );
+
+      const rawAgentName: string | undefined = metadataResult.Item?.agentName;
+      const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
+
+      let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
+
+      if (resolvedAgent === null) {
+        this.logger.warn(`Agent not found, falling back to default [sessionUlid=${sessionUlid} agentName=${storedAgentName}]`);
+
+        resolvedAgent = this.agentRegistry.getByName(DEFAULT_AGENT_NAME);
+      }
+
+      if (resolvedAgent === null) {
+        throw new Error("AgentRegistryService has no lead_capture agent registered. This is a misconfiguration.");
+      }
+
+      const agent = resolvedAgent;
+
+      const allDefinitions = this.toolRegistry.getDefinitions();
+
+      const filteredDefinitions = allDefinitions.filter((def) => {
+        return agent.allowedToolNames.includes(def.name);
+      });
+
+      this.logger.log(`Agent resolved [sessionUlid=${sessionUlid} agentName=${agent.name} toolCount=${filteredDefinitions.length}]`);
 
       const historyResult = await this.dynamoDb.send(
         new QueryCommand({
@@ -91,8 +124,6 @@ export class ChatSessionService {
 
       const messages = [...history, newUserMessage];
 
-      const toolDefinitions = this.toolRegistry.getDefinitions();
-
       const newMessages = [newUserMessage];
 
       let iteration = 0;
@@ -104,7 +135,7 @@ export class ChatSessionService {
           `Calling Anthropic [sessionUlid=${sessionUlid} iteration=${iteration} historySize=${messages.length}]`,
         );
 
-        const response = await this.anthropicService.sendMessage([...messages], toolDefinitions, SYSTEM_PROMPT);
+        const response = await this.anthropicService.sendMessage([...messages], filteredDefinitions, agent.systemPrompt);
 
         const assistantMessage = buildAssistantMessage(response.content);
 
@@ -133,6 +164,12 @@ export class ChatSessionService {
 
         const toolResultBlocks = await Promise.all(
           toolUseBlocks.map(async (block) => {
+            if (!agent.allowedToolNames.includes(block.name)) {
+              this.logger.warn(`Tool not in agent allowlist [sessionUlid=${sessionUlid} agentName=${agent.name} toolName=${block.name}]`);
+
+              return buildToolResultBlock(block.id, `Tool not available for this agent: ${block.name}`, true);
+            }
+
             const executionResult = await this.toolRegistry.execute(block.name, block.input, { sessionUlid });
 
             return buildToolResultBlock(block.id, executionResult.result, executionResult.isError);

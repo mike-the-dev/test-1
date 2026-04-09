@@ -2,6 +2,7 @@ import { Test, TestingModule } from "@nestjs/testing";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   DynamoDBDocumentClient,
+  GetCommand,
   PutCommand,
   QueryCommand,
   UpdateCommand,
@@ -13,6 +14,7 @@ import { AnthropicService } from "./anthropic.service";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
 import { ToolRegistryService } from "../tools/tool-registry.service";
+import { AgentRegistryService } from "../agents/agent-registry.service";
 
 const TABLE_NAME = "test-conversations-table";
 
@@ -29,6 +31,17 @@ const mockToolRegistry = {
   execute: jest.fn(),
 };
 
+const mockAgentRegistry = {
+  getByName: jest.fn(),
+};
+
+const STUB_AGENT = {
+  name: "lead_capture",
+  description: "Test agent",
+  systemPrompt: "test prompt",
+  allowedToolNames: ["save_user_fact", "collect_contact_info", "send_email"],
+};
+
 const END_TURN_RESPONSE = {
   content: [{ type: "text", text: "Hello from assistant" }],
   stop_reason: "end_turn",
@@ -43,6 +56,9 @@ describe("ChatSessionService", () => {
     jest.clearAllMocks();
 
     mockToolRegistry.getDefinitions.mockReturnValue([]);
+    mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
+
+    ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture" } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,6 +78,10 @@ describe("ChatSessionService", () => {
         {
           provide: ToolRegistryService,
           useValue: mockToolRegistry,
+        },
+        {
+          provide: AgentRegistryService,
+          useValue: mockAgentRegistry,
         },
       ],
     }).compile();
@@ -416,7 +436,7 @@ describe("ChatSessionService", () => {
 
       const [, calledTools] = mockAnthropicService.sendMessage.mock.calls[0];
 
-      expect(calledTools).toBe(fakeDefs);
+      expect(calledTools).toEqual(fakeDefs);
     });
   });
 });

@@ -30,7 +30,7 @@ export class IdentityService {
     private readonly databaseConfig: DatabaseConfigService,
   ) {}
 
-  async lookupOrCreateSession(source: string, externalId: string): Promise<string> {
+  async lookupOrCreateSession(source: string, externalId: string, defaultAgentName: string): Promise<string> {
     const table = this.databaseConfig.conversationsTable;
     const pk = `${IDENTITY_PK_PREFIX}${source}#${externalId}`;
 
@@ -110,11 +110,12 @@ export class IdentityService {
         TableName: table,
         Key: { PK: sessionPk, SK: METADATA_SK },
         UpdateExpression:
-          "SET createdAt = if_not_exists(createdAt, :now), lastMessageAt = :now, #src = if_not_exists(#src, :source)",
+          "SET createdAt = if_not_exists(createdAt, :now), lastMessageAt = :now, #src = if_not_exists(#src, :source), agentName = if_not_exists(agentName, :agentName)",
         ExpressionAttributeNames: { "#src": "source" },
         ExpressionAttributeValues: {
           ":now": metadataItem.createdAt,
           ":source": metadataItem.source,
+          ":agentName": defaultAgentName,
         },
       }),
     );

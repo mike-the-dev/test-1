@@ -50,7 +50,7 @@ describe("IdentityService", () => {
         },
       });
 
-      const result = await service.lookupOrCreateSession("discord", "123456789");
+      const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
 
       expect(result).toBe(existingSessionUlid);
     });
@@ -65,7 +65,7 @@ describe("IdentityService", () => {
         },
       });
 
-      await service.lookupOrCreateSession("discord", "123456789");
+      await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
 
       const putCalls = ddbMock.commandCalls(PutCommand);
 
@@ -76,7 +76,7 @@ describe("IdentityService", () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
       ddbMock.on(PutCommand).resolves({});
 
-      const result = await service.lookupOrCreateSession("discord", "987654321");
+      const result = await service.lookupOrCreateSession("discord", "987654321", "lead_capture");
 
       expect(result).toMatch(/^[0-9A-Z]{26}$/);
 
@@ -95,7 +95,7 @@ describe("IdentityService", () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
       ddbMock.on(PutCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "123456789");
+      await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
 
       const getCalls = ddbMock.commandCalls(GetCommand);
 
@@ -124,7 +124,7 @@ describe("IdentityService", () => {
 
       ddbMock.on(PutCommand).rejects(conditionalError);
 
-      const result = await service.lookupOrCreateSession("discord", "111111111");
+      const result = await service.lookupOrCreateSession("discord", "111111111", "lead_capture");
 
       expect(result).toBe(winnerSessionUlid);
     });
@@ -134,7 +134,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      const result = await service.lookupOrCreateSession("discord", "555555555");
+      const result = await service.lookupOrCreateSession("discord", "555555555", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
@@ -148,6 +148,23 @@ describe("IdentityService", () => {
       expect(metadataUpdate.ExpressionAttributeNames?.["#src"]).toBe("source");
     });
 
+    it("writes agentName to the METADATA UpdateCommand on a cache miss", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("discord", "777777777", "lead_capture");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      expect(updateCalls).toHaveLength(1);
+
+      const metadataUpdate = updateCalls[0].args[0].input;
+
+      expect(metadataUpdate.ExpressionAttributeValues?.[":agentName"]).toBe("lead_capture");
+      expect(metadataUpdate.UpdateExpression).toContain("agentName");
+    });
+
     it("does not issue an UpdateCommand on a cache hit", async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
@@ -158,7 +175,7 @@ describe("IdentityService", () => {
         },
       });
 
-      await service.lookupOrCreateSession("discord", "123456789");
+      await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
@@ -173,7 +190,7 @@ describe("IdentityService", () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
       ddbMock.on(PutCommand).rejects(networkError);
 
-      await expect(service.lookupOrCreateSession("discord", "999999999")).rejects.toThrow(
+      await expect(service.lookupOrCreateSession("discord", "999999999", "lead_capture")).rejects.toThrow(
         "Network failure",
       );
     });

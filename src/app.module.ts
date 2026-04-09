@@ -20,6 +20,8 @@ import { ToolRegistryService } from "./tools/tool-registry.service";
 import { SaveUserFactTool } from "./tools/save-user-fact.tool";
 import { CollectContactInfoTool } from "./tools/collect-contact-info.tool";
 import { SendEmailTool } from "./tools/send-email.tool";
+import { AgentRegistryService } from "./agents/agent-registry.service";
+import { LeadCaptureAgent } from "./agents/lead-capture.agent";
 
 @Module({
   imports: [
@@ -48,6 +50,8 @@ import { SendEmailTool } from "./tools/send-email.tool";
     CollectContactInfoTool,
     SendEmailTool,
     ToolRegistryService,
+    LeadCaptureAgent,
+    AgentRegistryService,
   ],
 })
 export class AppModule {}

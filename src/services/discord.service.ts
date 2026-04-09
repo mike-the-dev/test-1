@@ -7,6 +7,8 @@ import { DiscordConfigService } from "./discord-config.service";
 import { IdentityService } from "./identity.service";
 import { ChatSessionService } from "./chat-session.service";
 
+const DISCORD_DEFAULT_AGENT_NAME = "lead_capture";
+
 @Injectable()
 export class DiscordService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DiscordService.name);
@@ -58,6 +60,7 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
         const sessionUlid = await this.identityService.lookupOrCreateSession(
           "discord",
           authorId,
+          DISCORD_DEFAULT_AGENT_NAME,
         );
 
         const reply = await this.chatSessionService.handleMessage(sessionUlid, content);
@@ -92,6 +95,7 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
         const sessionUlid = await this.identityService.lookupOrCreateSession(
           "discord",
           authorId,
+          DISCORD_DEFAULT_AGENT_NAME,
         );
 
         const reply = await this.chatSessionService.handleMessage(sessionUlid, message.content);
