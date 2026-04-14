@@ -13,7 +13,7 @@ export class SendEmailTool implements ChatTool {
   readonly name = "send_email";
 
   readonly description =
-    "Send an email to a user. Use this only after you have collected the user's email address (e.g. via collect_contact_info) and confirmed they want to receive an email. Provide the recipient email, a clear subject, and an HTML body. Do not use this tool without explicit user consent.";
+    "Send an email to a user. Provide the recipient email, a clear subject, and an HTML body.";
 
   readonly inputSchema: ChatToolInputSchema = {
     type: "object",
@@ -51,19 +51,20 @@ export class SendEmailTool implements ChatTool {
         to: parseResult.data.to,
         subject: parseResult.data.subject,
         body: parseResult.data.body,
+        sessionUlid: context.sessionUlid,
       });
 
       this.logger.log(`Email sent [sessionUlid=${context.sessionUlid} messageId=${result.messageId}]`);
 
       return { result: `Email sent successfully. Message ID: ${result.messageId}` };
     } catch (error) {
-      this.logger.error(
-        `send_email failed [sessionUlid=${context.sessionUlid} errorType=${error instanceof Error ? error.name : "unknown"}]`,
-      );
+      const errorRecord: { name?: unknown; message?: unknown } = error !== null && error !== undefined ? error : {};
+      const errorName = String(errorRecord.name ?? "unknown");
+      const errorMessage = String(errorRecord.message ?? "unknown error");
 
-      const message = error instanceof Error ? error.message : "unknown error";
+      this.logger.error(`send_email failed [sessionUlid=${context.sessionUlid} errorType=${errorName}]`);
 
-      return { result: `Failed to send email: ${message}`, isError: true };
+      return { result: `Failed to send email: ${errorMessage}`, isError: true };
     }
   }
 }

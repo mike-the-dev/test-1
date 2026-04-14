@@ -22,6 +22,8 @@ import { CollectContactInfoTool } from "./tools/collect-contact-info.tool";
 import { SendEmailTool } from "./tools/send-email.tool";
 import { AgentRegistryService } from "./agents/agent-registry.service";
 import { LeadCaptureAgent } from "./agents/lead-capture.agent";
+import { EmailReplyService } from "./services/email-reply.service";
+import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
 
 @Module({
   imports: [
@@ -33,7 +35,7 @@ import { LeadCaptureAgent } from "./agents/lead-capture.agent";
     }),
     DiscoveryModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, SendgridWebhookController],
   providers: [
     AppService,
     DatabaseConfigService,
@@ -52,6 +54,7 @@ import { LeadCaptureAgent } from "./agents/lead-capture.agent";
     ToolRegistryService,
     LeadCaptureAgent,
     AgentRegistryService,
+    EmailReplyService,
   ],
 })
 export class AppModule {}

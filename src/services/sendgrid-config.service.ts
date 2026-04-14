@@ -16,4 +16,8 @@ export class SendGridConfigService {
   get fromName(): string {
     return this.configService.get<string>("sendgrid.fromName", { infer: true }) ?? "";
   }
+
+  get replyDomain(): string {
+    return this.configService.get<string>("sendgrid.replyDomain", { infer: true }) ?? "";
+  }
 }

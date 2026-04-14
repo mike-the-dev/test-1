@@ -13,6 +13,13 @@ export const envSchema = z.object({
   SENDGRID_API_KEY: z.string().optional(),
   SENDGRID_FROM_EMAIL: z.string().optional(),
   SENDGRID_FROM_NAME: z.string().optional(),
+  SENDGRID_REPLY_DOMAIN: z
+    .string()
+    .optional()
+    .transform((value) => (value ? value.replace(/^@/, "") : value))
+    .refine((value) => value === undefined || value === "" || /^[^\s@]+\.[^\s@]+$/.test(value), {
+      message: "SENDGRID_REPLY_DOMAIN must be a valid domain (e.g. reply.example.com), not an email address",
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;
