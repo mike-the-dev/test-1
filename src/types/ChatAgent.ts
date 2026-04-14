@@ -4,6 +4,7 @@
  */
 export interface ChatAgent {
   readonly name: string;
+  readonly displayName?: string;
   readonly description: string;
   readonly systemPrompt: string;
   readonly allowedToolNames: readonly string[];

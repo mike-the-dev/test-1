@@ -1,3 +1,3 @@
 - [DynamoDB as-assertion handling](feedback_as_assertions.md) — how to remove banned `as` casts at DynamoDB SDK read boundaries without breaking type safety
-- [Domain type prefixing in ChatSession.ts](project_type_prefixing.md) — all types in ChatSession.ts must be prefixed with ChatSession (e.g. IdentityRecord → ChatSessionIdentityRecord)
+- [Domain type prefixing in types files](project_type_prefixing.md) — all types in src/types/<Domain>.ts must be prefixed with the domain name (ChatSession, EmailReply, etc.)
 - [Test mock typing without as-assertions](feedback_test_mock_typing.md) — use `ReturnType<typeof factoryFn>` and inferred return types to avoid `as jest.Mock` casts

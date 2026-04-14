@@ -8,6 +8,8 @@ import { ChatAgentProvider } from "./chat-agent.decorator";
 export class LeadCaptureAgent implements ChatAgent {
   readonly name = "lead_capture";
 
+  readonly displayName = "Lead Capture Assistant";
+
   readonly description = "Collects visitor contact information and sends a confirmation email summarizing the collected details.";
 
   readonly systemPrompt = `You are a professional lead capture assistant. You collect visitor contact information and send a confirmation email. That is your entire job.

@@ -24,6 +24,8 @@ import { AgentRegistryService } from "./agents/agent-registry.service";
 import { LeadCaptureAgent } from "./agents/lead-capture.agent";
 import { EmailReplyService } from "./services/email-reply.service";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
+import { WebChatController } from "./controllers/web-chat.controller";
+import { OriginAllowlistService } from "./services/origin-allowlist.service";
 
 @Module({
   imports: [
@@ -35,7 +37,7 @@ import { SendgridWebhookController } from "./controllers/sendgrid-webhook.contro
     }),
     DiscoveryModule,
   ],
-  controllers: [AppController, SendgridWebhookController],
+  controllers: [AppController, SendgridWebhookController, WebChatController],
   providers: [
     AppService,
     DatabaseConfigService,
@@ -55,6 +57,7 @@ import { SendgridWebhookController } from "./controllers/sendgrid-webhook.contro
     LeadCaptureAgent,
     AgentRegistryService,
     EmailReplyService,
+    OriginAllowlistService,
   ],
 })
 export class AppModule {}

@@ -25,6 +25,10 @@ const configuration = () => ({
     fromName: process.env.SENDGRID_FROM_NAME || "",
     replyDomain: process.env.SENDGRID_REPLY_DOMAIN || "",
   },
+  webChat: {
+    corsAllowAll: process.env.WEB_CHAT_CORS_ALLOW_ALL === "true",
+    domainGsiName: process.env.DYNAMODB_ACCOUNTS_DOMAIN_GSI_NAME || "GSI1",
+  },
 });
 
 export default configuration;

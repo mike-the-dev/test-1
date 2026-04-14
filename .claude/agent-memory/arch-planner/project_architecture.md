@@ -1,12 +1,27 @@
 ---
 name: Project Architecture Overview
-description: Core architecture of ai-chat-session-api — NestJS Discord bot backed by DynamoDB and Anthropic, no HTTP entry points for chat flow
+description: Core architecture of ai-chat-session-api — NestJS multi-transport chatbot (Discord + Email) backed by DynamoDB and Anthropic
 type: project
 ---
 
-Discord.js is the sole entry point (not HTTP). `DiscordService` listens for `messageCreate`
-events and delegates to `ChatSessionService`, which loads conversation history from DynamoDB,
-calls Anthropic, and persists messages. No controllers are needed for the chat flow.
+Three transport layers exist: `DiscordService` (messageCreate events), `SendgridWebhookController`
+(`POST /webhooks/sendgrid/inbound`), and `WebChatController` (`POST /chat/web/sessions` and
+`POST /chat/web/messages`, M0). All delegate to `ChatSessionService.handleMessage(sessionUlid, text)`
+and ship the result back over the originating channel. Adding a fourth transport means a new
+controller + service that calls `ChatSessionService` — no other files need changing.
+
+**M0 web chat additions:** `OriginAllowlistService` performs GSI1 Query (`KeyConditionExpression =
+"GSI1PK = :pk"`, `:pk = "DOMAIN#<host>"`) against the same DynamoDB table to check whether an
+Origin is an allowed client domain. Reuses `DYNAMO_DB_CLIENT` provider. In-memory TTL cache
+(`Map<string, { allowed: boolean; expiresAt: number }>`) — 5 min positive, 1 min negative.
+Dynamic CORS wired in `main.ts` via `app.get(OriginAllowlistService)` before `app.enableCors()`.
+`AgentRegistryService.getByName()` returns `null` for unknown agents (not an exception).
+
+**Phase 4 email reply loop:** Outbound emails use `<sessionUlid>@<replyDomain>` as `From:`.
+Replies route back via DNS MX → SendGrid Inbound Parse → webhook. `EmailReplyService` handles
+all inbound logic: ULID extraction, idempotency (DynamoDB conditional PutCommand on
+`EMAIL_INBOUND#<messageId>` / `METADATA`), sender validation against `USER_CONTACT_INFO`,
+quoted-reply stripping, dispatch to `ChatSessionService`, and outbound reply via `EmailService`.
 
 Config system: Zod env schema (`src/config/env.schema.ts`) → configuration factory
 (`src/config/configuration.ts`) → typed config services (one per domain: DatabaseConfigService,
@@ -29,8 +44,14 @@ decision to use Discord as the entry point (not HTTP) drives the entire service 
 The channel-agnostic refactor decouples Discord from session identity so other frontends
 (web, Slack, etc.) can share the same session infrastructure.
 
-**How to apply:** When planning new features, check whether they are Discord-triggered or
-require a new HTTP surface. The current architecture has no HTTP controllers for chat — adding
-one would be an intentional architectural expansion, not the default. All new session-related
-DB access must go through IdentityService (for external ID → ULID mapping) and ChatSessionService
-(for history read/write) — never direct DynamoDB calls from channel adapters.
+**USER_CONTACT_INFO record shape (verified from collect-contact-info.tool.ts):**
+`PK: CHAT_SESSION#<sessionUlid>` / `SK: USER_CONTACT_INFO`. Attributes stored with full
+camelCase names: `firstName`, `lastName`, `email`, `phone`, `company`, `updatedAt`, `createdAt`.
+The two-letter aliases (`fn`, `em`, etc.) are DynamoDB expression aliases only — not stored names.
+
+**How to apply:** When planning new features, check which transport they arrive on and model
+the controller/service after the Discord or email transport-layer pattern. All session DB access
+goes through `ChatSessionService` (history) and `IdentityService` (external ID → ULID). The
+`isConditionalCheckFailed` helper pattern lives in both `identity.service.ts` and
+`email-reply.service.ts` — mirror it exactly (including the local `as` cast) when writing new
+DynamoDB conditional-check code.
