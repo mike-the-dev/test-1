@@ -29,3 +29,6 @@ export const sendEmailInputSchema = z.object({
 });
 
 export type SendEmailInput = z.infer<typeof sendEmailInputSchema>;
+
+export const listServicesInputSchema = z.object({}).strict();
+export type ListServicesInput = z.infer<typeof listServicesInputSchema>;

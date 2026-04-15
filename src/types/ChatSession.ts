@@ -49,4 +49,5 @@ export interface ChatSessionMetadataRecord {
   lastMessageAt: string;
   source: string;
   agentName?: string;
+  accountUlid?: string;
 }

@@ -16,6 +16,7 @@ export interface ChatToolDefinition {
 /** Context passed into a tool's execute method. */
 export interface ChatToolExecutionContext {
   sessionUlid: string;
+  accountUlid?: string;
 }
 
 /** The result returned by a tool's execute method. */

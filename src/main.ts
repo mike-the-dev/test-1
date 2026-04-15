@@ -27,8 +27,8 @@ async function bootstrap() {
         return;
       }
 
-      const allowed = await originAllowlistService.isAllowed(origin);
-      callback(null, allowed);
+      const accountUlid = await originAllowlistService.resolveAccountForOrigin(origin);
+      callback(null, accountUlid !== null);
     },
   });
 

@@ -1,6 +1,6 @@
 ---
 name: Project Architecture Overview
-description: Core architecture of ai-chat-session-api — NestJS multi-transport chatbot (Discord + Email) backed by DynamoDB and Anthropic
+description: Discord-only entry point, DynamoDB single-item-per-session history, Anthropic SDK wrapped in service
 type: project
 ---
 

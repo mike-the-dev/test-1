@@ -1,9 +1,10 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, InternalServerErrorException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 
 import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ChatSessionService } from "../services/chat-session.service";
 import { IdentityService } from "../services/identity.service";
+import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import { createSessionSchema, sendMessageSchema } from "../validation/web-chat.schema";
 import { WebChatController } from "./web-chat.controller";
@@ -11,6 +12,8 @@ import { WebChatController } from "./web-chat.controller";
 const VALID_GUEST_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const VALID_SESSION_ULID = "01BX5ZZKBKACTAV9WEVGEMMVS1";
 const AGENT_NAME = "lead_capture";
+const ACCOUNT_ULID = "01ACCOUNTULID00000000000000";
+const ORIGIN = "https://example.com";
 
 const mockIdentityService = {
   lookupOrCreateSession: jest.fn(),
@@ -24,11 +27,17 @@ const mockAgentRegistry = {
   getByName: jest.fn(),
 };
 
+const mockOriginAllowlistService = {
+  resolveAccountForOrigin: jest.fn(),
+};
+
 describe("WebChatController", () => {
   let controller: WebChatController;
 
   beforeEach(async () => {
     jest.clearAllMocks();
+
+    mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WebChatController],
@@ -36,6 +45,7 @@ describe("WebChatController", () => {
         { provide: IdentityService, useValue: mockIdentityService },
         { provide: ChatSessionService, useValue: mockChatSessionService },
         { provide: AgentRegistryService, useValue: mockAgentRegistry },
+        { provide: OriginAllowlistService, useValue: mockOriginAllowlistService },
       ],
     }).compile();
 
@@ -47,7 +57,7 @@ describe("WebChatController", () => {
       mockAgentRegistry.getByName.mockReturnValue(null);
 
       await expect(
-        controller.createSession({ agentName: "unknown_agent", guestUlid: VALID_GUEST_ULID }),
+        controller.createSession(ORIGIN, { agentName: "unknown_agent", guestUlid: VALID_GUEST_ULID }),
       ).rejects.toThrow(BadRequestException);
 
       expect(mockIdentityService.lookupOrCreateSession).not.toHaveBeenCalled();
@@ -60,10 +70,10 @@ describe("WebChatController", () => {
       });
       mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
 
-      const result = await controller.createSession({ agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
+      const result = await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
 
       expect(result).toEqual({ sessionUlid: VALID_SESSION_ULID, displayName: "Lead Capture Assistant" });
-      expect(mockIdentityService.lookupOrCreateSession).toHaveBeenCalledWith("web", VALID_GUEST_ULID, AGENT_NAME);
+      expect(mockIdentityService.lookupOrCreateSession).toHaveBeenCalledWith("web", VALID_GUEST_ULID, AGENT_NAME, ACCOUNT_ULID);
     });
 
     it("falls back to agent.name when displayName is not set", async () => {
@@ -73,7 +83,7 @@ describe("WebChatController", () => {
       });
       mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
 
-      const result = await controller.createSession({ agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
+      const result = await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
 
       expect(result.displayName).toBe(AGENT_NAME);
     });
@@ -86,6 +96,47 @@ describe("WebChatController", () => {
       ).toThrow(BadRequestException);
 
       expect(mockIdentityService.lookupOrCreateSession).not.toHaveBeenCalled();
+    });
+
+    it("passes resolved accountUlid to IdentityService when origin resolves successfully", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: AGENT_NAME,
+        displayName: "Lead Capture Assistant",
+      });
+      mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
+      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
+
+      await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
+
+      expect(mockIdentityService.lookupOrCreateSession).toHaveBeenCalledWith(
+        "web",
+        VALID_GUEST_ULID,
+        AGENT_NAME,
+        ACCOUNT_ULID,
+      );
+    });
+
+    it("throws InternalServerErrorException when resolveAccountForOrigin returns null", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: AGENT_NAME,
+        displayName: "Lead Capture Assistant",
+      });
+      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(null);
+
+      await expect(
+        controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID }),
+      ).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it("throws InternalServerErrorException when origin header is missing (undefined)", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: AGENT_NAME,
+        displayName: "Lead Capture Assistant",
+      });
+
+      await expect(
+        controller.createSession(undefined as unknown as string, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID }),
+      ).rejects.toThrow(InternalServerErrorException);
     });
   });
 

@@ -65,6 +65,7 @@ export class ChatSessionService {
 
       const rawAgentName: string | undefined = metadataResult.Item?.agentName;
       const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
+      const accountUlid = metadataResult.Item?.accountUlid;
 
       let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
 
@@ -170,7 +171,7 @@ export class ChatSessionService {
               return buildToolResultBlock(block.id, `Tool not available for this agent: ${block.name}`, true);
             }
 
-            const executionResult = await this.toolRegistry.execute(block.name, block.input, { sessionUlid });
+            const executionResult = await this.toolRegistry.execute(block.name, block.input, { sessionUlid, accountUlid });
 
             return buildToolResultBlock(block.id, executionResult.result, executionResult.isError);
           }),

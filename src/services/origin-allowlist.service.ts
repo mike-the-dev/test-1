@@ -24,19 +24,19 @@ export class OriginAllowlistService {
     this.gsiName = this.configService.get<string>("webChat.domainGsiName", { infer: true }) ?? "GSI1";
   }
 
-  async isAllowed(origin: string): Promise<boolean> {
+  async resolveAccountForOrigin(origin: string): Promise<string | null> {
     const host = this.normalizeOrigin(origin);
 
     if (host === null) {
       this.logger.debug(`Origin check: denied (malformed) [origin omitted]`);
-      return false;
+      return null;
     }
 
     const cached = this.cache.get(host);
 
     if (cached !== undefined && Date.now() < cached.expiresAt) {
-      this.logger.debug(`Origin check: cache hit [host=${host} allowed=${cached.allowed}]`);
-      return cached.allowed;
+      this.logger.debug(`Origin check: cache hit [host=${host} accountUlid=${cached.accountUlid ?? "null"}]`);
+      return cached.accountUlid;
     }
 
     const tableName = this.databaseConfig.conversationsTable;
@@ -62,17 +62,32 @@ export class OriginAllowlistService {
       );
 
       const account = result.Items?.[0];
-      const allowed = Boolean(account && account.status?.is_active === true);
 
-      this.cache.set(host, { allowed, expiresAt: Date.now() + (allowed ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS) });
+      if (!account || account.status?.is_active !== true) {
+        this.cache.set(host, { accountUlid: null, expiresAt: Date.now() + NEGATIVE_TTL_MS });
+        this.logger.debug(`Origin check: denied [host=${host} accountUlid=null]`);
+        return null;
+      }
 
-      this.logger.debug(`Origin check: query result [host=${host} allowed=${allowed}]`);
+      let accountUlid: string | null;
 
-      return allowed;
+      if (account.PK.startsWith("A#")) {
+        accountUlid = account.PK.slice(2);
+      } else {
+        this.logger.warn(`Origin check: PK missing A# prefix [host=${host}]`);
+        this.cache.set(host, { accountUlid: null, expiresAt: Date.now() + NEGATIVE_TTL_MS });
+        return null;
+      }
+
+      this.cache.set(host, { accountUlid, expiresAt: Date.now() + POSITIVE_TTL_MS });
+
+      this.logger.debug(`Origin check: resolved [host=${host} accountUlid=${accountUlid}]`);
+
+      return accountUlid;
     } catch (error: unknown) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
-      this.logger.error(`Origin check: DynamoDB error [host=${host} errorName=${errorName}]`);
-      return false;
+      this.logger.error(`Origin check: DynamoDB error [errorType=${errorName}]`);
+      return null;
     }
   }
 

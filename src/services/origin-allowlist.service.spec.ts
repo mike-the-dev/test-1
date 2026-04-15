@@ -9,6 +9,7 @@ import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
 
 const TABLE_NAME = "test-table";
+const ACCOUNT_ULID = "01KDNMGKTP23M8TJ0FRW70WYRT";
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
 
@@ -52,128 +53,151 @@ describe("OriginAllowlistService", () => {
   });
 
   describe("active / inactive / missing status cases (locked)", () => {
-    it("returns true for active account and caches with positive TTL", async () => {
+    it("returns accountUlid for active account and caches with positive TTL", async () => {
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ entity: "ACCOUNT", status: { is_active: true } }],
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: `A#${ACCOUNT_ULID}` }],
       });
 
       const dateSpy = jest.spyOn(Date, "now");
       const now = 1_000_000;
       dateSpy.mockReturnValue(now);
 
-      const result = await service.isAllowed("https://example.com");
+      const result = await service.resolveAccountForOrigin("https://example.com");
 
-      expect(result).toBe(true);
-
-      // Second call must not hit DynamoDB (cache hit)
-      ddbMock.reset();
-      const result2 = await service.isAllowed("https://example.com");
-      expect(result2).toBe(true);
-      expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
-    });
-
-    it("returns false for inactive account and caches with negative TTL", async () => {
-      ddbMock.on(QueryCommand).resolves({
-        Items: [{ entity: "ACCOUNT", status: { is_active: false } }],
-      });
-
-      const result = await service.isAllowed("https://inactive.example.com");
-
-      expect(result).toBe(false);
+      expect(result).toBe(ACCOUNT_ULID);
 
       // Second call must not hit DynamoDB (cache hit)
       ddbMock.reset();
-      const result2 = await service.isAllowed("https://inactive.example.com");
-      expect(result2).toBe(false);
+      const result2 = await service.resolveAccountForOrigin("https://example.com");
+      expect(result2).toBe(ACCOUNT_ULID);
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
 
-    it("returns false when account is found but status field is missing entirely", async () => {
+    it("returns null for inactive account and caches with negative TTL", async () => {
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ entity: "ACCOUNT" }],
+        Items: [{ entity: "ACCOUNT", status: { is_active: false }, PK: `A#${ACCOUNT_ULID}` }],
       });
 
-      const result = await service.isAllowed("https://nostatus.example.com");
+      const result = await service.resolveAccountForOrigin("https://inactive.example.com");
 
-      expect(result).toBe(false);
+      expect(result).toBeNull();
+
+      // Second call must not hit DynamoDB (cache hit)
+      ddbMock.reset();
+      const result2 = await service.resolveAccountForOrigin("https://inactive.example.com");
+      expect(result2).toBeNull();
+      expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
 
-    it("returns false when non-account entity returned (defensive — FilterExpression should prevent this)", async () => {
+    it("returns null when account is found but status field is missing entirely", async () => {
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ entity: "SESSION" }],
+        Items: [{ entity: "ACCOUNT", PK: `A#${ACCOUNT_ULID}` }],
       });
 
-      const result = await service.isAllowed("https://session.example.com");
+      const result = await service.resolveAccountForOrigin("https://nostatus.example.com");
 
-      expect(result).toBe(false);
+      expect(result).toBeNull();
     });
 
-    it("returns false and caches with negative TTL when zero items returned", async () => {
+    it("returns null when non-account entity returned (defensive — FilterExpression should prevent this)", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ entity: "SESSION", PK: "S#something" }],
+      });
+
+      const result = await service.resolveAccountForOrigin("https://session.example.com");
+
+      expect(result).toBeNull();
+    });
+
+    it("returns null and caches with negative TTL when zero items returned", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      const result = await service.isAllowed("https://zero.example.com");
+      const result = await service.resolveAccountForOrigin("https://zero.example.com");
 
-      expect(result).toBe(false);
+      expect(result).toBeNull();
 
       // Second call must not hit DynamoDB (cache hit)
       ddbMock.reset();
-      const result2 = await service.isAllowed("https://zero.example.com");
-      expect(result2).toBe(false);
+      const result2 = await service.resolveAccountForOrigin("https://zero.example.com");
+      expect(result2).toBeNull();
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
 
-    it("returns false and does NOT write to cache when DynamoDB throws", async () => {
+    it("returns null and does NOT write to cache when DynamoDB throws", async () => {
       const dbError = Object.assign(new Error("Service unavailable"), { name: "ServiceUnavailableException" });
       ddbMock.on(QueryCommand).rejects(dbError);
 
-      const result = await service.isAllowed("https://error.example.com");
+      const result = await service.resolveAccountForOrigin("https://error.example.com");
 
-      expect(result).toBe(false);
+      expect(result).toBeNull();
 
       // Next request must retry DynamoDB (no cache entry written)
       ddbMock.reset();
       ddbMock.on(QueryCommand).resolves({ Items: [] });
-      await service.isAllowed("https://error.example.com");
+      await service.resolveAccountForOrigin("https://error.example.com");
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
+    });
+
+    it("extracts ULID by stripping the A# prefix from PK", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: `A#${ACCOUNT_ULID}` }],
+      });
+
+      const result = await service.resolveAccountForOrigin("https://strip-prefix.example.com");
+
+      expect(result).toBe(ACCOUNT_ULID);
+    });
+
+    it("returns null and logs a warning when PK is missing the A# prefix", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: "BROKEN_NO_PREFIX" }],
+      });
+
+      const warnSpy = jest.spyOn((service as unknown as { logger: { warn: jest.Mock } }).logger, "warn");
+
+      const result = await service.resolveAccountForOrigin("https://broken-prefix.example.com");
+
+      expect(result).toBeNull();
+      expect(warnSpy).toHaveBeenCalled();
     });
   });
 
   describe("cache TTL behavior", () => {
     it("treats a positive cache entry as a hit before expiry", async () => {
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ entity: "ACCOUNT", status: { is_active: true } }],
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: `A#${ACCOUNT_ULID}` }],
       });
 
       const dateSpy = jest.spyOn(Date, "now");
       dateSpy.mockReturnValue(1_000_000);
 
-      await service.isAllowed("https://ttl-positive.example.com");
+      await service.resolveAccountForOrigin("https://ttl-positive.example.com");
 
       // Still before expiry
       dateSpy.mockReturnValue(1_000_000 + 4 * 60 * 1000);
       ddbMock.reset();
 
-      const result = await service.isAllowed("https://ttl-positive.example.com");
-      expect(result).toBe(true);
+      const result = await service.resolveAccountForOrigin("https://ttl-positive.example.com");
+      expect(result).toBe(ACCOUNT_ULID);
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
 
     it("re-queries DynamoDB after positive TTL expires", async () => {
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ entity: "ACCOUNT", status: { is_active: true } }],
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: `A#${ACCOUNT_ULID}` }],
       });
 
       const dateSpy = jest.spyOn(Date, "now");
       dateSpy.mockReturnValue(1_000_000);
 
-      await service.isAllowed("https://expired-positive.example.com");
+      await service.resolveAccountForOrigin("https://expired-positive.example.com");
 
       // After positive TTL (5 min)
       dateSpy.mockReturnValue(1_000_000 + 5 * 60 * 1000 + 1);
       ddbMock.reset();
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://expired-positive.example.com");
+      await service.resolveAccountForOrigin("https://expired-positive.example.com");
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
     });
 
@@ -183,14 +207,14 @@ describe("OriginAllowlistService", () => {
       const dateSpy = jest.spyOn(Date, "now");
       dateSpy.mockReturnValue(1_000_000);
 
-      await service.isAllowed("https://expired-negative.example.com");
+      await service.resolveAccountForOrigin("https://expired-negative.example.com");
 
       // After negative TTL (1 min)
       dateSpy.mockReturnValue(1_000_000 + 1 * 60 * 1000 + 1);
       ddbMock.reset();
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://expired-negative.example.com");
+      await service.resolveAccountForOrigin("https://expired-negative.example.com");
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(1);
     });
   });
@@ -199,7 +223,7 @@ describe("OriginAllowlistService", () => {
     it("strips scheme from origin", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://example.com");
+      await service.resolveAccountForOrigin("https://example.com");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeValues![":pk"]).toBe("DOMAIN#example.com");
@@ -208,7 +232,7 @@ describe("OriginAllowlistService", () => {
     it("lowercases the host", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://Shop.Example.Com");
+      await service.resolveAccountForOrigin("https://Shop.Example.Com");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeValues![":pk"]).toBe("DOMAIN#shop.example.com");
@@ -217,16 +241,16 @@ describe("OriginAllowlistService", () => {
     it("strips port from origin", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://example.com:443");
+      await service.resolveAccountForOrigin("https://example.com:443");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeValues![":pk"]).toBe("DOMAIN#example.com");
     });
 
-    it("returns false for malformed origin without querying DynamoDB", async () => {
-      const result = await service.isAllowed("not-a-url");
+    it("returns null for malformed origin without querying DynamoDB", async () => {
+      const result = await service.resolveAccountForOrigin("not-a-url");
 
-      expect(result).toBe(false);
+      expect(result).toBeNull();
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
   });
@@ -238,7 +262,7 @@ describe("OriginAllowlistService", () => {
 
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await customService.isAllowed("https://gsiname.example.com");
+      await customService.resolveAccountForOrigin("https://gsiname.example.com");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("MyCustomGSI");
@@ -247,7 +271,7 @@ describe("OriginAllowlistService", () => {
     it("uses 'GSI1' when config service returns the default value", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://defaultgsi.example.com");
+      await service.resolveAccountForOrigin("https://defaultgsi.example.com");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.IndexName).toBe("GSI1");
@@ -256,7 +280,7 @@ describe("OriginAllowlistService", () => {
     it("uses ExpressionAttributeNames to alias hyphenated GSI1-PK attribute and entity field", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://attrnames.example.com");
+      await service.resolveAccountForOrigin("https://attrnames.example.com");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeNames).toEqual({
@@ -268,7 +292,7 @@ describe("OriginAllowlistService", () => {
     it("uses correct ExpressionAttributeValues for pk and account filter", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
 
-      await service.isAllowed("https://values.example.com");
+      await service.resolveAccountForOrigin("https://values.example.com");
 
       const calls = ddbMock.commandCalls(QueryCommand);
       expect(calls[0].args[0].input.ExpressionAttributeValues).toEqual({

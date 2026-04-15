@@ -1,4 +1,4 @@
 export interface OriginAllowlistCacheEntry {
-  allowed: boolean;
+  accountUlid: string | null;
   expiresAt: number;
 }

@@ -194,5 +194,54 @@ describe("IdentityService", () => {
         "Network failure",
       );
     });
+
+    it("writes accountUlid to METADATA UpdateCommand when provided on session creation", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("web", "guest-111", "shopping_assistant", "01ACCOUNTULID00000000000000");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      expect(updateCalls).toHaveLength(1);
+
+      const metadataUpdate = updateCalls[0].args[0].input;
+
+      expect(metadataUpdate.ExpressionAttributeValues?.[":accountUlid"]).toBe("01ACCOUNTULID00000000000000");
+      expect(metadataUpdate.UpdateExpression).toContain("accountUlid");
+    });
+
+    it("does not write accountUlid to METADATA UpdateCommand when the parameter is omitted", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("discord", "guest-222", "lead_capture");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      expect(updateCalls).toHaveLength(1);
+
+      const metadataUpdate = updateCalls[0].args[0].input;
+
+      expect(metadataUpdate.UpdateExpression).not.toContain("accountUlid");
+      expect(metadataUpdate.ExpressionAttributeValues).not.toHaveProperty(":accountUlid");
+    });
+
+    it("existing session lookup with accountUlid passed — no UpdateCommand call at all", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          PK: "IDENTITY#web#existing-guest",
+          SK: "IDENTITY#web#existing-guest",
+          sessionUlid: "01EXISTING00000000000000000",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      });
+
+      await service.lookupOrCreateSession("web", "existing-guest", "shopping_assistant", "01ACCOUNTULID00000000000000");
+
+      expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+    });
   });
 });

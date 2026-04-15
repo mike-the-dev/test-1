@@ -58,7 +58,7 @@ describe("ChatSessionService", () => {
     mockToolRegistry.getDefinitions.mockReturnValue([]);
     mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
 
-    ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture" } });
+    ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture", accountUlid: "01ACCOUNTULID00000000000000" } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -364,7 +364,7 @@ describe("ChatSessionService", () => {
       expect(mockToolRegistry.execute).toHaveBeenCalledWith(
         "save_user_fact",
         { key: "employer", value: "Acme Corp" },
-        { sessionUlid: "01TESTSESSION0000000000000" },
+        { sessionUlid: "01TESTSESSION0000000000000", accountUlid: "01ACCOUNTULID00000000000000" },
       );
       expect(result).toBe("Got it, I have saved that you work at Acme Corp.");
     });
@@ -401,6 +401,73 @@ describe("ChatSessionService", () => {
       expect(toolResultMessage.content[0].tool_use_id).toBe("toolu_01");
       expect(toolResultMessage.content[1].type).toBe("tool_result");
       expect(toolResultMessage.content[1].tool_use_id).toBe("toolu_02");
+    });
+
+    it("passes accountUlid from session metadata to ToolRegistry.execute context", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "done" });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_01",
+              name: "save_user_fact",
+              input: { key: "k", value: "v" },
+            },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+        });
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      expect(mockToolRegistry.execute).toHaveBeenCalledWith(
+        "save_user_fact",
+        { key: "k", value: "v" },
+        { sessionUlid: "01TESTSESSION0000000000000", accountUlid: "01ACCOUNTULID00000000000000" },
+      );
+    });
+
+    it("passes undefined accountUlid when metadata has no accountUlid attribute", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture" } });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "done" });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            {
+              type: "tool_use",
+              id: "toolu_01",
+              name: "save_user_fact",
+              input: { key: "k", value: "v" },
+            },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+        });
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      expect(mockToolRegistry.execute).toHaveBeenCalledWith(
+        "save_user_fact",
+        { key: "k", value: "v" },
+        { sessionUlid: "01TESTSESSION0000000000000", accountUlid: undefined },
+      );
     });
 
     it("exits the tool loop after MAX_TOOL_LOOP_ITERATIONS and logs a warning", async () => {

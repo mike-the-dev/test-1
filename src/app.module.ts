@@ -22,6 +22,8 @@ import { CollectContactInfoTool } from "./tools/collect-contact-info.tool";
 import { SendEmailTool } from "./tools/send-email.tool";
 import { AgentRegistryService } from "./agents/agent-registry.service";
 import { LeadCaptureAgent } from "./agents/lead-capture.agent";
+import { ShoppingAssistantAgent } from "./agents/shopping-assistant.agent";
+import { ListServicesTool } from "./tools/list-services.tool";
 import { EmailReplyService } from "./services/email-reply.service";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
 import { WebChatController } from "./controllers/web-chat.controller";
@@ -53,8 +55,10 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     SaveUserFactTool,
     CollectContactInfoTool,
     SendEmailTool,
+    ListServicesTool,
     ToolRegistryService,
     LeadCaptureAgent,
+    ShoppingAssistantAgent,
     AgentRegistryService,
     EmailReplyService,
     OriginAllowlistService,
