@@ -36,6 +36,39 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-16 — M3 shipped + iframe-origin deploy-blocker fix
+
+**Goal:** Ship the browser-side half of the chat stack (a Next.js widget project deployed to `chat.instapaytient.com` in its own repo) and resolve the iframe-origin/CORS gap that would have silently broken production on first deploy.
+
+**What changed in this repo:**
+- `POST /chat/web/sessions` now accepts an optional `hostDomain` body field. When present, it is used for account resolution instead of the browser's `Origin` header. Solves the fundamental browser-security constraint that iframe JavaScript gets the iframe's own origin on `fetch()` calls, never the parent page's — so the parent's domain has to flow through as data, not via the Origin header.
+- New env var `WEB_CHAT_WIDGET_ORIGINS` — comma-separated list of trusted widget deployment origins (`https://chat.instapaytient.com` in prod, `http://localhost:3000` in dev). Bypasses the GSI-based customer-practice allowlist at CORS-check time because the widget's own origin isn't and never will be a practice domain.
+- `OriginAllowlistService.normalizeOrigin` made permissive — accepts both full origins (`http://localhost:3000`) and bare hostnames (`localhost`, `shop.example.com`). Prepending `https://` when no scheme is present lets one code path serve both CORS middleware (full Origin) and the controller's hostDomain-based lookup (bare host). Previously threw on bare hostnames, which is how the iframe/widget integration manifested as a 500.
+- 6 new specs across the controller and allowlist service covering the new paths.
+- Suite: 12 suites / 153 tests passing (up from 148 pre-session).
+
+**What was built in the widget repo (separate codebase, noted for the record):**
+- Next.js 15 App Router + HeroUI v3 + Tailwind v4 scaffold.
+- `/embed` route — the iframe chat UI, consuming the existing `/chat/web/*` endpoints. Markdown-sanitized rendering with automatic checkout-URL detection that renders a prominent "Open checkout" CTA.
+- `/widget.js` route handler — serves a vanilla-JS embed script (~2 KB gzipped) with a single `<script>` tag integration. Reads `document.currentScript.src` to derive its own origin at runtime so dev and prod both work without config. Mints/persists the client-side guest ULID, reads `window.location.hostname` from the parent page, passes both to the iframe as query params.
+- Iframe `createSession` call includes `hostDomain` in the body, completing the round-trip.
+- 24/24 tests pass, production build clean, full end-to-end live-validated via a local sandbox HTML page served from a throwaway `python3 -m http.server`.
+
+**Decisions worth remembering:**
+- **The Origin header is browser-stamped and immutable.** An iframe's fetch always carries the iframe's origin, never the parent page's. This is a security feature of the web, not a bug. Any widget that needs to know the host page's domain MUST pass it as data — URL param, body field, or header. Industry standard: every mature widget (Intercom, Stripe, Drift, etc.) does this via `data-*` attributes or `window.xxx = {...}` config objects.
+- **Two separate concerns, two separate mechanisms.** CORS trusts the widget's own deployment origin. Account resolution uses the body's `hostDomain` to find the right practice. Keeping these split is simpler than trying to conflate them through a single GSI lookup keyed on whatever origin shape the browser happened to send.
+- **Do NOT dual-write to the abandoned-cart table from the agent.** Considered having `create_guest_cart` write an abandoned-cart record to trigger the store's existing recovery flow; rejected. "Abandoned cart" is a specific business concept (user walked away from checkout) and polluting that table would corrupt analytics, misfire recovery emails, and distort retargeting. Better to teach the front-end middleware a new URL-param path than to lie about the data. The `?guestId=...&cartId=...` URL contract is what the middleware now reads to bypass cookie-minting and load our pre-written guest cart.
+- **Accept HeroUI's 181 KB iframe bundle cost.** Industry peer widgets (Intercom, Drift, Zendesk) are 300–400 KB+ and load on page load, not lazily. Ours is below average for the category AND loads on-demand after a user clicks the bubble — so it never touches the host page's Lighthouse score. Premature optimization here costs tested accessibility and consistency with the future admin dashboard (which will also be HeroUI). Revisit only if real user telemetry shows sluggishness.
+- **Bare-hostname parsing is a widening, not a breakage.** `normalizeOrigin` now accepts both `http://host:port` and bare `host` shapes, normalizing both to the same GSI key. Forgiving to any caller; no behavior regression for CORS middleware's full-origin inputs.
+
+**Next:**
+- **CSS / UX polish** on the iframe — positioning, bubble visual, shadows, spacing. Tailwind tweaks only, no HeroUI swap.
+- **Deploy infrastructure** — Vercel project for `chat.instapaytient.com`, DNS, prod `NEXT_PUBLIC_CHAT_API_URL`, set `WEB_CHAT_WIDGET_ORIGINS=https://chat.instapaytient.com` on the backend, onboard the first pilot practice's domain record in the accounts table.
+- **Hardening follow-up (flagged at M1):** scope `externalId` by origin in the web controller (`externalId = "<host>:<guestUlid>"`) to close the cross-origin session-hijack edge case. One-line change.
+- **Cleanup nit (flagged at M1):** `chat-session.service.ts` line 247 still passes a raw error object to `logger.error` instead of `error.name`. Pre-existing, still deferred.
+
+---
+
 ## 2026-04-15 — M2: Guest cart creation + checkout URL handoff
 
 **Goal:** Ship the final link of the shopping_assistant flow — after the visitor commits to one or more services, the agent writes a guest cart to DynamoDB (looking up or creating the underlying customer record in the process), constructs a checkout URL that the Instapaytient front-end can load directly into step two, and presents it to the visitor as a clickable link.
