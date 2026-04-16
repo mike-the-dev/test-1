@@ -4,7 +4,9 @@ import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
-import { ChatSessionIdentityRecord, ChatSessionMetadataRecord } from "../types/ChatSession";
+import { ChatSessionIdentityRecord, ChatSessionMetadataRecord, ChatSessionPointerRecord } from "../types/ChatSession";
+
+const ACCOUNT_PK_PREFIX = "A#";
 
 const IDENTITY_PK_PREFIX = "IDENTITY#";
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
@@ -132,6 +134,37 @@ export class IdentityService {
         ExpressionAttributeValues: expressionValues,
       }),
     );
+
+    // Write the account-scoped pointer record so the account can Query all its
+    // sessions without scanning. Best-effort: if this fails, the primary
+    // session is still valid and usable — the pointer is recoverable via
+    // backfill from the METADATA record's accountUlid attribute.
+    if (accountUlid !== undefined) {
+      const pointerItem = {
+        PK: `${ACCOUNT_PK_PREFIX}${accountUlid}`,
+        SK: sessionPk,
+        entity: "CHAT_SESSION",
+        sessionUlid,
+        agentName: defaultAgentName,
+        source,
+        createdAt: now,
+        lastMessageAt: now,
+      } satisfies ChatSessionPointerRecord;
+
+      try {
+        await this.dynamoDb.send(
+          new PutCommand({
+            TableName: table,
+            Item: pointerItem,
+          }),
+        );
+      } catch (pointerError) {
+        const errorName = pointerError instanceof Error ? pointerError.name : "UnknownError";
+        this.logger.error(
+          `Failed to write session pointer [errorType=${errorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+        );
+      }
+    }
 
     return sessionUlid;
   }

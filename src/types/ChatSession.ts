@@ -51,3 +51,21 @@ export interface ChatSessionMetadataRecord {
   agentName?: string;
   accountUlid?: string;
 }
+
+/**
+ * Account-scoped pointer record that lets us Query all chat sessions under an
+ * account (PK = "A#<accountUlid>", SK = "CHAT_SESSION#<sessionUlid>") without
+ * scanning or crossing to a GSI. Full session state (messages, contact info,
+ * user facts) continues to live under PK = "CHAT_SESSION#<sessionUlid>" —
+ * this record is a lightweight index, not the source of truth.
+ */
+export interface ChatSessionPointerRecord {
+  PK: string;
+  SK: string;
+  entity: "CHAT_SESSION";
+  sessionUlid: string;
+  agentName: string;
+  source: string;
+  createdAt: string;
+  lastMessageAt: string;
+}

@@ -273,14 +273,87 @@ describe("ChatSessionService", () => {
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
-      expect(updateCalls).toHaveLength(1);
+      const metadataUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.SK === "METADATA",
+      );
 
-      const updateInput = updateCalls[0].args[0].input;
+      expect(metadataUpdate).toBeDefined();
+
+      const updateInput = metadataUpdate!.args[0].input;
 
       expect(updateInput.Key?.PK).toBe(`CHAT_SESSION#${sessionUlid}`);
       expect(updateInput.Key?.SK).toBe("METADATA");
       expect(updateInput.UpdateExpression).toContain("if_not_exists(createdAt");
       expect(updateInput.UpdateExpression).toContain("lastMessageAt");
+    });
+
+    it("issues a second UpdateCommand on the account-scoped session pointer when metadata has accountUlid", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      const sessionUlid = "01TESTSESSION0000000000000";
+
+      await service.handleMessage(sessionUlid, "Message");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      const pointerUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK?.toString().startsWith("A#"),
+      );
+
+      expect(pointerUpdate).toBeDefined();
+
+      const input = pointerUpdate!.args[0].input;
+
+      expect(input.Key?.PK).toBe("A#01ACCOUNTULID00000000000000");
+      expect(input.Key?.SK).toBe(`CHAT_SESSION#${sessionUlid}`);
+      expect(input.UpdateExpression).toContain("lastMessageAt");
+      expect(input.ConditionExpression).toContain("attribute_exists");
+    });
+
+    it("does NOT issue a pointer UpdateCommand when metadata has no accountUlid", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture" } });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Message");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+
+      const pointerUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK?.toString().startsWith("A#"),
+      );
+
+      expect(pointerUpdate).toBeUndefined();
+    });
+
+    it("pointer UpdateCommand failure does not break message handling", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+
+      const pointerError = Object.assign(new Error("Pointer update blew up"), {
+        name: "InternalServerError",
+      });
+
+      ddbMock.on(UpdateCommand).callsFake((input: { Key?: { PK?: unknown } }) => {
+        const pk = input.Key?.PK?.toString() ?? "";
+        if (pk.startsWith("A#")) {
+          return Promise.reject(pointerError);
+        }
+        return Promise.resolve({});
+      });
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      const reply = await service.handleMessage("01TESTSESSION0000000000000", "Message");
+
+      expect(reply).toBe("Hello from assistant");
     });
 
     it("returns the text from the final assistant message", async () => {

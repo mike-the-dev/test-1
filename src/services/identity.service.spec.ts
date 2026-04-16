@@ -229,6 +229,74 @@ describe("IdentityService", () => {
       expect(metadataUpdate.ExpressionAttributeValues).not.toHaveProperty(":accountUlid");
     });
 
+    it("writes the session pointer record when accountUlid is provided on new session creation", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const result = await service.lookupOrCreateSession(
+        "web",
+        "guest-333",
+        "shopping_assistant",
+        "01ACCOUNTULID00000000000000",
+      );
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+
+      // First put is the identity record, second put is the account-scoped pointer.
+      expect(putCalls).toHaveLength(2);
+
+      const pointerPut = putCalls[1].args[0].input;
+
+      expect(pointerPut.Item?.PK).toBe("A#01ACCOUNTULID00000000000000");
+      expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result}`);
+      expect(pointerPut.Item?.entity).toBe("CHAT_SESSION");
+      expect(pointerPut.Item?.sessionUlid).toBe(result);
+      expect(pointerPut.Item?.agentName).toBe("shopping_assistant");
+      expect(pointerPut.Item?.source).toBe("web");
+      expect(typeof pointerPut.Item?.createdAt).toBe("string");
+      expect(typeof pointerPut.Item?.lastMessageAt).toBe("string");
+    });
+
+    it("does not write the session pointer record when accountUlid is omitted", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("discord", "guest-444", "lead_capture");
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+
+      expect(putCalls).toHaveLength(1);
+
+      const onlyPut = putCalls[0].args[0].input;
+
+      expect(String(onlyPut.Item?.PK)).toMatch(/^IDENTITY#/);
+    });
+
+    it("returns the new sessionUlid even when the pointer put fails", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const pointerError = Object.assign(new Error("Pointer write failed"), {
+        name: "InternalServerError",
+      });
+
+      ddbMock
+        .on(PutCommand)
+        .resolvesOnce({})
+        .rejects(pointerError);
+
+      const result = await service.lookupOrCreateSession(
+        "web",
+        "guest-555",
+        "shopping_assistant",
+        "01ACCOUNTULID00000000000000",
+      );
+
+      expect(result).toMatch(/^[0-9A-Z]{26}$/);
+    });
+
     it("existing session lookup with accountUlid passed — no UpdateCommand call at all", async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {

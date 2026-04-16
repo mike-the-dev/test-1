@@ -213,6 +213,34 @@ export class ChatSessionService {
         }),
       );
 
+      // Also update lastMessageAt on the account-scoped session pointer so
+      // per-account "sessions sorted by recency" queries stay accurate. The
+      // condition guards against creating a partial pointer for legacy
+      // sessions that never got one; if the pointer does not exist, this
+      // quietly no-ops. Best-effort: pointer-sync failures do not break
+      // message handling.
+      if (accountUlid) {
+        try {
+          await this.dynamoDb.send(
+            new UpdateCommand({
+              TableName: table,
+              Key: { PK: `A#${accountUlid}`, SK: sessionPk },
+              UpdateExpression: "SET lastMessageAt = :now",
+              ConditionExpression: "attribute_exists(PK)",
+              ExpressionAttributeValues: { ":now": now },
+            }),
+          );
+        } catch (pointerError) {
+          const errorName = pointerError instanceof Error ? pointerError.name : "UnknownError";
+
+          if (errorName !== "ConditionalCheckFailedException") {
+            this.logger.warn(
+              `Session pointer lastMessageAt update failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
+            );
+          }
+        }
+      }
+
       this.logger.log(`Stored messages [sessionUlid=${sessionUlid} count=${newMessages.length}]`);
 
       // Concatenate text from every assistant message emitted during this turn.
