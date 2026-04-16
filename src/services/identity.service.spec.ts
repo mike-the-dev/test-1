@@ -45,7 +45,7 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#discord#123456789",
           SK: "IDENTITY#discord#123456789",
-          session_ulid:existingSessionUlid,
+          session_id:existingSessionUlid,
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
@@ -60,7 +60,7 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#discord#123456789",
           SK: "IDENTITY#discord#123456789",
-          session_ulid:"01EXISTING00000000000000000",
+          session_id:"01EXISTING00000000000000000",
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
@@ -87,7 +87,7 @@ describe("IdentityService", () => {
       const identityPut = putCalls[0].args[0].input;
 
       expect(identityPut.Item?.PK).toBe("IDENTITY#discord#987654321");
-      expect(identityPut.Item?.session_ulid).toBe(result);
+      expect(identityPut.Item?.session_id).toBe(result);
       expect(identityPut.ConditionExpression).toBe("attribute_not_exists(PK)");
     });
 
@@ -117,7 +117,7 @@ describe("IdentityService", () => {
           Item: {
             PK: "IDENTITY#discord#111111111",
             SK: "IDENTITY#discord#111111111",
-            session_ulid:winnerSessionUlid,
+            session_id:winnerSessionUlid,
             _createdAt_: "2026-01-01T00:00:00.000Z",
           },
         });
@@ -170,7 +170,7 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#discord#123456789",
           SK: "IDENTITY#discord#123456789",
-          session_ulid:"01EXISTING00000000000000000",
+          session_id:"01EXISTING00000000000000000",
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
@@ -208,8 +208,8 @@ describe("IdentityService", () => {
 
       const metadataUpdate = updateCalls[0].args[0].input;
 
-      expect(metadataUpdate.ExpressionAttributeValues?.[":accountUlid"]).toBe("01ACCOUNTULID00000000000000");
-      expect(metadataUpdate.UpdateExpression).toContain("account_ulid");
+      expect(metadataUpdate.ExpressionAttributeValues?.[":accountId"]).toBe("01ACCOUNTULID00000000000000");
+      expect(metadataUpdate.UpdateExpression).toContain("account_id");
     });
 
     it("does not write accountUlid to METADATA UpdateCommand when the parameter is omitted", async () => {
@@ -225,8 +225,8 @@ describe("IdentityService", () => {
 
       const metadataUpdate = updateCalls[0].args[0].input;
 
-      expect(metadataUpdate.UpdateExpression).not.toContain("account_ulid");
-      expect(metadataUpdate.ExpressionAttributeValues).not.toHaveProperty(":accountUlid");
+      expect(metadataUpdate.UpdateExpression).not.toContain("account_id");
+      expect(metadataUpdate.ExpressionAttributeValues).not.toHaveProperty(":accountId");
     });
 
     it("writes the session pointer record when accountUlid is provided on new session creation", async () => {
@@ -251,7 +251,7 @@ describe("IdentityService", () => {
       expect(pointerPut.Item?.PK).toBe("A#01ACCOUNTULID00000000000000");
       expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result}`);
       expect(pointerPut.Item?.entity).toBe("CHAT_SESSION");
-      expect(pointerPut.Item?.session_ulid).toBe(result);
+      expect(pointerPut.Item?.session_id).toBe(result);
       expect(pointerPut.Item?.agent_name).toBe("shopping_assistant");
       expect(pointerPut.Item?.source).toBe("web");
       expect(typeof pointerPut.Item?._createdAt_).toBe("string");
@@ -302,7 +302,7 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#web#existing-guest",
           SK: "IDENTITY#web#existing-guest",
-          session_ulid:"01EXISTING00000000000000000",
+          session_id:"01EXISTING00000000000000000",
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });

@@ -58,7 +58,7 @@ describe("ChatSessionService", () => {
     mockToolRegistry.getDefinitions.mockReturnValue([]);
     mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
 
-    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_ulid: "01ACCOUNTULID00000000000000" } });
+    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000" } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

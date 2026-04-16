@@ -30,7 +30,7 @@ export interface ChatAnthropicResponse {
 export interface ChatSessionIdentityRecord {
   PK: string;
   SK: string;
-  session_ulid: string;
+  session_id: string;
   _createdAt_: string;
 }
 
@@ -49,7 +49,7 @@ export interface ChatSessionMetadataRecord {
   _lastUpdated_: string;
   source: string;
   agent_name?: string;
-  account_ulid?: string;
+  account_id?: string;
 }
 
 /**
@@ -63,7 +63,7 @@ export interface ChatSessionPointerRecord {
   PK: string;
   SK: string;
   entity: "CHAT_SESSION";
-  session_ulid: string;
+  session_id: string;
   agent_name: string;
   source: string;
   _createdAt_: string;

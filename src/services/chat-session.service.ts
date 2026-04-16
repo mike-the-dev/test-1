@@ -65,7 +65,7 @@ export class ChatSessionService {
 
       const rawAgentName: string | undefined = metadataResult.Item?.agent_name;
       const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
-      const accountUlid = metadataResult.Item?.account_ulid;
+      const accountUlid = metadataResult.Item?.account_id;
 
       let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
 

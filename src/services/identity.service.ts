@@ -46,7 +46,7 @@ export class IdentityService {
     );
 
     if (existingResult.Item) {
-      const sessionUlid: string = existingResult.Item.session_ulid;
+      const sessionUlid: string = existingResult.Item.session_id;
 
       this.logger.debug(`Found existing session [sessionUlid=${sessionUlid} source=${source} externalId=${externalId}]`);
 
@@ -62,7 +62,7 @@ export class IdentityService {
     const identityItem = {
       PK: pk,
       SK: pk,
-      session_ulid: sessionUlid,
+      session_id: sessionUlid,
       _createdAt_: now,
     } satisfies ChatSessionIdentityRecord;
 
@@ -83,7 +83,7 @@ export class IdentityService {
           }),
         );
 
-        const winnerSessionUlid = winnerResult.Item?.session_ulid;
+        const winnerSessionUlid = winnerResult.Item?.session_id;
 
         if (!winnerSessionUlid) {
           throw new Error("Identity record missing after ConditionalCheckFailedException — possible concurrent delete");
@@ -127,8 +127,8 @@ export class IdentityService {
     };
 
     if (accountUlid !== undefined) {
-      setClauses.push("account_ulid = if_not_exists(account_ulid, :accountUlid)");
-      expressionValues[":accountUlid"] = accountUlid;
+      setClauses.push("account_id = if_not_exists(account_id, :accountId)");
+      expressionValues[":accountId"] = accountUlid;
     }
 
     await this.dynamoDb.send(
@@ -150,7 +150,7 @@ export class IdentityService {
         PK: `${ACCOUNT_PK_PREFIX}${accountUlid}`,
         SK: sessionPk,
         entity: "CHAT_SESSION",
-        session_ulid: sessionUlid,
+        session_id: sessionUlid,
         agent_name: defaultAgentName,
         source,
         _createdAt_: now,
