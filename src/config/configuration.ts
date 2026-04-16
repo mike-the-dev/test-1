@@ -29,6 +29,10 @@ const configuration = () => ({
     corsAllowAll: process.env.WEB_CHAT_CORS_ALLOW_ALL === "true",
     domainGsiName: process.env.DYNAMODB_ACCOUNTS_DOMAIN_GSI_NAME || "GSI1",
     checkoutBaseUrlOverride: process.env.CHECKOUT_BASE_URL_OVERRIDE,
+    widgetOrigins: (process.env.WEB_CHAT_WIDGET_ORIGINS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
   },
 });
 

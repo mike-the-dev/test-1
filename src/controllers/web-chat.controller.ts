@@ -31,18 +31,27 @@ export class WebChatController {
       throw new BadRequestException(`Unknown agent: ${body.agentName}`);
     }
 
-    const accountUlid = origin
-      ? await this.originAllowlistService.resolveAccountForOrigin(origin)
+    // Prefer an explicit hostDomain from the body (widget iframe passes the
+    // host-page domain as data because the browser-stamped Origin header
+    // carries the iframe's own origin, not the parent page's). Fall back to
+    // the Origin header when hostDomain is absent (backward-compatible with
+    // any direct, non-iframe caller).
+    const hostForAccountLookup = body.hostDomain ?? origin;
+
+    const accountUlid = hostForAccountLookup
+      ? await this.originAllowlistService.resolveAccountForOrigin(hostForAccountLookup)
       : null;
 
     if (accountUlid === null) {
-      throw new InternalServerErrorException("Unable to resolve account for request origin.");
+      throw new InternalServerErrorException("Unable to resolve account for request host.");
     }
 
     const sessionUlid = await this.identityService.lookupOrCreateSession("web", body.guestUlid, body.agentName, accountUlid);
     const displayName = agent.displayName ?? agent.name;
 
-    this.logger.debug(`Session created [agentName=${body.agentName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`);
+    this.logger.debug(
+      `Session created [agentName=${body.agentName} sessionUlid=${sessionUlid} accountUlid=${accountUlid} source=${body.hostDomain ? "hostDomain" : "origin"}]`,
+    );
 
     return { sessionUlid, displayName };
   }

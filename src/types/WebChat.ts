@@ -1,6 +1,7 @@
 export interface WebChatCreateSessionRequest {
   agentName: string;
   guestUlid: string;
+  hostDomain?: string;
 }
 
 export interface WebChatSendMessageRequest {

@@ -138,6 +138,51 @@ describe("WebChatController", () => {
         controller.createSession(undefined as unknown as string, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID }),
       ).rejects.toThrow(InternalServerErrorException);
     });
+
+    it("uses body.hostDomain for account resolution when provided, ignoring the origin header", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: AGENT_NAME,
+        displayName: "Lead Capture Assistant",
+      });
+      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
+
+      const HOST_DOMAIN = "shop.wellnessrevolutiontx.instapaytient.com";
+
+      await controller.createSession(
+        "https://chat.instapaytient.com",
+        { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID, hostDomain: HOST_DOMAIN },
+      );
+
+      expect(mockOriginAllowlistService.resolveAccountForOrigin).toHaveBeenCalledWith(HOST_DOMAIN);
+      expect(mockOriginAllowlistService.resolveAccountForOrigin).not.toHaveBeenCalledWith("https://chat.instapaytient.com");
+    });
+
+    it("falls back to origin header when hostDomain is omitted from the body", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: AGENT_NAME,
+        displayName: "Lead Capture Assistant",
+      });
+      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
+
+      await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
+
+      expect(mockOriginAllowlistService.resolveAccountForOrigin).toHaveBeenCalledWith(ORIGIN);
+    });
+
+    it("throws InternalServerErrorException when hostDomain does not resolve to any account", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: AGENT_NAME,
+        displayName: "Lead Capture Assistant",
+      });
+      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(null);
+
+      await expect(
+        controller.createSession(
+          "https://chat.instapaytient.com",
+          { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID, hostDomain: "unknown.example.com" },
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+    });
   });
 
   describe("POST /messages — sendMessage", () => {

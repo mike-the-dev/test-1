@@ -28,6 +28,12 @@ export const envSchema = z
     // false; .default(false) is a no-op.
     WEB_CHAT_CORS_ALLOW_ALL: z.preprocess((val) => val === "true", z.boolean()).default(false),
     CHECKOUT_BASE_URL_OVERRIDE: z.string().url().optional(),
+    // Comma-separated list of origins (scheme://host[:port]) that bypass the
+    // GSI-based account allowlist at CORS-check time. This is for the widget's
+    // own deployment domain (e.g. "https://chat.instapaytient.com") since the
+    // widget iframe's origin is NOT an allowlisted customer practice domain —
+    // the practice's domain flows through the request body as `hostDomain`.
+    WEB_CHAT_WIDGET_ORIGINS: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.WEB_CHAT_CORS_ALLOW_ALL === true && data.APP_ENV === "prod") {

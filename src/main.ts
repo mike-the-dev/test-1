@@ -15,6 +15,17 @@ async function bootstrap() {
   const originAllowlistService = app.get(OriginAllowlistService);
   const corsAllowAll = process.env.WEB_CHAT_CORS_ALLOW_ALL === "true";
 
+  // Trusted widget deployment origins (e.g. "https://chat.instapaytient.com",
+  // "http://localhost:3000"). These bypass the GSI-based customer-practice
+  // allowlist because the widget iframe's own origin is not a practice
+  // domain — practice domains flow through the request body as hostDomain.
+  const widgetOrigins = new Set(
+    (process.env.WEB_CHAT_WIDGET_ORIGINS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0),
+  );
+
   app.enableCors({
     origin: async (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       if (!origin) {
@@ -23,6 +34,11 @@ async function bootstrap() {
       }
 
       if (corsAllowAll) {
+        callback(null, true);
+        return;
+      }
+
+      if (widgetOrigins.has(origin)) {
         callback(null, true);
         return;
       }
