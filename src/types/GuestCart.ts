@@ -42,11 +42,11 @@ export interface GuestCartCustomerRecord {
 }
 
 export interface GuestCartCreateResult {
-  checkoutUrl: string;
-  customerId: string; // BARE ULID, no "C#" prefix
-  cartUlid: string;
-  guestUlid: string;
-  itemCount: number;
+  checkout_url: string;
+  customer_id: string; // BARE ULID, no "C#" prefix
+  cart_id: string; // BARE ULID
+  guest_id: string; // BARE ULID
+  item_count: number;
 }
 
 export type GuestCartCheckoutBaseResolved = { isError: false; base: string };

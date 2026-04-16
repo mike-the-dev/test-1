@@ -396,14 +396,16 @@ export class CreateGuestCartTool implements ChatTool {
     // cart we just wrote instead of redirecting to /shop on an empty cart.
     const checkoutUrl = `${baseResult.base}/checkout?email=${encodeURIComponent(email)}&customerId=${customerUlid}&guestId=${guestUlid}&cartId=${cartUlid}`;
 
-    // Step 11 — return result
+    // Step 11 — return result. Snake-case JSON keys so that when this payload
+    // is stored inside the tool_result message record's content blob it stays
+    // consistent with the rest of the Instapaytient DB convention.
     return {
       result: JSON.stringify({
-        checkoutUrl,
-        customerId: customerUlid,
-        cartUlid,
-        guestUlid,
-        itemCount: cartItems.length,
+        checkout_url: checkoutUrl,
+        customer_id: customerUlid,
+        cart_id: cartUlid,
+        guest_id: guestUlid,
+        item_count: cartItems.length,
       }),
     };
   }

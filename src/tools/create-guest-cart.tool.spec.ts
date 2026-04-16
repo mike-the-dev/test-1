@@ -175,20 +175,20 @@ describe("CreateGuestCartTool", () => {
       expect(result.isError).toBeUndefined();
 
       const parsed = JSON.parse(result.result) as {
-        checkoutUrl: string;
-        customerId: string;
-        cartUlid: string;
-        guestUlid: string;
-        itemCount: number;
+        checkout_url: string;
+        customer_id: string;
+        cart_id: string;
+        guest_id: string;
+        item_count: number;
       };
 
-      expect(parsed.itemCount).toBe(1);
-      expect(parsed.cartUlid).toBe(CART_ULID);
-      expect(parsed.guestUlid).toBe(GUEST_ULID);
-      expect(parsed.customerId).toBe(CUSTOMER_ULID);
-      expect(parsed.checkoutUrl).toContain("/checkout?email=");
-      expect(parsed.checkoutUrl).toContain(`customerId=${CUSTOMER_ULID}`);
-      expect(parsed.checkoutUrl).toContain(CHECKOUT_OVERRIDE);
+      expect(parsed.item_count).toBe(1);
+      expect(parsed.cart_id).toBe(CART_ULID);
+      expect(parsed.guest_id).toBe(GUEST_ULID);
+      expect(parsed.customer_id).toBe(CUSTOMER_ULID);
+      expect(parsed.checkout_url).toContain("/checkout?email=");
+      expect(parsed.checkout_url).toContain(`customerId=${CUSTOMER_ULID}`);
+      expect(parsed.checkout_url).toContain(CHECKOUT_OVERRIDE);
     });
   });
 
@@ -287,8 +287,8 @@ describe("CreateGuestCartTool", () => {
       // Only one PutCommand — the cart write; no customer put
       expect(putCalls).toHaveLength(1);
 
-      const parsed = JSON.parse(result.result) as { customerId: string };
-      expect(parsed.customerId).toBe(CUSTOMER_ULID);
+      const parsed = JSON.parse(result.result) as { customer_id: string };
+      expect(parsed.customer_id).toBe(CUSTOMER_ULID);
     });
   });
 
@@ -359,8 +359,8 @@ describe("CreateGuestCartTool", () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.result) as { customerId: string };
-      expect(parsed.customerId).toBe(raceCustomerUlid);
+      const parsed = JSON.parse(result.result) as { customer_id: string };
+      expect(parsed.customer_id).toBe(raceCustomerUlid);
 
       // Only one PutCommand call (the customer put that failed) — no second put
       const putCalls = ddbMock.commandCalls(PutCommand);
@@ -548,9 +548,9 @@ describe("CreateGuestCartTool", () => {
       const result = await toolWithOverride.execute({ items: [{ service_id: SERVICE_SK }] }, context);
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.result) as { checkoutUrl: string };
-      expect(parsed.checkoutUrl).toContain("http://localhost:3000/checkout");
-      expect(parsed.checkoutUrl).not.toContain("//checkout");
+      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      expect(parsed.checkout_url).toContain("http://localhost:3000/checkout");
+      expect(parsed.checkout_url).not.toContain("//checkout");
     });
   });
 
@@ -602,8 +602,8 @@ describe("CreateGuestCartTool", () => {
       const result = await toolNoOverride.execute({ items: [{ service_id: SERVICE_SK }] }, context);
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.result) as { checkoutUrl: string };
-      expect(parsed.checkoutUrl).toContain("https://shop.example.instapaytient.com/checkout");
+      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      expect(parsed.checkout_url).toContain("https://shop.example.instapaytient.com/checkout");
     });
   });
 
@@ -622,8 +622,8 @@ describe("CreateGuestCartTool", () => {
       const result = await tool.execute({ items: [{ service_id: SERVICE_SK }] }, context);
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.result) as { checkoutUrl: string };
-      expect(parsed.checkoutUrl).toContain("email=user%2Btag%40example.com");
+      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      expect(parsed.checkout_url).toContain("email=user%2Btag%40example.com");
     });
   });
 
@@ -648,8 +648,8 @@ describe("CreateGuestCartTool", () => {
       expect(String(cartItem.customer_id)).toMatch(/^C#/);
 
       // Check URL param
-      const parsed = JSON.parse(result.result) as { checkoutUrl: string };
-      const url = new URL(parsed.checkoutUrl);
+      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      const url = new URL(parsed.checkout_url);
       const customerId = url.searchParams.get("customerId");
       expect(customerId).not.toBeNull();
       expect(customerId).not.toContain("C#");
@@ -673,15 +673,15 @@ describe("CreateGuestCartTool", () => {
       expect(result.isError).toBeUndefined();
 
       const parsed = JSON.parse(result.result) as {
-        checkoutUrl: string;
-        guestUlid: string;
-        cartUlid: string;
+        checkout_url: string;
+        guest_id: string;
+        cart_id: string;
       };
 
-      const url = new URL(parsed.checkoutUrl);
+      const url = new URL(parsed.checkout_url);
 
-      expect(url.searchParams.get("guestId")).toBe(parsed.guestUlid);
-      expect(url.searchParams.get("cartId")).toBe(parsed.cartUlid);
+      expect(url.searchParams.get("guestId")).toBe(parsed.guest_id);
+      expect(url.searchParams.get("cartId")).toBe(parsed.cart_id);
       expect(url.searchParams.get("guestId")).not.toBeNull();
       expect(url.searchParams.get("cartId")).not.toBeNull();
     });
@@ -836,8 +836,8 @@ describe("CreateGuestCartTool", () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.result) as { itemCount: number };
-      expect(parsed.itemCount).toBe(1);
+      const parsed = JSON.parse(result.result) as { item_count: number };
+      expect(parsed.item_count).toBe(1);
 
       expect(ddbMock.commandCalls(BatchGetCommand)).toHaveLength(2);
     });
