@@ -92,8 +92,21 @@ export class OriginAllowlistService {
   }
 
   private normalizeOrigin(origin: string): string | null {
+    const trimmed = origin.trim();
+
+    if (trimmed.length === 0) {
+      return null;
+    }
+
+    // Accept both full origins ("http://localhost:3000") and bare hostnames
+    // ("localhost", "shop.example.com"). CORS middleware passes the browser's
+    // Origin header (full origin); the controller's hostDomain-based path
+    // passes the bare host from the request body. Prepending a scheme when
+    // one is absent lets URL parsing handle both shapes.
+    const toParse = trimmed.includes("://") ? trimmed : `https://${trimmed}`;
+
     try {
-      const url = new URL(origin.trim());
+      const url = new URL(toParse);
       return url.hostname.toLowerCase();
     } catch {
       return null;

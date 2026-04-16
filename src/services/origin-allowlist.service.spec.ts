@@ -160,6 +160,36 @@ describe("OriginAllowlistService", () => {
       expect(result).toBeNull();
       expect(warnSpy).toHaveBeenCalled();
     });
+
+    it("accepts a bare hostname without a scheme (treats it as https for parsing)", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: `A#${ACCOUNT_ULID}` }],
+      });
+
+      const result = await service.resolveAccountForOrigin("shop.example.com");
+
+      expect(result).toBe(ACCOUNT_ULID);
+
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      const lastCall = queryCalls[queryCalls.length - 1].args[0].input;
+
+      expect(lastCall.ExpressionAttributeValues?.[":pk"]).toBe("DOMAIN#shop.example.com");
+    });
+
+    it("accepts a bare hostname like 'localhost' as used by widget hostDomain lookups", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ entity: "ACCOUNT", status: { is_active: true }, PK: `A#${ACCOUNT_ULID}` }],
+      });
+
+      const result = await service.resolveAccountForOrigin("localhost");
+
+      expect(result).toBe(ACCOUNT_ULID);
+
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      const lastCall = queryCalls[queryCalls.length - 1].args[0].input;
+
+      expect(lastCall.ExpressionAttributeValues?.[":pk"]).toBe("DOMAIN#localhost");
+    });
   });
 
   describe("cache TTL behavior", () => {
@@ -247,8 +277,8 @@ describe("OriginAllowlistService", () => {
       expect(calls[0].args[0].input.ExpressionAttributeValues![":pk"]).toBe("DOMAIN#example.com");
     });
 
-    it("returns null for malformed origin without querying DynamoDB", async () => {
-      const result = await service.resolveAccountForOrigin("not-a-url");
+    it("returns null for truly malformed origin (empty string) without querying DynamoDB", async () => {
+      const result = await service.resolveAccountForOrigin("   ");
 
       expect(result).toBeNull();
       expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
