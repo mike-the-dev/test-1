@@ -45,8 +45,8 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#discord#123456789",
           SK: "IDENTITY#discord#123456789",
-          sessionUlid: existingSessionUlid,
-          createdAt: "2026-01-01T00:00:00.000Z",
+          session_ulid:existingSessionUlid,
+          _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
 
@@ -60,8 +60,8 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#discord#123456789",
           SK: "IDENTITY#discord#123456789",
-          sessionUlid: "01EXISTING00000000000000000",
-          createdAt: "2026-01-01T00:00:00.000Z",
+          session_ulid:"01EXISTING00000000000000000",
+          _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
 
@@ -87,7 +87,7 @@ describe("IdentityService", () => {
       const identityPut = putCalls[0].args[0].input;
 
       expect(identityPut.Item?.PK).toBe("IDENTITY#discord#987654321");
-      expect(identityPut.Item?.sessionUlid).toBe(result);
+      expect(identityPut.Item?.session_ulid).toBe(result);
       expect(identityPut.ConditionExpression).toBe("attribute_not_exists(PK)");
     });
 
@@ -117,8 +117,8 @@ describe("IdentityService", () => {
           Item: {
             PK: "IDENTITY#discord#111111111",
             SK: "IDENTITY#discord#111111111",
-            sessionUlid: winnerSessionUlid,
-            createdAt: "2026-01-01T00:00:00.000Z",
+            session_ulid:winnerSessionUlid,
+            _createdAt_: "2026-01-01T00:00:00.000Z",
           },
         });
 
@@ -162,7 +162,7 @@ describe("IdentityService", () => {
       const metadataUpdate = updateCalls[0].args[0].input;
 
       expect(metadataUpdate.ExpressionAttributeValues?.[":agentName"]).toBe("lead_capture");
-      expect(metadataUpdate.UpdateExpression).toContain("agentName");
+      expect(metadataUpdate.UpdateExpression).toContain("agent_name");
     });
 
     it("does not issue an UpdateCommand on a cache hit", async () => {
@@ -170,8 +170,8 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#discord#123456789",
           SK: "IDENTITY#discord#123456789",
-          sessionUlid: "01EXISTING00000000000000000",
-          createdAt: "2026-01-01T00:00:00.000Z",
+          session_ulid:"01EXISTING00000000000000000",
+          _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
 
@@ -209,7 +209,7 @@ describe("IdentityService", () => {
       const metadataUpdate = updateCalls[0].args[0].input;
 
       expect(metadataUpdate.ExpressionAttributeValues?.[":accountUlid"]).toBe("01ACCOUNTULID00000000000000");
-      expect(metadataUpdate.UpdateExpression).toContain("accountUlid");
+      expect(metadataUpdate.UpdateExpression).toContain("account_ulid");
     });
 
     it("does not write accountUlid to METADATA UpdateCommand when the parameter is omitted", async () => {
@@ -225,7 +225,7 @@ describe("IdentityService", () => {
 
       const metadataUpdate = updateCalls[0].args[0].input;
 
-      expect(metadataUpdate.UpdateExpression).not.toContain("accountUlid");
+      expect(metadataUpdate.UpdateExpression).not.toContain("account_ulid");
       expect(metadataUpdate.ExpressionAttributeValues).not.toHaveProperty(":accountUlid");
     });
 
@@ -251,11 +251,11 @@ describe("IdentityService", () => {
       expect(pointerPut.Item?.PK).toBe("A#01ACCOUNTULID00000000000000");
       expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result}`);
       expect(pointerPut.Item?.entity).toBe("CHAT_SESSION");
-      expect(pointerPut.Item?.sessionUlid).toBe(result);
-      expect(pointerPut.Item?.agentName).toBe("shopping_assistant");
+      expect(pointerPut.Item?.session_ulid).toBe(result);
+      expect(pointerPut.Item?.agent_name).toBe("shopping_assistant");
       expect(pointerPut.Item?.source).toBe("web");
-      expect(typeof pointerPut.Item?.createdAt).toBe("string");
-      expect(typeof pointerPut.Item?.lastMessageAt).toBe("string");
+      expect(typeof pointerPut.Item?._createdAt_).toBe("string");
+      expect(typeof pointerPut.Item?._lastUpdated_).toBe("string");
     });
 
     it("does not write the session pointer record when accountUlid is omitted", async () => {
@@ -302,8 +302,8 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#web#existing-guest",
           SK: "IDENTITY#web#existing-guest",
-          sessionUlid: "01EXISTING00000000000000000",
-          createdAt: "2026-01-01T00:00:00.000Z",
+          session_ulid:"01EXISTING00000000000000000",
+          _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
 

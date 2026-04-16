@@ -10,12 +10,13 @@ import { ChatToolProvider } from "./chat-tool.decorator";
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const CONTACT_INFO_SK = "USER_CONTACT_INFO";
 
-const FIELD_ENTRIES: [keyof CollectContactInfoInput, string][] = [
-  ["firstName", "fn"],
-  ["lastName", "ln"],
-  ["email", "em"],
-  ["phone", "ph"],
-  ["company", "co"],
+// [inputField (from the tool's input schema), dbAttribute (in DynamoDB), alias (ExpressionAttributeNames key)]
+const FIELD_ENTRIES: [keyof CollectContactInfoInput, string, string][] = [
+  ["firstName", "first_name", "fn"],
+  ["lastName", "last_name", "ln"],
+  ["email", "email", "em"],
+  ["phone", "phone", "ph"],
+  ["company", "company", "co"],
 ];
 
 @ChatToolProvider()
@@ -82,21 +83,21 @@ export class CollectContactInfoTool implements ChatTool {
     const expressionNames: Record<string, string> = {};
     const expressionValues: Record<string, unknown> = {};
 
-    for (const [field, alias] of FIELD_ENTRIES) {
+    for (const [field, dbAttribute, alias] of FIELD_ENTRIES) {
       const value = validated[field];
 
       if (value !== undefined) {
         setParts.push(`#${alias} = :${alias}`);
-        expressionNames[`#${alias}`] = field;
+        expressionNames[`#${alias}`] = dbAttribute;
         expressionValues[`:${alias}`] = value;
       }
     }
 
-    setParts.push("#updatedAt = :updatedAt");
+    setParts.push("#lastUpdated = :lastUpdated");
     setParts.push("#createdAt = if_not_exists(#createdAt, :now)");
-    expressionNames["#updatedAt"] = "updatedAt";
-    expressionNames["#createdAt"] = "createdAt";
-    expressionValues[":updatedAt"] = now;
+    expressionNames["#lastUpdated"] = "_lastUpdated_";
+    expressionNames["#createdAt"] = "_createdAt_";
+    expressionValues[":lastUpdated"] = now;
     expressionValues[":now"] = now;
 
     const updateExpression = `SET ${setParts.join(", ")}`;

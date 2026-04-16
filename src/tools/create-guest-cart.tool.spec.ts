@@ -40,8 +40,8 @@ function makeContactInfoItem(overrides: Record<string, unknown> = {}): Record<st
     PK: `CHAT_SESSION#${SESSION_ULID}`,
     SK: "USER_CONTACT_INFO",
     email: "test@example.com",
-    firstName: "Jane",
-    lastName: "Doe",
+    first_name: "Jane",
+    last_name: "Doe",
     phone: "555-0100",
     ...overrides,
   };

@@ -46,7 +46,7 @@ export class IdentityService {
     );
 
     if (existingResult.Item) {
-      const sessionUlid: string = existingResult.Item.sessionUlid;
+      const sessionUlid: string = existingResult.Item.session_ulid;
 
       this.logger.debug(`Found existing session [sessionUlid=${sessionUlid} source=${source} externalId=${externalId}]`);
 
@@ -62,8 +62,8 @@ export class IdentityService {
     const identityItem = {
       PK: pk,
       SK: pk,
-      sessionUlid,
-      createdAt: now,
+      session_ulid: sessionUlid,
+      _createdAt_: now,
     } satisfies ChatSessionIdentityRecord;
 
     try {
@@ -83,7 +83,7 @@ export class IdentityService {
           }),
         );
 
-        const winnerSessionUlid = winnerResult.Item?.sessionUlid;
+        const winnerSessionUlid = winnerResult.Item?.session_ulid;
 
         if (!winnerSessionUlid) {
           throw new Error("Identity record missing after ConditionalCheckFailedException — possible concurrent delete");
@@ -103,25 +103,31 @@ export class IdentityService {
       PK: sessionPk,
       SK: METADATA_SK,
       source,
-      createdAt: now,
-      lastMessageAt: now,
+      _createdAt_: now,
+      _lastUpdated_: now,
     } satisfies ChatSessionMetadataRecord;
 
     const setClauses = [
-      "createdAt = if_not_exists(createdAt, :now)",
-      "lastMessageAt = :now",
+      "#createdAt = if_not_exists(#createdAt, :now)",
+      "#lastUpdated = :now",
       "#src = if_not_exists(#src, :source)",
-      "agentName = if_not_exists(agentName, :agentName)",
+      "agent_name = if_not_exists(agent_name, :agentName)",
     ];
 
+    const expressionNames: Record<string, string> = {
+      "#src": "source",
+      "#createdAt": "_createdAt_",
+      "#lastUpdated": "_lastUpdated_",
+    };
+
     const expressionValues: Record<string, unknown> = {
-      ":now": metadataItem.createdAt,
+      ":now": metadataItem._createdAt_,
       ":source": metadataItem.source,
       ":agentName": defaultAgentName,
     };
 
     if (accountUlid !== undefined) {
-      setClauses.push("accountUlid = if_not_exists(accountUlid, :accountUlid)");
+      setClauses.push("account_ulid = if_not_exists(account_ulid, :accountUlid)");
       expressionValues[":accountUlid"] = accountUlid;
     }
 
@@ -130,7 +136,7 @@ export class IdentityService {
         TableName: table,
         Key: { PK: sessionPk, SK: METADATA_SK },
         UpdateExpression: `SET ${setClauses.join(", ")}`,
-        ExpressionAttributeNames: { "#src": "source" },
+        ExpressionAttributeNames: expressionNames,
         ExpressionAttributeValues: expressionValues,
       }),
     );
@@ -144,11 +150,11 @@ export class IdentityService {
         PK: `${ACCOUNT_PK_PREFIX}${accountUlid}`,
         SK: sessionPk,
         entity: "CHAT_SESSION",
-        sessionUlid,
-        agentName: defaultAgentName,
+        session_ulid: sessionUlid,
+        agent_name: defaultAgentName,
         source,
-        createdAt: now,
-        lastMessageAt: now,
+        _createdAt_: now,
+        _lastUpdated_: now,
       } satisfies ChatSessionPointerRecord;
 
       try {

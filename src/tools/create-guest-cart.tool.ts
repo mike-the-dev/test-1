@@ -171,8 +171,8 @@ export class CreateGuestCartTool implements ChatTool {
       }
 
       email = String(contactItem.email);
-      firstName = String(contactItem.firstName ?? "");
-      lastName = String(contactItem.lastName ?? "");
+      firstName = String(contactItem.first_name ?? "");
+      lastName = String(contactItem.last_name ?? "");
       phone = contactItem.phone !== undefined ? String(contactItem.phone) : null;
     } catch (error: unknown) {
       const errorName = error instanceof Error ? error.name : "UnknownError";

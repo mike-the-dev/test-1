@@ -52,6 +52,7 @@ export class SaveUserFactTool implements ChatTool {
     }
 
     const parsed = parseResult.data;
+    const now = new Date().toISOString();
 
     try {
       await this.dynamoDb.send(
@@ -61,7 +62,8 @@ export class SaveUserFactTool implements ChatTool {
             PK: `${CHAT_SESSION_PK_PREFIX}${context.sessionUlid}`,
             SK: `${USER_FACT_SK_PREFIX}${parsed.key}`,
             value: parsed.value,
-            updatedAt: new Date().toISOString(),
+            _createdAt_: now,
+            _lastUpdated_: now,
           },
         }),
       );

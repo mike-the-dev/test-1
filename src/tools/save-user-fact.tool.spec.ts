@@ -61,7 +61,7 @@ describe("SaveUserFactTool", () => {
       expect(result.isError).toBe(true);
     });
 
-    it("writes a PutCommand with the correct PK, SK, value, and updatedAt", async () => {
+    it("writes a PutCommand with the correct PK, SK, value, and timestamps", async () => {
       ddbMock.on(PutCommand).resolves({});
 
       await tool.execute({ key: "employer", value: "Acme Corp" }, TEST_CONTEXT);
@@ -75,7 +75,8 @@ describe("SaveUserFactTool", () => {
       expect(item?.PK).toBe("CHAT_SESSION#01TESTSESSION0000000000000");
       expect(item?.SK).toBe("USER_FACT#employer");
       expect(item?.value).toBe("Acme Corp");
-      expect(item?.updatedAt).toBeDefined();
+      expect(item?._createdAt_).toBeDefined();
+      expect(item?._lastUpdated_).toBeDefined();
     });
 
     it("returns success result on a successful DynamoDB write", async () => {

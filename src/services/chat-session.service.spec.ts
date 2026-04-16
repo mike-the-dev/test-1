@@ -58,7 +58,7 @@ describe("ChatSessionService", () => {
     mockToolRegistry.getDefinitions.mockReturnValue([]);
     mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
 
-    ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture", accountUlid: "01ACCOUNTULID00000000000000" } });
+    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_ulid: "01ACCOUNTULID00000000000000" } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -115,21 +115,21 @@ describe("ChatSessionService", () => {
           SK: "MESSAGE#03",
           role: "assistant",
           content: JSON.stringify([{ type: "text", text: "Sure!" }]),
-          createdAt: "2026-01-01T00:00:03.000Z",
+          _createdAt_: "2026-01-01T00:00:03.000Z",
         },
         {
           PK: "CHAT_SESSION#abc",
           SK: "MESSAGE#02",
           role: "user",
           content: JSON.stringify([{ type: "text", text: "Can you help?" }]),
-          createdAt: "2026-01-01T00:00:02.000Z",
+          _createdAt_: "2026-01-01T00:00:02.000Z",
         },
         {
           PK: "CHAT_SESSION#abc",
           SK: "MESSAGE#01",
           role: "assistant",
           content: JSON.stringify([{ type: "text", text: "Hello!" }]),
-          createdAt: "2026-01-01T00:00:01.000Z",
+          _createdAt_: "2026-01-01T00:00:01.000Z",
         },
       ];
 
@@ -172,7 +172,7 @@ describe("ChatSessionService", () => {
           SK: "MESSAGE#01",
           role: "assistant",
           content: "Legacy string content",
-          createdAt: "2026-01-01T00:00:01.000Z",
+          _createdAt_: "2026-01-01T00:00:01.000Z",
         },
       ];
 
@@ -283,8 +283,10 @@ describe("ChatSessionService", () => {
 
       expect(updateInput.Key?.PK).toBe(`CHAT_SESSION#${sessionUlid}`);
       expect(updateInput.Key?.SK).toBe("METADATA");
-      expect(updateInput.UpdateExpression).toContain("if_not_exists(createdAt");
-      expect(updateInput.UpdateExpression).toContain("lastMessageAt");
+      expect(updateInput.UpdateExpression).toContain("if_not_exists(#createdAt");
+      expect(updateInput.UpdateExpression).toContain("#lastUpdated");
+      expect(updateInput.ExpressionAttributeNames?.["#createdAt"]).toBe("_createdAt_");
+      expect(updateInput.ExpressionAttributeNames?.["#lastUpdated"]).toBe("_lastUpdated_");
     });
 
     it("issues a second UpdateCommand on the account-scoped session pointer when metadata has accountUlid", async () => {
@@ -310,12 +312,13 @@ describe("ChatSessionService", () => {
 
       expect(input.Key?.PK).toBe("A#01ACCOUNTULID00000000000000");
       expect(input.Key?.SK).toBe(`CHAT_SESSION#${sessionUlid}`);
-      expect(input.UpdateExpression).toContain("lastMessageAt");
+      expect(input.UpdateExpression).toContain("#lastUpdated");
+      expect(input.ExpressionAttributeNames?.["#lastUpdated"]).toBe("_lastUpdated_");
       expect(input.ConditionExpression).toContain("attribute_exists");
     });
 
     it("does NOT issue a pointer UpdateCommand when metadata has no accountUlid", async () => {
-      ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture" } });
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture" } });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
@@ -565,7 +568,7 @@ describe("ChatSessionService", () => {
     });
 
     it("passes undefined accountUlid when metadata has no accountUlid attribute", async () => {
-      ddbMock.on(GetCommand).resolves({ Item: { agentName: "lead_capture" } });
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture" } });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});

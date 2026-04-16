@@ -63,9 +63,9 @@ export class ChatSessionService {
         }),
       );
 
-      const rawAgentName: string | undefined = metadataResult.Item?.agentName;
+      const rawAgentName: string | undefined = metadataResult.Item?.agent_name;
       const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
-      const accountUlid = metadataResult.Item?.accountUlid;
+      const accountUlid = metadataResult.Item?.account_ulid;
 
       let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
 
@@ -198,7 +198,7 @@ export class ChatSessionService {
               SK: `${MESSAGE_SK_PREFIX}${ulid()}`,
               role: message.role,
               content: JSON.stringify(message.content),
-              createdAt: now,
+              _createdAt_: now,
             } satisfies ChatSessionMessageRecord,
           }),
         );
@@ -208,12 +208,13 @@ export class ChatSessionService {
         new UpdateCommand({
           TableName: table,
           Key: { PK: sessionPk, SK: METADATA_SK },
-          UpdateExpression: "SET createdAt = if_not_exists(createdAt, :now), lastMessageAt = :now",
+          UpdateExpression: "SET #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now",
+          ExpressionAttributeNames: { "#createdAt": "_createdAt_", "#lastUpdated": "_lastUpdated_" },
           ExpressionAttributeValues: { ":now": now },
         }),
       );
 
-      // Also update lastMessageAt on the account-scoped session pointer so
+      // Also update _lastUpdated_ on the account-scoped session pointer so
       // per-account "sessions sorted by recency" queries stay accurate. The
       // condition guards against creating a partial pointer for legacy
       // sessions that never got one; if the pointer does not exist, this
@@ -225,8 +226,9 @@ export class ChatSessionService {
             new UpdateCommand({
               TableName: table,
               Key: { PK: `A#${accountUlid}`, SK: sessionPk },
-              UpdateExpression: "SET lastMessageAt = :now",
+              UpdateExpression: "SET #lastUpdated = :now",
               ConditionExpression: "attribute_exists(PK)",
+              ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
               ExpressionAttributeValues: { ":now": now },
             }),
           );
