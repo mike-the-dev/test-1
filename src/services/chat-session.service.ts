@@ -215,31 +215,27 @@ export class ChatSessionService {
 
       this.logger.log(`Stored messages [sessionUlid=${sessionUlid} count=${newMessages.length}]`);
 
-      const reversedMessages = [...messages].reverse();
+      // Concatenate text from every assistant message emitted during this turn.
+      // Handles the case where Claude speaks text alongside an inline tool_use in an
+      // earlier iteration and then returns an empty end_turn message after the tool
+      // result — the text belongs to the user-facing reply even though it is not in
+      // the final assistant message.
+      const assistantMessagesThisTurn = newMessages.filter((message) => message.role === "assistant");
 
-      const lastAssistantMessage = reversedMessages.find((message) => message.role === "assistant");
+      const textParts: string[] = [];
 
-      if (!lastAssistantMessage) {
-        this.logger.warn(`No assistant message found in conversation [sessionUlid=${sessionUlid}]`);
-        return "";
+      for (const assistantMessage of assistantMessagesThisTurn) {
+        for (const block of assistantMessage.content) {
+          if (block.type === "text" && block.text) {
+            textParts.push(block.text);
+          }
+        }
       }
 
-      const assistantContent = lastAssistantMessage.content;
-
-      const textBlocks = assistantContent.filter((block) => block.type === "text");
-
-      const textParts = textBlocks.map((block) => {
-        if (block.type === "text") {
-          return block.text;
-        }
-
-        return "";
-      });
-
-      const finalText = textParts.join("");
+      const finalText = textParts.join("\n\n").trim();
 
       if (!finalText) {
-        this.logger.warn(`No text blocks in final assistant message [sessionUlid=${sessionUlid}]`);
+        this.logger.warn(`No text blocks across any assistant messages this turn [sessionUlid=${sessionUlid}]`);
       }
 
       return finalText;

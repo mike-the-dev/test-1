@@ -300,6 +300,61 @@ describe("ChatSessionService", () => {
       expect(result).toBe(expectedReply);
     });
 
+    it("returns text from an earlier assistant message when the final assistant message is empty", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "Contact info saved successfully." });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            { type: "text", text: "Nice to meet you, Michael! Could I get your last name?" },
+            {
+              type: "tool_use",
+              id: "toolu_01",
+              name: "collect_contact_info",
+              input: { firstName: "Michael" },
+            },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [],
+          stop_reason: "end_turn",
+        });
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Sure its Michael");
+
+      expect(result).toBe("Nice to meet you, Michael! Could I get your last name?");
+    });
+
+    it("concatenates text from multiple assistant messages across a tool loop into a single reply", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "ok" });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            { type: "text", text: "Let me check that for you." },
+            { type: "tool_use", id: "toolu_01", name: "save_user_fact", input: { key: "k", value: "v" } },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "All set!" }],
+          stop_reason: "end_turn",
+        });
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      expect(result).toBe("Let me check that for you.\n\nAll set!");
+    });
+
     it("queries with begins_with SK prefix to exclude METADATA items from history", async () => {
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
