@@ -80,9 +80,10 @@ describe("ListServicesTool", () => {
           slug: "botox",
           variants: [
             {
+              id: "01VARIANTID000000000000000",
               name: "Units",
               options: [
-                { value: "20 units", price: 20000, compare_price: 25000 },
+                { id: "01OPTIONID0000000000000000", value: "20 units", price: 20000, compare_price: 25000 },
               ],
             },
           ],
@@ -139,7 +140,9 @@ describe("ListServicesTool", () => {
       expect(botox.ribbon_text).toBe("Popular");
       expect(botox.slug).toBe("botox");
       expect(botox.variants).toHaveLength(1);
+      expect(botox.variants[0].variant_id).toBe("01VARIANTID000000000000000");
       expect(botox.variants[0].name).toBe("Units");
+      expect(botox.variants[0].options[0].option_id).toBe("01OPTIONID0000000000000000");
       expect(botox.variants[0].options[0].value).toBe("20 units");
       expect(botox.variants[0].options[0].price_usd).toBe(200);
       expect(botox.variants[0].options[0].compare_price_usd).toBe(250);

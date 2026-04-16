@@ -28,6 +28,7 @@ const configuration = () => ({
   webChat: {
     corsAllowAll: process.env.WEB_CHAT_CORS_ALLOW_ALL === "true",
     domainGsiName: process.env.DYNAMODB_ACCOUNTS_DOMAIN_GSI_NAME || "GSI1",
+    checkoutBaseUrlOverride: process.env.CHECKOUT_BASE_URL_OVERRIDE,
   },
 });
 

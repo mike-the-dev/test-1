@@ -36,6 +36,7 @@ function resolveOptionPrice(option: Record<string, NativeAttributeValue>, fallba
 function trimVariantOption(option: Record<string, NativeAttributeValue>, priceInCents: number): ServiceVariantOption {
   const optionPrice = resolveOptionPrice(option, priceInCents);
   return {
+    option_id: String(option.id ?? ""),
     value: String(option.value ?? ""),
     price_usd: trimPrice(optionPrice),
     compare_price_usd: trimComparePrice(option.compare_price, optionPrice),
@@ -56,6 +57,7 @@ function toRecordArray(value: NativeAttributeValue | undefined): Record<string, 
 function trimVariant(variant: Record<string, NativeAttributeValue>, priceInCents: number): ServiceVariant {
   const options = toRecordArray(variant.options);
   return {
+    variant_id: String(variant.id ?? ""),
     name: String(variant.name ?? ""),
     options: options.map((option) => {
       return trimVariantOption(option, priceInCents);
@@ -169,7 +171,7 @@ export class ListServicesTool implements ChatTool {
     });
 
     this.logger.debug(
-      `list_services executed [sessionUlid=${context.sessionUlid} accountUlid=${context.accountUlid} count=${trimmed.length}]`,
+      `list_services executed [sessionUlid=${context.sessionUlid} accountUlid=${context.accountUlid} rawCount=${items.length} filteredCount=${filtered.length} finalCount=${trimmed.length}]`,
     );
 
     return { result: JSON.stringify({ services: trimmed, count: trimmed.length }) };

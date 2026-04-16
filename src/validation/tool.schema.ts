@@ -32,3 +32,26 @@ export type SendEmailInput = z.infer<typeof sendEmailInputSchema>;
 
 export const listServicesInputSchema = z.object({}).strict();
 export type ListServicesInput = z.infer<typeof listServicesInputSchema>;
+
+export const createGuestCartInputSchema = z
+  .object({
+    items: z
+      .array(
+        z
+          .object({
+            service_id: z.string().startsWith("S#"),
+            variant_id: z.string().optional(),
+            option_id: z.string().optional(),
+            quantity: z.number().int().positive().max(20).default(1),
+          })
+          .refine(
+            (item) => (item.variant_id === undefined) === (item.option_id === undefined),
+            { message: "variant_id and option_id must both be provided or both be omitted" },
+          ),
+      )
+      .min(1)
+      .max(20),
+  })
+  .strict();
+
+export type CreateGuestCartInput = z.infer<typeof createGuestCartInputSchema>;

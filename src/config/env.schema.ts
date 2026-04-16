@@ -27,6 +27,7 @@ export const envSchema = z
     // preprocess receives undefined; undefined === "true" is false; z.boolean() accepts
     // false; .default(false) is a no-op.
     WEB_CHAT_CORS_ALLOW_ALL: z.preprocess((val) => val === "true", z.boolean()).default(false),
+    CHECKOUT_BASE_URL_OVERRIDE: z.string().url().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.WEB_CHAT_CORS_ALLOW_ALL === true && data.APP_ENV === "prod") {

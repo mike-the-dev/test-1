@@ -1,3 +1,4 @@
 - [DynamoDB as-assertion handling](feedback_as_assertions.md) — how to remove banned `as` casts at DynamoDB SDK read boundaries without breaking type safety
 - [Domain type prefixing in types files](project_type_prefixing.md) — all types in src/types/<Domain>.ts must be prefixed with the domain name (ChatSession, EmailReply, etc.)
 - [Test mock typing without as-assertions](feedback_test_mock_typing.md) — use `ReturnType<typeof factoryFn>` and inferred return types to avoid `as jest.Mock` casts
+- [NativeAttributeValue array helpers in tool files](feedback_nativeattributevalue_helpers.md) — toRecordArray/toNativeArray helpers replace banned Array.isArray and as-casts in tool execute() methods
