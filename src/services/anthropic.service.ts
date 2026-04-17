@@ -32,20 +32,37 @@ export class AnthropicService {
       };
     });
 
+    // System prompt is structured as a single text block with cache_control
+    // so Anthropic caches the full static prefix (tools render before system,
+    // so a breakpoint on the system block caches tools + system together).
+    // Every turn re-sends the same system prompt + tool definitions, so this
+    // is the highest-leverage caching point — reads are billed at ~0.1x
+    // versus the 1.25x write premium paid once per 5-minute window.
+    const cachedSystem: Anthropic.TextBlockParam[] | undefined = systemPrompt
+      ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
+      : undefined;
+
     let response: Anthropic.Message;
 
     try {
       response = await this.client.messages.create({
         model: this.anthropicConfig.model,
-        max_tokens: 1024,
+        max_tokens: 16000,
         messages: messages,
         ...(sdkTools.length > 0 ? { tools: sdkTools } : {}),
-        ...(systemPrompt ? { system: systemPrompt } : {}),
+        ...(cachedSystem ? { system: cachedSystem } : {}),
       });
     } catch (error) {
       this.logger.error("Anthropic API call failed", error);
       throw error;
     }
+
+    const cacheRead = response.usage.cache_read_input_tokens ?? 0;
+    const cacheCreate = response.usage.cache_creation_input_tokens ?? 0;
+
+    this.logger.debug(
+      `Anthropic response [input=${response.usage.input_tokens} output=${response.usage.output_tokens} cacheRead=${cacheRead} cacheCreate=${cacheCreate}]`,
+    );
 
     const contentBlocks: ChatContentBlock[] = [];
 
