@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
@@ -14,6 +14,7 @@ export class OriginAllowlistService {
   private readonly logger = new Logger(OriginAllowlistService.name);
 
   private readonly cache = new Map<string, OriginAllowlistCacheEntry>();
+  private readonly ulidCache = new Map<string, OriginAllowlistCacheEntry>();
   private readonly gsiName: string;
 
   constructor(
@@ -87,6 +88,43 @@ export class OriginAllowlistService {
     } catch (error: unknown) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(`Origin check: DynamoDB error [errorType=${errorName}]`);
+      return null;
+    }
+  }
+
+  async verifyAccountActive(accountUlid: string): Promise<string | null> {
+    const cached = this.ulidCache.get(accountUlid);
+
+    if (cached !== undefined && Date.now() < cached.expiresAt) {
+      this.logger.debug(`Account check: cache hit [accountUlid=${accountUlid} active=${cached.accountUlid !== null}]`);
+      return cached.accountUlid;
+    }
+
+    const tableName = this.databaseConfig.conversationsTable;
+    const pk = `A#${accountUlid}`;
+
+    try {
+      const result = await this.dynamoClient.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { PK: pk, SK: pk },
+        }),
+      );
+
+      const item = result.Item;
+
+      if (!item || item.entity !== "ACCOUNT" || item.status?.is_active !== true) {
+        this.ulidCache.set(accountUlid, { accountUlid: null, expiresAt: Date.now() + NEGATIVE_TTL_MS });
+        this.logger.debug(`Account check: denied [accountUlid=${accountUlid}]`);
+        return null;
+      }
+
+      this.ulidCache.set(accountUlid, { accountUlid, expiresAt: Date.now() + POSITIVE_TTL_MS });
+      this.logger.debug(`Account check: resolved [accountUlid=${accountUlid}]`);
+      return accountUlid;
+    } catch (error: unknown) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(`Account check: DynamoDB error [errorType=${errorName}]`);
       return null;
     }
   }

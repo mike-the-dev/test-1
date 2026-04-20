@@ -1,7 +1,7 @@
 import { Test, TestingModule } from "@nestjs/testing";
 import { ConfigService } from "@nestjs/config";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, QueryCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { mockClient } from "aws-sdk-client-mock";
 
 import { OriginAllowlistService } from "./origin-allowlist.service";
@@ -328,6 +328,103 @@ describe("OriginAllowlistService", () => {
       expect(calls[0].args[0].input.ExpressionAttributeValues).toEqual({
         ":pk": "DOMAIN#values.example.com",
         ":account": "ACCOUNT",
+      });
+    });
+  });
+
+  describe("verifyAccountActive", () => {
+    it("returns the ulid for an active account and caches with positive TTL", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { PK: `A#${ACCOUNT_ULID}`, SK: `A#${ACCOUNT_ULID}`, entity: "ACCOUNT", status: { is_active: true } },
+      });
+
+      const dateSpy = jest.spyOn(Date, "now");
+      dateSpy.mockReturnValue(1_000_000);
+
+      const result = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result).toBe(ACCOUNT_ULID);
+
+      ddbMock.reset();
+      const result2 = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result2).toBe(ACCOUNT_ULID);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    it("returns null for an inactive account and caches with negative TTL", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { PK: `A#${ACCOUNT_ULID}`, SK: `A#${ACCOUNT_ULID}`, entity: "ACCOUNT", status: { is_active: false } },
+      });
+
+      const result = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result).toBeNull();
+
+      ddbMock.reset();
+      const result2 = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result2).toBeNull();
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    it("returns null when no Item is found and caches with negative TTL", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+      const result = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result).toBeNull();
+
+      ddbMock.reset();
+      const result2 = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result2).toBeNull();
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    it("returns null when Item exists but entity is not ACCOUNT (defensive)", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { PK: `A#${ACCOUNT_ULID}`, SK: `A#${ACCOUNT_ULID}`, entity: "SESSION", status: { is_active: true } },
+      });
+
+      const result = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result).toBeNull();
+    });
+
+    it("returns null and does NOT cache when DynamoDB throws", async () => {
+      const dbError = Object.assign(new Error("Service unavailable"), { name: "ServiceUnavailableException" });
+      ddbMock.on(GetCommand).rejects(dbError);
+
+      const result = await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(result).toBeNull();
+
+      ddbMock.reset();
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+    });
+
+    it("re-queries DynamoDB after positive TTL (5 min) expires", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { PK: `A#${ACCOUNT_ULID}`, SK: `A#${ACCOUNT_ULID}`, entity: "ACCOUNT", status: { is_active: true } },
+      });
+
+      const dateSpy = jest.spyOn(Date, "now");
+      dateSpy.mockReturnValue(1_000_000);
+
+      await service.verifyAccountActive(ACCOUNT_ULID);
+
+      dateSpy.mockReturnValue(1_000_000 + 5 * 60 * 1000 + 1);
+      ddbMock.reset();
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+      await service.verifyAccountActive(ACCOUNT_ULID);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+    });
+
+    it("uses GetCommand with Key { PK: A#<ulid>, SK: A#<ulid> } against the conversations table", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+      await service.verifyAccountActive(ACCOUNT_ULID);
+
+      const calls = ddbMock.commandCalls(GetCommand);
+      expect(calls[0].args[0].input).toEqual({
+        TableName: TABLE_NAME,
+        Key: { PK: `A#${ACCOUNT_ULID}`, SK: `A#${ACCOUNT_ULID}` },
       });
     });
   });

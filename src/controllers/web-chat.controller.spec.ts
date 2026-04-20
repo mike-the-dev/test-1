@@ -11,9 +11,9 @@ import { WebChatController } from "./web-chat.controller";
 
 const VALID_GUEST_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const VALID_SESSION_ULID = "01BX5ZZKBKACTAV9WEVGEMMVS1";
+const VALID_ACCOUNT_ULID = "01ACCOUNTULID00000000000000";
+const VALID_ACCOUNT_ULID_WITH_PREFIX = `A#${VALID_ACCOUNT_ULID}`;
 const AGENT_NAME = "lead_capture";
-const ACCOUNT_ULID = "01ACCOUNTULID00000000000000";
-const ORIGIN = "https://example.com";
 
 const mockIdentityService = {
   lookupOrCreateSession: jest.fn(),
@@ -29,6 +29,7 @@ const mockAgentRegistry = {
 
 const mockOriginAllowlistService = {
   resolveAccountForOrigin: jest.fn(),
+  verifyAccountActive: jest.fn(),
 };
 
 describe("WebChatController", () => {
@@ -37,7 +38,7 @@ describe("WebChatController", () => {
   beforeEach(async () => {
     jest.clearAllMocks();
 
-    mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
+    mockOriginAllowlistService.verifyAccountActive.mockResolvedValue(VALID_ACCOUNT_ULID);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WebChatController],
@@ -57,131 +58,111 @@ describe("WebChatController", () => {
       mockAgentRegistry.getByName.mockReturnValue(null);
 
       await expect(
-        controller.createSession(ORIGIN, { agentName: "unknown_agent", guestUlid: VALID_GUEST_ULID }),
+        controller.createSession({
+          agentName: "unknown_agent",
+          guestUlid: VALID_GUEST_ULID,
+          accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        }),
       ).rejects.toThrow(BadRequestException);
 
       expect(mockIdentityService.lookupOrCreateSession).not.toHaveBeenCalled();
     });
 
     it("returns sessionUlid and displayName on valid request with displayName set", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
-      });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "Lead Capture Assistant" });
       mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
 
-      const result = await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
+      const result = await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
 
       expect(result).toEqual({ sessionUlid: VALID_SESSION_ULID, displayName: "Lead Capture Assistant" });
-      expect(mockIdentityService.lookupOrCreateSession).toHaveBeenCalledWith("web", VALID_GUEST_ULID, AGENT_NAME, ACCOUNT_ULID);
-    });
-
-    it("falls back to agent.name when displayName is not set", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: undefined,
-      });
-      mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
-
-      const result = await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
-
-      expect(result.displayName).toBe(AGENT_NAME);
-    });
-
-    it("throws BadRequestException for invalid guestUlid shape (pipe)", () => {
-      const pipe = new ZodValidationPipe(createSessionSchema);
-
-      expect(() =>
-        pipe.transform({ agentName: AGENT_NAME, guestUlid: "not-a-ulid" }),
-      ).toThrow(BadRequestException);
-
-      expect(mockIdentityService.lookupOrCreateSession).not.toHaveBeenCalled();
-    });
-
-    it("passes resolved accountUlid to IdentityService when origin resolves successfully", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
-      });
-      mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
-      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
-
-      await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
-
       expect(mockIdentityService.lookupOrCreateSession).toHaveBeenCalledWith(
         "web",
         VALID_GUEST_ULID,
         AGENT_NAME,
-        ACCOUNT_ULID,
+        VALID_ACCOUNT_ULID,
       );
     });
 
-    it("throws InternalServerErrorException when resolveAccountForOrigin returns null", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
+    it("falls back to agent.name when displayName is not set", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: undefined });
+      mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
+
+      const result = await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
       });
-      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(null);
+
+      expect(result.displayName).toBe(AGENT_NAME);
+    });
+
+    it("strips the A# prefix from body.accountUlid before calling verifyAccountActive", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockIdentityService.lookupOrCreateSession.mockResolvedValue(VALID_SESSION_ULID);
+
+      await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(mockOriginAllowlistService.verifyAccountActive).toHaveBeenCalledWith(VALID_ACCOUNT_ULID);
+      expect(mockOriginAllowlistService.verifyAccountActive).not.toHaveBeenCalledWith(VALID_ACCOUNT_ULID_WITH_PREFIX);
+    });
+
+    it("throws InternalServerErrorException when verifyAccountActive returns null", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockOriginAllowlistService.verifyAccountActive.mockResolvedValue(null);
 
       await expect(
-        controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID }),
+        controller.createSession({
+          agentName: AGENT_NAME,
+          guestUlid: VALID_GUEST_ULID,
+          accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        }),
       ).rejects.toThrow(InternalServerErrorException);
+
+      expect(mockIdentityService.lookupOrCreateSession).not.toHaveBeenCalled();
     });
 
-    it("throws InternalServerErrorException when origin header is missing (undefined)", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
-      });
+    it("pipe rejects body missing accountUlid", () => {
+      const pipe = new ZodValidationPipe(createSessionSchema);
 
-      await expect(
-        controller.createSession(undefined as unknown as string, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID }),
-      ).rejects.toThrow(InternalServerErrorException);
+      expect(() =>
+        pipe.transform({ agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID }),
+      ).toThrow(BadRequestException);
     });
 
-    it("uses body.hostDomain for account resolution when provided, ignoring the origin header", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
-      });
-      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
+    it("pipe rejects accountUlid missing the A# prefix", () => {
+      const pipe = new ZodValidationPipe(createSessionSchema);
 
-      const HOST_DOMAIN = "shop.wellnessrevolutiontx.instapaytient.com";
-
-      await controller.createSession(
-        "https://chat.instapaytient.com",
-        { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID, hostDomain: HOST_DOMAIN },
-      );
-
-      expect(mockOriginAllowlistService.resolveAccountForOrigin).toHaveBeenCalledWith(HOST_DOMAIN);
-      expect(mockOriginAllowlistService.resolveAccountForOrigin).not.toHaveBeenCalledWith("https://chat.instapaytient.com");
+      expect(() =>
+        pipe.transform({ agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID, accountUlid: VALID_ACCOUNT_ULID }),
+      ).toThrow(BadRequestException);
     });
 
-    it("falls back to origin header when hostDomain is omitted from the body", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
-      });
-      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(ACCOUNT_ULID);
+    it("pipe rejects accountUlid with a wrong-length ULID segment", () => {
+      const pipe = new ZodValidationPipe(createSessionSchema);
 
-      await controller.createSession(ORIGIN, { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID });
-
-      expect(mockOriginAllowlistService.resolveAccountForOrigin).toHaveBeenCalledWith(ORIGIN);
+      expect(() =>
+        pipe.transform({ agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID, accountUlid: "A#TOO_SHORT" }),
+      ).toThrow(BadRequestException);
     });
 
-    it("throws InternalServerErrorException when hostDomain does not resolve to any account", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({
-        name: AGENT_NAME,
-        displayName: "Lead Capture Assistant",
-      });
-      mockOriginAllowlistService.resolveAccountForOrigin.mockResolvedValue(null);
+    it("pipe rejects invalid guestUlid shape", () => {
+      const pipe = new ZodValidationPipe(createSessionSchema);
 
-      await expect(
-        controller.createSession(
-          "https://chat.instapaytient.com",
-          { agentName: AGENT_NAME, guestUlid: VALID_GUEST_ULID, hostDomain: "unknown.example.com" },
-        ),
-      ).rejects.toThrow(InternalServerErrorException);
+      expect(() =>
+        pipe.transform({
+          agentName: AGENT_NAME,
+          guestUlid: "not-a-ulid",
+          accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        }),
+      ).toThrow(BadRequestException);
     });
   });
 

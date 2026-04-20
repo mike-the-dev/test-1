@@ -1,7 +1,7 @@
 export interface WebChatCreateSessionRequest {
   agentName: string;
   guestUlid: string;
-  hostDomain?: string;
+  accountUlid: string;
 }
 
 export interface WebChatSendMessageRequest {
@@ -17,4 +17,3 @@ export interface WebChatCreateSessionResponse {
 export interface WebChatSendMessageResponse {
   reply: string;
 }
-

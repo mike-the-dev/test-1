@@ -3,20 +3,18 @@ import { z } from "zod";
 // 26-character Crockford base32: digits 0–9 and uppercase A–Z excluding I, L, O, U
 const ulidRegex = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 
-// Bare hostname only — no scheme, no path, no port. Lets the iframe pass its
-// host page's domain explicitly to the API since the browser-stamped Origin
-// header carries the iframe's own origin (the widget's deployment domain),
-// not the parent page's domain.
-const hostDomainRegex = /^[a-zA-Z0-9.-]+$/;
+// Account ULID as sent by the widget: the DynamoDB PK form "A#<26-char-ulid>".
+// The "A#" prefix is what the customer pastes into their embed snippet as
+// data-account-ulid. The controller strips it before calling the account
+// lookup; downstream code works with the raw ULID only.
+const accountUlidRegex = /^A#[0-9A-HJKMNP-TV-Z]{26}$/;
 
 export const createSessionSchema = z.object({
   agentName: z.string().min(1),
   guestUlid: z.string().regex(ulidRegex, "guestUlid must be a valid 26-character ULID"),
-  hostDomain: z
+  accountUlid: z
     .string()
-    .min(1)
-    .regex(hostDomainRegex, "hostDomain must be a bare hostname without scheme, path, or port")
-    .optional(),
+    .regex(accountUlidRegex, "accountUlid must be an A#-prefixed 26-character ULID"),
 });
 
 export const sendMessageSchema = z.object({

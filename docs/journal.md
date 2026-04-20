@@ -36,6 +36,27 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-19 — Web chat: swap `hostDomain` for `accountUlid` on session create
+
+**Goal:** Stop resolving the account from a GSI1 `DOMAIN#<host>` query on session create and start resolving it directly from an `accountUlid` sent in the body. Sets us up to authorize the widget on domains beyond the customer's primary ecommerce store without duplicating GSI entries.
+
+**What changed:**
+- Frontend snippet now carries the account ULID as `data-account-ulid="A#<ulid>"`. Widget reads it, passes it through the iframe URL, and includes it in the `POST /chat/web/sessions` body. `hostDomain` removed from the wire entirely.
+- Backend validation schema drops `hostDomain`, adds `accountUlid` as required (`^A#[0-9A-HJKMNP-TV-Z]{26}$`).
+- New `OriginAllowlistService.verifyAccountActive(ulid)` — direct `GetItem` on `{ PK: A#<ulid>, SK: A#<ulid> }`, with a separate `ulidCache` using the same 5-min positive / 1-min negative TTL pattern as the origin cache.
+- `WebChatController.createSession` no longer reads the `Origin` header or `body.hostDomain`; strips the `A#` prefix and calls `verifyAccountActive` instead.
+- Verified end-to-end with a Playwright user-flow run (3 user turns in a real conversation). Backend logs confirmed `Account check: resolved [accountUlid=…]` and `Session created [… source=accountUlid]` on every session create.
+
+**Decisions worth remembering:**
+- Kept the `A#` prefix on the wire (frontend sends `A#<ulid>`, backend strips before lookup). Customers copy-paste whatever we tell them to, so the extra two chars cost nothing and keeps the embed string visually distinct from session/guest ULIDs.
+- Did *not* add an `allowedEmbedOrigins` array on the account doc yet. Chose to keep this PR minimal and ship the follow-up in a separate change with Referer + CSP `frame-ancestors`, which together are the real parent-page boundary. Neither `hostDomain` (before) nor `accountUlid` (now) is a real security boundary — both are spoofable body fields. The lookup change is purely an efficiency + flexibility swap.
+- Left the CORS-layer Origin allowlist in `main.ts` untouched. It's a different layer and still serves a purpose.
+
+**Next:**
+- Follow-up PR: add `allowedEmbedOrigins: string[]` on account docs + Referer validation on `/embed` initial load + CSP `frame-ancestors` set from the approved list. That's the actual parent-page enforcement.
+
+---
+
 ## 2026-04-19 — Empirical A/B test: prompt caching + Sonnet switch deliver ~90% cost reduction
 
 **Goal:** Validate under real Playwright-driven traffic that the prompt caching + model switch shipped on 2026-04-16 (commit `5d2da46b`) actually deliver the expected cost savings. Spun out of a "$5 of API credits lasted 8 days" observation — wanted receipts, not estimates.
