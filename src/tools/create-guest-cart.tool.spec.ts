@@ -188,7 +188,27 @@ describe("CreateGuestCartTool", () => {
       expect(parsed.customer_id).toBe(CUSTOMER_ULID);
       expect(parsed.checkout_url).toContain("/checkout?email=");
       expect(parsed.checkout_url).toContain(`customerId=${CUSTOMER_ULID}`);
+      expect(parsed.checkout_url).toContain(`aiSessionId=${SESSION_ULID}`);
       expect(parsed.checkout_url).toContain(CHECKOUT_OVERRIDE);
+    });
+
+    it("appends aiSessionId query param equal to the execution-context sessionUlid", async () => {
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
+        Item: makeContactInfoItem(),
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(BatchGetCommand).resolves({
+        Responses: { [TABLE_NAME]: [makeServiceItem()] },
+        UnprocessedKeys: {},
+      });
+
+      const result = await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 1 }] }, context);
+
+      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      const url = new URL(parsed.checkout_url);
+
+      expect(url.searchParams.get("aiSessionId")).toBe(SESSION_ULID);
     });
   });
 

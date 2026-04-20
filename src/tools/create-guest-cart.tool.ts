@@ -394,7 +394,7 @@ export class CreateGuestCartTool implements ChatTool {
     // e-commerce front-end middleware can set them as cookies directly and
     // bypass the default minting path, which lets the checkout page find the
     // cart we just wrote instead of redirecting to /shop on an empty cart.
-    const checkoutUrl = `${baseResult.base}/checkout?email=${encodeURIComponent(email)}&customerId=${customerUlid}&guestId=${guestUlid}&cartId=${cartUlid}`;
+    const checkoutUrl = `${baseResult.base}/checkout?email=${encodeURIComponent(email)}&customerId=${customerUlid}&guestId=${guestUlid}&cartId=${cartUlid}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
 
     // Step 11 — return result. Snake-case JSON keys so that when this payload
     // is stored inside the tool_result message record's content blob it stays
