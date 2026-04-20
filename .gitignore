@@ -24,3 +24,7 @@ Thumbs.db
 npm-debug.log
 yarn-debug.log
 yarn-error.log
+
+# local-only workflow file — populated per-task for the orchestration agent
+# and intentionally kept untracked. Reset/edit locally as needed.
+PROMPT_DISCOVERY_SERVICE.md
