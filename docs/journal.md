@@ -36,6 +36,33 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-20 — AI conversion attribution: chat-service half shipped (write-first, read-later)
+
+**Goal:** Lay the foundation for measuring AI-driven revenue with server-side accuracy. The single most important business question for an AI chat product is "how much money is the AI actually making?" — and until this commit, there was no way to close the loop between "a visitor chatted" and "a visitor paid." This ships the chat-service half: the session ULID now flows out on the checkout URL and the DynamoDB record shape is locked in as a shared contract.
+
+**What changed:**
+- `create_guest_cart` tool now appends `&aiSessionId=<sessionUlid>` to the checkout URL it generates. The param rides through the customer's ecommerce store, into Stripe Checkout Session `metadata.ai_session_id`, and out the back of the Stripe webhook — unmodified end to end by design.
+- New `src/types/Attribution.ts` defines two records that the ecommerce backend will write into this service's conversations table once a payment completes with `ai_session_id` in metadata:
+  - `AttributionRecord` — session-scoped (`PK=CHAT_SESSION#<ulid>, SK=ATTRIBUTION#<paymentIntentId>`). Carries amount, currency, stripe IDs, order ID, cart ID, status, and denormalized account/agent fields for reporting-time queries.
+  - `AttributionPointerRecord` — account-scoped (`PK=A#<ulid>, SK=ATTRIBUTION#<isoTimestamp>#<paymentIntentId>`). Lets you `Query` all conversions for an account sorted by time with no new GSI.
+- File header comment reserves `ATTRIBUTION_EVENT#` and `ATTRIBUTION_INFLUENCED#` SK namespaces for future extensions so v1 records remain cleanly filterable if/when funnel events or AI-influenced tracking land later.
+- Attribution model is **strict last-touch, payment-only.** A record exists if and only if a completed payment carried `ai_session_id` end-to-end. No "AI-influenced" bucket, no funnel-stage events, no read endpoints in v1.
+
+**Decisions worth remembering:**
+- **Attribution lives in this service's DB, not on the order record.** Three reasons: (1) this repo owns the conversations table, so extensions of `CHAT_SESSION#<ulid>` belong here by convention; (2) querying the ecommerce backend per metric would be a cross-service round trip on every dashboard render; (3) the order schema evolves for operational reasons (shipping, tax, disputes) that have nothing to do with AI, and coupling our analytics to that schema is a maintenance trap. Attribution is analytics data with its own lifecycle and its own home.
+- **One record per payment, never accumulated.** Each completed payment = a fresh `PutItem` with its own unique `SK = ATTRIBUTION#<paymentIntentId>`. No read-then-write accumulation, no per-session aggregate records. If a single session converts twice, there are two attribution records with the same `PK` and different `SK`s. Reporting does the math at query time (`SUM(amount_cents) GROUP BY session_id`). Immutable, atomic, race-free.
+- **Account-pointer record instead of a new GSI.** The "all revenue for account X this month" query is served by `Query PK=A#<accountUlid>, SK begins_with ATTRIBUTION#2026-04` — no GSI needed. This mirrors the session-pointer pattern already used in `identity.service.ts` for per-account session listings. Adds one extra `PutItem` per conversion in exchange for zero infrastructure work.
+- **Write-first, read-later.** v1 intentionally ships no read endpoints. The data model and key patterns are designed now so a dashboard can be layered in later without a schema migration. Premature dashboard-building is the wrong place to spend time when the write path isn't even closed yet.
+- **The ecommerce backend is the writer, not this service.** This repo emits the ULID into the URL and defines the record shape. All actual writes happen in the ecommerce repo's Stripe webhook handler. That's the cross-repo work still open (see Next).
+
+**Next:**
+- **Ecommerce backend extension (cross-repo, not done yet):** read `aiSessionId` off the checkout URL, persist it on the cart/order, pass it through to Stripe as `metadata.ai_session_id`, and in the payment-completed webhook handler write both `AttributionRecord` and `AttributionPointerRecord` into the conversations table. Until that lands, the URL param leaves this service but goes nowhere and no attribution records ever get written. This is the open loop.
+- Analytics read endpoints on this service (e.g. `GET /chat/web/accounts/:accountUlid/attribution`) once there's enough data to query usefully.
+- Refund handling: flip `status` to `"refunded"` on the matching attribution record when a refund webhook fires.
+- Still queued separately: CSP `frame-ancestors` as the browser-enforced companion to the Referer gate. Deprioritized for v1 per the 2026-04-20 Referer entry.
+
+---
+
 ## 2026-04-20 — Web chat: Referer-based embed authorization live end-to-end
 
 **Goal:** Close the "an attacker copies the embed snippet onto evil.com" gap by enforcing a parent-page boundary at iframe load time. Before this, the account ULID in the embed snippet was all a third party needed to impersonate a legit customer.
