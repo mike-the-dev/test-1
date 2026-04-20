@@ -1,10 +1,10 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { DynamoDBDocumentClient, QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, NativeAttributeValue, QueryCommand, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
-import { OriginAllowlistCacheEntry } from "../types/OriginAllowlist";
+import { EmbedAuthorizationCacheEntry, OriginAllowlistCacheEntry } from "../types/OriginAllowlist";
 
 const POSITIVE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const NEGATIVE_TTL_MS = 1 * 60 * 1000; // 1 minute
@@ -15,6 +15,7 @@ export class OriginAllowlistService {
 
   private readonly cache = new Map<string, OriginAllowlistCacheEntry>();
   private readonly ulidCache = new Map<string, OriginAllowlistCacheEntry>();
+  private readonly authorizationCache = new Map<string, EmbedAuthorizationCacheEntry>();
   private readonly gsiName: string;
 
   constructor(
@@ -127,6 +128,81 @@ export class OriginAllowlistService {
       this.logger.error(`Account check: DynamoDB error [errorType=${errorName}]`);
       return null;
     }
+  }
+
+  async isOriginAuthorizedForAccount(accountUlid: string, parentDomain: string): Promise<boolean> {
+    const normalizedDomain = this.normalizeOrigin(parentDomain);
+
+    if (normalizedDomain === null) {
+      this.logger.debug(`Embed auth: denied (malformed domain) [accountUlid=${accountUlid}]`);
+      return false;
+    }
+
+    const cacheKey = `${accountUlid}|${normalizedDomain}`;
+    const cached = this.authorizationCache.get(cacheKey);
+
+    if (cached !== undefined && Date.now() < cached.expiresAt) {
+      this.logger.debug(`Embed auth: cache hit [accountUlid=${accountUlid} authorized=${cached.authorized}]`);
+      return cached.authorized;
+    }
+
+    const tableName = this.databaseConfig.conversationsTable;
+    const pk = `A#${accountUlid}`;
+
+    try {
+      const result = await this.dynamoClient.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { PK: pk, SK: pk },
+        }),
+      );
+
+      const item = result.Item;
+
+      if (!item || item.entity !== "ACCOUNT" || item.status?.is_active !== true) {
+        this.authorizationCache.set(cacheKey, { authorized: false, expiresAt: Date.now() + NEGATIVE_TTL_MS });
+        this.logger.debug(`Embed auth: denied (account inactive or not found) [accountUlid=${accountUlid}]`);
+        return false;
+      }
+
+      const allowedOrigins = this.extractStringArray(item.allowed_embed_origins);
+
+      if (allowedOrigins.length === 0) {
+        this.authorizationCache.set(cacheKey, { authorized: false, expiresAt: Date.now() + NEGATIVE_TTL_MS });
+        this.logger.debug(`Embed auth: denied (no allowed_embed_origins) [accountUlid=${accountUlid}]`);
+        return false;
+      }
+
+      const authorized = allowedOrigins.some((entry) => {
+        const normalizedEntry = this.normalizeOrigin(entry);
+        return normalizedEntry !== null && normalizedEntry === normalizedDomain;
+      });
+
+      const ttl = authorized ? POSITIVE_TTL_MS : NEGATIVE_TTL_MS;
+      this.authorizationCache.set(cacheKey, { authorized, expiresAt: Date.now() + ttl });
+
+      this.logger.debug(`Embed auth: resolved [accountUlid=${accountUlid} authorized=${authorized}]`);
+
+      return authorized;
+    } catch (error: unknown) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(`Embed auth: DynamoDB error [errorType=${errorName}]`);
+      return false;
+    }
+  }
+
+  private extractStringArray(value: NativeAttributeValue | undefined): string[] {
+    if (!value) {
+      return [];
+    }
+
+    const candidate = value as unknown[];
+
+    if (!Number.isInteger(candidate.length)) {
+      return [];
+    }
+
+    return candidate.filter((entry): entry is string => typeof entry === "string");
   }
 
   private normalizeOrigin(origin: string): string | null {

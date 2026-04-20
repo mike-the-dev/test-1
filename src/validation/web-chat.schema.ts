@@ -9,6 +9,12 @@ const ulidRegex = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 // lookup; downstream code works with the raw ULID only.
 const accountUlidRegex = /^A#[0-9A-HJKMNP-TV-Z]{26}$/;
 
+// Strict bare hostname: labels separated by dots, letters/digits/hyphens only.
+// Rejects schemes ("://"), ports (":8080"), paths ("/foo"), query strings ("?x"),
+// and empty strings. Each label must start and end with an alphanumeric character.
+const parentDomainRegex =
+  /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
+
 // Generous upper bound: 100,000,000 cents = $1,000,000. Rejects obvious abuse
 // without constraining legit medical-spa budgets.
 const MAX_BUDGET_CENTS = 100_000_000;
@@ -38,6 +44,16 @@ export const sessionUlidParamSchema = z
   .string()
   .regex(ulidRegex, "sessionUlid must be a valid 26-character ULID");
 
+export const embedAuthorizeSchema = z.object({
+  accountUlid: z
+    .string()
+    .regex(accountUlidRegex, "accountUlid must be an A#-prefixed 26-character ULID"),
+  parentDomain: z
+    .string()
+    .regex(parentDomainRegex, "parentDomain must be a bare hostname (no scheme, port, or path)"),
+});
+
 export type CreateSessionBody = z.infer<typeof createSessionSchema>;
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
 export type OnboardingBody = z.infer<typeof onboardingSchema>;
+export type EmbedAuthorizeBody = z.infer<typeof embedAuthorizeSchema>;

@@ -332,6 +332,185 @@ describe("OriginAllowlistService", () => {
     });
   });
 
+  describe("isOriginAuthorizedForAccount", () => {
+    const EMBED_ULID = "01KDNMGKTP23M8TJ0FRW70WYRT";
+
+    function buildActiveAccountItem(allowedOrigins?: string[]) {
+      return {
+        PK: `A#${EMBED_ULID}`,
+        SK: `A#${EMBED_ULID}`,
+        entity: "ACCOUNT",
+        status: { is_active: true },
+        ...(allowedOrigins !== undefined ? { allowed_embed_origins: allowedOrigins } : {}),
+      };
+    }
+
+    it("returns true for an active account with a matching domain", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["example.com"]) });
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(true);
+    });
+
+    it("returns false for an active account with a non-matching domain", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["other.com"]) });
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(false);
+    });
+
+    it("returns false for an active account with no allowed_embed_origins field", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem() });
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(false);
+    });
+
+    it("returns false for an active account with an empty allowed_embed_origins array", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem([]) });
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(false);
+    });
+
+    it("returns false for an inactive account", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { PK: `A#${EMBED_ULID}`, SK: `A#${EMBED_ULID}`, entity: "ACCOUNT", status: { is_active: false }, allowed_embed_origins: ["example.com"] },
+      });
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(false);
+    });
+
+    it("matches case-insensitively (DB has 'Example.COM', input is 'example.com')", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["Example.COM"]) });
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(true);
+    });
+
+    it("positive-TTL cache hit: second call returns true with no second GetCommand", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["example.com"]) });
+
+      const result1 = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result1).toBe(true);
+
+      ddbMock.reset();
+      const result2 = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result2).toBe(true);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    it("negative-TTL cache hit: second call returns false with no second GetCommand", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["other.com"]) });
+
+      const result1 = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result1).toBe(false);
+
+      ddbMock.reset();
+      const result2 = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result2).toBe(false);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    it("DynamoDB throws → returns false and does NOT write to cache (third call retries DB)", async () => {
+      const dbError = Object.assign(new Error("Service unavailable"), { name: "ServiceUnavailableException" });
+      ddbMock.on(GetCommand).rejects(dbError);
+
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(result).toBe(false);
+
+      // No cache entry: next call must retry DB
+      ddbMock.reset();
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+    });
+
+    it("uses GetItem Key { PK: 'A#<ulid>', SK: 'A#<ulid>' } against the conversations table", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+      await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+
+      const calls = ddbMock.commandCalls(GetCommand);
+      expect(calls[0].args[0].input).toEqual({
+        TableName: TABLE_NAME,
+        Key: { PK: `A#${EMBED_ULID}`, SK: `A#${EMBED_ULID}` },
+      });
+    });
+
+    it("normalizes parentDomain with scheme ('https://example.com' → 'example.com') before lookup", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["example.com"]) });
+
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "https://example.com");
+      expect(result).toBe(true);
+
+      const calls = ddbMock.commandCalls(GetCommand);
+      // Cache key uses normalized domain — the call happened once meaning normalization worked
+      expect(calls).toHaveLength(1);
+    });
+
+    it("normalizes parentDomain with port ('example.com:8080' → 'example.com') before lookup", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["example.com"]) });
+
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com:8080");
+      expect(result).toBe(true);
+    });
+
+    it("returns false without calling DynamoDB for malformed/empty parentDomain", async () => {
+      const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "   ");
+      expect(result).toBe(false);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    describe("operator-supplied weird entries in allowed_embed_origins", () => {
+      it("matches 'example.com' when DB has 'EXAMPLE.COM'", async () => {
+        ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["EXAMPLE.COM", "  shop.example.com  "]) });
+        const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+        expect(result).toBe(true);
+      });
+
+      it("matches 'shop.example.com' when DB has '  shop.example.com  ' (whitespace-padded)", async () => {
+        ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["EXAMPLE.COM", "  shop.example.com  "]) });
+        const result = await service.isOriginAuthorizedForAccount(EMBED_ULID, "shop.example.com");
+        expect(result).toBe(true);
+      });
+
+      it("filters non-string entries at the DB boundary (mixed-type array)", async () => {
+        const mixedItem = {
+          PK: `A#${EMBED_ULID}`,
+          SK: `A#${EMBED_ULID}`,
+          entity: "ACCOUNT",
+          status: { is_active: true },
+          allowed_embed_origins: ["good.com", 42, null],
+        };
+
+        ddbMock.on(GetCommand).resolves({ Item: mixedItem });
+        const authorized = await service.isOriginAuthorizedForAccount(EMBED_ULID, "good.com");
+        expect(authorized).toBe(true);
+
+        ddbMock.reset();
+        ddbMock.on(GetCommand).resolves({ Item: mixedItem });
+        const denied = await service.isOriginAuthorizedForAccount(EMBED_ULID, "other.com");
+        expect(denied).toBe(false);
+      });
+    });
+
+    it("authorizationCache is independent: a hit does not affect cache or ulidCache", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: buildActiveAccountItem(["example.com"]) });
+
+      // Seed authorizationCache via first call
+      await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      ddbMock.reset();
+
+      // Second call is a cache hit on authorizationCache; ulidCache should still be cold
+      await service.isOriginAuthorizedForAccount(EMBED_ULID, "example.com");
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+
+      // A verifyAccountActive call on the same ULID must still hit DynamoDB
+      // (ulidCache is untouched by the authorizationCache hit above)
+      ddbMock.on(GetCommand).resolves({
+        Item: { PK: `A#${EMBED_ULID}`, SK: `A#${EMBED_ULID}`, entity: "ACCOUNT", status: { is_active: true } },
+      });
+      await service.verifyAccountActive(EMBED_ULID);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+    });
+  });
+
   describe("verifyAccountActive", () => {
     it("returns the ulid for an active account and caches with positive TTL", async () => {
       ddbMock.on(GetCommand).resolves({

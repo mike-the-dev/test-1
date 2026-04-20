@@ -8,6 +8,7 @@ import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import {
   createSessionSchema,
+  embedAuthorizeSchema,
   onboardingSchema,
   sendMessageSchema,
   sessionUlidParamSchema,
@@ -37,6 +38,7 @@ const mockAgentRegistry = {
 const mockOriginAllowlistService = {
   resolveAccountForOrigin: jest.fn(),
   verifyAccountActive: jest.fn(),
+  isOriginAuthorizedForAccount: jest.fn(),
 };
 
 describe("WebChatController", () => {
@@ -298,6 +300,98 @@ describe("WebChatController", () => {
 
       expect(() =>
         pipe.transform({ sessionUlid: VALID_SESSION_ULID, message: "" }),
+      ).toThrow(BadRequestException);
+    });
+  });
+
+  describe("POST /embed/authorize — embedAuthorize", () => {
+    const VALID_PARENT_DOMAIN = "example.com";
+
+    it("returns { authorized: true } (HTTP 200) when service authorizes the domain", async () => {
+      mockOriginAllowlistService.isOriginAuthorizedForAccount.mockResolvedValue(true);
+
+      const result = await controller.embedAuthorize({
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        parentDomain: VALID_PARENT_DOMAIN,
+      });
+
+      expect(result).toEqual({ authorized: true });
+    });
+
+    it("returns { authorized: false } (HTTP 200) when service denies the domain — no exception thrown", async () => {
+      mockOriginAllowlistService.isOriginAuthorizedForAccount.mockResolvedValue(false);
+
+      const result = await controller.embedAuthorize({
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        parentDomain: VALID_PARENT_DOMAIN,
+      });
+
+      expect(result).toEqual({ authorized: false });
+    });
+
+    it("strips the A# prefix before calling the service (service never receives the prefixed form)", async () => {
+      mockOriginAllowlistService.isOriginAuthorizedForAccount.mockResolvedValue(true);
+
+      await controller.embedAuthorize({
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        parentDomain: VALID_PARENT_DOMAIN,
+      });
+
+      expect(mockOriginAllowlistService.isOriginAuthorizedForAccount).toHaveBeenCalledWith(
+        VALID_ACCOUNT_ULID,
+        VALID_PARENT_DOMAIN,
+      );
+      expect(mockOriginAllowlistService.isOriginAuthorizedForAccount).not.toHaveBeenCalledWith(
+        VALID_ACCOUNT_ULID_WITH_PREFIX,
+        VALID_PARENT_DOMAIN,
+      );
+    });
+
+    it("pipe rejects missing accountUlid", () => {
+      const pipe = new ZodValidationPipe(embedAuthorizeSchema);
+
+      expect(() =>
+        pipe.transform({ parentDomain: VALID_PARENT_DOMAIN }),
+      ).toThrow(BadRequestException);
+    });
+
+    it("pipe rejects missing parentDomain", () => {
+      const pipe = new ZodValidationPipe(embedAuthorizeSchema);
+
+      expect(() =>
+        pipe.transform({ accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX }),
+      ).toThrow(BadRequestException);
+    });
+
+    it("pipe rejects malformed accountUlid (missing A# prefix)", () => {
+      const pipe = new ZodValidationPipe(embedAuthorizeSchema);
+
+      expect(() =>
+        pipe.transform({ accountUlid: VALID_ACCOUNT_ULID, parentDomain: VALID_PARENT_DOMAIN }),
+      ).toThrow(BadRequestException);
+    });
+
+    it("pipe rejects parentDomain with a scheme ('https://example.com')", () => {
+      const pipe = new ZodValidationPipe(embedAuthorizeSchema);
+
+      expect(() =>
+        pipe.transform({ accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX, parentDomain: "https://example.com" }),
+      ).toThrow(BadRequestException);
+    });
+
+    it("pipe rejects parentDomain with a port ('example.com:8080')", () => {
+      const pipe = new ZodValidationPipe(embedAuthorizeSchema);
+
+      expect(() =>
+        pipe.transform({ accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX, parentDomain: "example.com:8080" }),
+      ).toThrow(BadRequestException);
+    });
+
+    it("pipe rejects empty string parentDomain", () => {
+      const pipe = new ZodValidationPipe(embedAuthorizeSchema);
+
+      expect(() =>
+        pipe.transform({ accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX, parentDomain: "" }),
       ).toThrow(BadRequestException);
     });
   });

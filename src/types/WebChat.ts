@@ -40,3 +40,7 @@ export interface WebChatHistoryMessage {
 export interface WebChatMessagesResponse {
   messages: WebChatHistoryMessage[];
 }
+
+export interface WebChatEmbedAuthorizeResponse {
+  authorized: boolean;
+}

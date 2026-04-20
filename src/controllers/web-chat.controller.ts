@@ -17,17 +17,19 @@ import { IdentityService } from "../services/identity.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import {
   WebChatCreateSessionResponse,
+  WebChatEmbedAuthorizeResponse,
   WebChatMessagesResponse,
   WebChatOnboardingResponse,
   WebChatSendMessageResponse,
 } from "../types/WebChat";
 import {
   createSessionSchema,
+  embedAuthorizeSchema,
   onboardingSchema,
   sendMessageSchema,
   sessionUlidParamSchema,
 } from "../validation/web-chat.schema";
-import type { CreateSessionBody, OnboardingBody, SendMessageBody } from "../validation/web-chat.schema";
+import type { CreateSessionBody, EmbedAuthorizeBody, OnboardingBody, SendMessageBody } from "../validation/web-chat.schema";
 
 @Controller("chat/web")
 export class WebChatController {
@@ -111,6 +113,15 @@ export class WebChatController {
   ): Promise<WebChatMessagesResponse> {
     const messages = await this.chatSessionService.getHistoryForClient(sessionUlid);
     return { messages };
+  }
+
+  @Post("embed/authorize")
+  async embedAuthorize(
+    @Body(new ZodValidationPipe(embedAuthorizeSchema)) body: EmbedAuthorizeBody,
+  ): Promise<WebChatEmbedAuthorizeResponse> {
+    const rawAccountUlid = body.accountUlid.slice(2);
+    const authorized = await this.originAllowlistService.isOriginAuthorizedForAccount(rawAccountUlid, body.parentDomain);
+    return { authorized };
   }
 
   @Post("messages")
