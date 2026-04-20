@@ -36,6 +36,36 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-19 — Empirical A/B test: prompt caching + Sonnet switch deliver ~90% cost reduction
+
+**Goal:** Validate under real Playwright-driven traffic that the prompt caching + model switch shipped on 2026-04-16 (commit `5d2da46b`) actually deliver the expected cost savings. Spun out of a "$5 of API credits lasted 8 days" observation — wanted receipts, not estimates.
+
+**What we did:**
+- Temporarily disabled caching (removed the `cache_control` marker — in-memory only, never committed). Ran a 3-message Playwright conversation. Captured the 4 Anthropic debug-log lines as baseline (Test A).
+- Re-enabled caching to match the shipped state. Ran an identical 3-message Playwright conversation with a fresh guest/session (`localStorage` cleared). Captured 4 debug-log lines (Test B).
+- Compared per-call `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens` using the debug log line added in `5d2da46b`.
+
+**What we confirmed:**
+- Static prefix (shopping_assistant's system prompt + 3 tool schemas) is exactly **2,734 tokens**.
+- Call 1 of a fresh conversation writes the cache (cacheCreate=2734, one-time 1.25× premium ≈ $0.002 on Sonnet 4.6 pricing).
+- Calls 2+ within the 5-minute TTL hit cleanly — `cacheRead=2734` on every subsequent call, identical byte-for-byte.
+- **Caching alone** (holding Sonnet constant): **44% cost reduction** on the 4-call test conversation. Extrapolates to ~65–70% on a typical 10-turn conversation as the one-time write premium amortizes across more reads.
+- **Combined stack vs pre-2026-04-16 baseline** (Opus 4.6 + no caching): **~90% per-conversation cost reduction.** The $5 credit spend that used to last ~8 days now projects to last ~8 weeks at the same traffic.
+- Cache is model-scoped — the Sonnet cache is independent; switching from Opus invalidated the old cache but Sonnet built its own cleanly from turn 1.
+
+**Decisions worth remembering:**
+- **Break-even for the cache-write premium is exactly 2 calls per conversation.** Every realistic conversation clears it comfortably, so caching is always a net win — no length threshold to worry about.
+- **The `[AnthropicService] Anthropic response [input=X output=Y cacheRead=Z cacheCreate=W]` debug log is the only non-billing-side way to spot silent cache invalidators.** If someone accidentally interpolates a timestamp, session ID, or other dynamic content into the system prompt in the future, `cacheRead` will drop to 0 across requests with no other symptom. Keep that log line in production.
+- **`input_tokens` in the API response is the UNCACHED remainder only.** Full tokens processed per call = `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`. Tripped me up reading Test B numbers initially — worth a mental note for future cost audits.
+- **Per-conversation dollar cost at current shipping stack** (Sonnet 4.6 + cache, 3-message chat): ~$0.026. A typical 10-turn shopping flow should land around $0.05–$0.09. Multiply by projected traffic to model monthly cost.
+
+**Next:**
+- No code changes — the 2026-04-16 implementation is correct and empirically validated.
+- Optional future optimization: adding a second `cache_control` breakpoint on the second-to-last message would also cache conversation history, squeezing another ~10–15% for long conversations (20+ turns). Not worth doing until real user telemetry shows long conversations are common.
+- CSS/UX polish on the widget iframe is still the next logical deliverable per the 2026-04-16 queue.
+
+---
+
 ## 2026-04-16 — M3 shipped + iframe-origin deploy-blocker fix
 
 **Goal:** Ship the browser-side half of the chat stack (a Next.js widget project deployed to `chat.instapaytient.com` in its own repo) and resolve the iframe-origin/CORS gap that would have silently broken production on first deploy.
