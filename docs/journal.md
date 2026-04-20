@@ -36,6 +36,32 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-20 — Web chat: Referer-based embed authorization live end-to-end
+
+**Goal:** Close the "an attacker copies the embed snippet onto evil.com" gap by enforcing a parent-page boundary at iframe load time. Before this, the account ULID in the embed snippet was all a third party needed to impersonate a legit customer.
+
+**What changed:**
+- New backend endpoint `POST /chat/web/embed/authorize` taking `{ accountUlid, parentDomain }` and returning `200 { authorized: boolean }` in both allow and deny cases (deny is not an error — the frontend needs boolean control flow, not exception handling).
+- New `OriginAllowlistService.isOriginAuthorizedForAccount(accountUlid, parentDomain)` with its own `authorizationCache` map keyed by `${accountUlid}|${parentDomain}`. Same 5-min positive / 1-min negative TTL pattern as the origin and ULID caches, but isolated so keys can't collide.
+- New `allowed_embed_origins?: string[]` field on the account DynamoDB document. Populated manually for v1 (`["localhost"]` on the test account); admin UI is a later task.
+- Frontend (`/embed`) restructured into a Server Component that reads the HTTP `Referer` header via `next/headers`, calls the authorize endpoint server-to-server with a 3-second `AbortSignal` timeout, and branches between the widget and an error card. `useSearchParams` moved into a client subcomponent.
+- Both sides fail closed — missing Referer, network error, timeout, or `authorized: false` all render the same error card.
+- Verified end-to-end: backend logs show `Embed auth: resolved [authorized=true]` firing before the normal session-creation flow.
+
+**Decisions worth remembering:**
+- **Operator-typo normalization is backend's job.** The service normalizes both the incoming `parentDomain` and each entry in `allowed_embed_origins` at comparison time (trim + lowercase + strip scheme/port via `normalizeOrigin`). Operators paste raw strings into DynamoDB — "EXAMPLE.COM" and " shop.example.com " both match correctly. Explicit tests lock this in. Don't push normalization onto the operator; they'll get it wrong.
+- **`extractStringArray` filters non-string entries at the DB boundary** (`.filter((v): v is string => typeof v === "string")`). If someone ever writes a mixed-type array, `normalizeOrigin(42)` would throw inside `.some()` and reject the whole account. One-line filter closes that gap without defensive try/catch everywhere downstream.
+- **200 on deny, not 4xx.** Deny is a valid control-flow outcome for the frontend, not an exception. A `ForbiddenException` would have forced error-handling code paths around what should just be a boolean branch.
+- **Referer reading must happen server-side** (Server Component or route handler). Flagged this to the frontend orchestrator up front — without it, their planner would have tried to read `document.referrer` client-side, which isn't the same guarantee and misses the initial iframe-load request where the real HTTP Referer is set.
+
+**Next:**
+- **CSP `frame-ancestors`** — the browser-enforced layer that pairs with Referer. Reads the same `allowed_embed_origins` array, emits a header on the `/embed` response so the browser itself refuses to render the iframe on unapproved parents. Backend exposes a way to fetch the list (or we inline it during SSR); frontend sets the header. Roughly 30% of the remaining embed-attack surface.
+- Admin surface to populate `allowed_embed_origins` per account (manual DynamoDB edits don't scale).
+- Rate-limit the authorize endpoint (currently unauthenticated; low risk, but worth budgeting).
+- Cache-bust hook so newly added domains don't wait up to 5 minutes for the positive-TTL window to expire.
+
+---
+
 ## 2026-04-20 — Web chat: server-authoritative onboarding + history hydration
 
 **Goal:** Upgrade web chat sessions to be server-authoritative for onboarding state (splash completion + budget) and hydratable for returning visitors. Drops the "auto-send budget as an opening user message" hack in favor of structured fields on the session METADATA record, and gives the agent budget context via an uncached second system block so the 2,734-token static prefix keeps cache-hitting.
