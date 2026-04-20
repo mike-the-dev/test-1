@@ -9,6 +9,7 @@ import { ToolRegistryService } from "../tools/tool-registry.service";
 import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ChatSessionMessageRecord, ChatSessionNewMessage } from "../types/ChatSession";
 import { ChatContentBlock, ChatToolResultContentBlock, ChatToolUseContentBlock } from "../types/ChatContent";
+import { WebChatHistoryMessage } from "../types/WebChat";
 
 const MAX_TOOL_LOOP_ITERATIONS = 10;
 const MAX_HISTORY_MESSAGES = 50;
@@ -66,6 +67,7 @@ export class ChatSessionService {
       const rawAgentName: string | undefined = metadataResult.Item?.agent_name;
       const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
       const accountUlid = metadataResult.Item?.account_id;
+      const budgetCents: number | undefined = metadataResult.Item?.budget_cents;
 
       let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
 
@@ -136,7 +138,17 @@ export class ChatSessionService {
           `Calling Anthropic [sessionUlid=${sessionUlid} iteration=${iteration} historySize=${messages.length}]`,
         );
 
-        const response = await this.anthropicService.sendMessage([...messages], filteredDefinitions, agent.systemPrompt);
+        const dynamicSystemContext =
+          budgetCents !== undefined && budgetCents !== null
+            ? `User context: shopping budget is approximately $${Math.floor(budgetCents / 100)}.`
+            : undefined;
+
+        const response = await this.anthropicService.sendMessage(
+          [...messages],
+          filteredDefinitions,
+          agent.systemPrompt,
+          dynamicSystemContext,
+        );
 
         const assistantMessage = buildAssistantMessage(response.content);
 
@@ -273,5 +285,67 @@ export class ChatSessionService {
       this.logger.error(`Failed to handle message [sessionUlid=${sessionUlid}]`, error);
       throw error;
     }
+  }
+
+  async getHistoryForClient(sessionUlid: string): Promise<WebChatHistoryMessage[]> {
+    const table = this.databaseConfig.conversationsTable;
+    const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
+
+    const result = await this.dynamoDb.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
+        ExpressionAttributeValues: {
+          ":pk": sessionPk,
+          ":skPrefix": MESSAGE_SK_PREFIX,
+        },
+        ScanIndexForward: true,
+      }),
+    );
+
+    const items = result.Items ?? [];
+    const history: WebChatHistoryMessage[] = [];
+
+    for (const item of items) {
+      const role = item.role;
+
+      if (role !== "user" && role !== "assistant") {
+        continue;
+      }
+
+      let blocks: ChatContentBlock[];
+
+      try {
+        blocks = JSON.parse(item.content);
+      } catch {
+        blocks = [{ type: "text", text: item.content }];
+      }
+
+      const textParts: string[] = [];
+
+      for (const block of blocks) {
+        if (block.type === "text" && block.text) {
+          textParts.push(block.text);
+        }
+      }
+
+      const content = textParts.join("\n\n").trim();
+
+      if (!content) {
+        continue;
+      }
+
+      const rawSk = typeof item.SK === "string" ? item.SK : "";
+      const id = rawSk.startsWith(MESSAGE_SK_PREFIX) ? rawSk.slice(MESSAGE_SK_PREFIX.length) : rawSk;
+
+      history.push({
+        id,
+        role,
+        content,
+        timestamp: item._createdAt_,
+      });
+    }
+
+    return history;
   }
 }

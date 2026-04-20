@@ -41,18 +41,61 @@ describe("IdentityService", () => {
     it("returns existing sessionUlid when identity record is found", async () => {
       const existingSessionUlid = "01EXISTING00000000000000000";
 
-      ddbMock.on(GetCommand).resolves({
-        Item: {
-          PK: "IDENTITY#discord#123456789",
-          SK: "IDENTITY#discord#123456789",
-          session_id:existingSessionUlid,
-          _createdAt_: "2026-01-01T00:00:00.000Z",
-        },
-      });
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({
+          Item: {
+            PK: "IDENTITY#discord#123456789",
+            SK: "IDENTITY#discord#123456789",
+            session_id: existingSessionUlid,
+            _createdAt_: "2026-01-01T00:00:00.000Z",
+          },
+        })
+        .resolvesOnce({
+          Item: {
+            PK: `CHAT_SESSION#${existingSessionUlid}`,
+            SK: "METADATA",
+            onboarding_completed_at: "2026-04-19T20:00:00.000Z",
+            budget_cents: 100_000,
+          },
+        });
 
       const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
 
-      expect(result).toBe(existingSessionUlid);
+      expect(result).toEqual({
+        sessionUlid: existingSessionUlid,
+        onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        budgetCents: 100_000,
+      });
+    });
+
+    it("returns null onboarding fields when METADATA record lacks them", async () => {
+      const existingSessionUlid = "01EXISTING00000000000000000";
+
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({
+          Item: {
+            PK: "IDENTITY#discord#123456789",
+            SK: "IDENTITY#discord#123456789",
+            session_id: existingSessionUlid,
+            _createdAt_: "2026-01-01T00:00:00.000Z",
+          },
+        })
+        .resolvesOnce({
+          Item: {
+            PK: `CHAT_SESSION#${existingSessionUlid}`,
+            SK: "METADATA",
+          },
+        });
+
+      const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+
+      expect(result).toEqual({
+        sessionUlid: existingSessionUlid,
+        onboardingCompletedAt: null,
+        budgetCents: null,
+      });
     });
 
     it("does not issue a PutCommand on a cache hit", async () => {
@@ -78,7 +121,9 @@ describe("IdentityService", () => {
 
       const result = await service.lookupOrCreateSession("discord", "987654321", "lead_capture");
 
-      expect(result).toMatch(/^[0-9A-Z]{26}$/);
+      expect(result.sessionUlid).toMatch(/^[0-9A-Z]{26}$/);
+      expect(result.onboardingCompletedAt).toBeNull();
+      expect(result.budgetCents).toBeNull();
 
       const putCalls = ddbMock.commandCalls(PutCommand);
 
@@ -87,7 +132,7 @@ describe("IdentityService", () => {
       const identityPut = putCalls[0].args[0].input;
 
       expect(identityPut.Item?.PK).toBe("IDENTITY#discord#987654321");
-      expect(identityPut.Item?.session_id).toBe(result);
+      expect(identityPut.Item?.session_id).toBe(result.sessionUlid);
       expect(identityPut.ConditionExpression).toBe("attribute_not_exists(PK)");
     });
 
@@ -117,7 +162,7 @@ describe("IdentityService", () => {
           Item: {
             PK: "IDENTITY#discord#111111111",
             SK: "IDENTITY#discord#111111111",
-            session_id:winnerSessionUlid,
+            session_id: winnerSessionUlid,
             _createdAt_: "2026-01-01T00:00:00.000Z",
           },
         });
@@ -126,7 +171,11 @@ describe("IdentityService", () => {
 
       const result = await service.lookupOrCreateSession("discord", "111111111", "lead_capture");
 
-      expect(result).toBe(winnerSessionUlid);
+      expect(result).toEqual({
+        sessionUlid: winnerSessionUlid,
+        onboardingCompletedAt: null,
+        budgetCents: null,
+      });
     });
 
     it("writes the initial METADATA record with source on a cache miss", async () => {
@@ -142,7 +191,7 @@ describe("IdentityService", () => {
 
       const metadataUpdate = updateCalls[0].args[0].input;
 
-      expect(metadataUpdate.Key?.PK).toBe(`CHAT_SESSION#${result}`);
+      expect(metadataUpdate.Key?.PK).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(metadataUpdate.Key?.SK).toBe("METADATA");
       expect(metadataUpdate.ExpressionAttributeValues?.[":source"]).toBe("discord");
       expect(metadataUpdate.ExpressionAttributeNames?.["#src"]).toBe("source");
@@ -249,9 +298,9 @@ describe("IdentityService", () => {
       const pointerPut = putCalls[1].args[0].input;
 
       expect(pointerPut.Item?.PK).toBe("A#01ACCOUNTULID00000000000000");
-      expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result}`);
+      expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(pointerPut.Item?.entity).toBe("CHAT_SESSION");
-      expect(pointerPut.Item?.session_id).toBe(result);
+      expect(pointerPut.Item?.session_id).toBe(result.sessionUlid);
       expect(pointerPut.Item?.agent_name).toBe("shopping_assistant");
       expect(pointerPut.Item?.source).toBe("web");
       expect(typeof pointerPut.Item?._createdAt_).toBe("string");
@@ -294,7 +343,7 @@ describe("IdentityService", () => {
         "01ACCOUNTULID00000000000000",
       );
 
-      expect(result).toMatch(/^[0-9A-Z]{26}$/);
+      expect(result.sessionUlid).toMatch(/^[0-9A-Z]{26}$/);
     });
 
     it("existing session lookup with accountUlid passed — no UpdateCommand call at all", async () => {
@@ -310,6 +359,44 @@ describe("IdentityService", () => {
       await service.lookupOrCreateSession("web", "existing-guest", "shopping_assistant", "01ACCOUNTULID00000000000000");
 
       expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+    });
+  });
+
+  describe("updateOnboarding", () => {
+    const SESSION_ULID = "01TESTSESSION0000000000000";
+
+    it("writes onboarding_completed_at and budget_cents to the METADATA record", async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const result = await service.updateOnboarding(SESSION_ULID, 100_000);
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const input = updateCalls[0].args[0].input;
+      expect(input.Key?.PK).toBe(`CHAT_SESSION#${SESSION_ULID}`);
+      expect(input.Key?.SK).toBe("METADATA");
+      expect(input.UpdateExpression).toContain("onboarding_completed_at = :now");
+      expect(input.UpdateExpression).toContain("budget_cents = :cents");
+      expect(input.ExpressionAttributeValues?.[":cents"]).toBe(100_000);
+      expect(input.ConditionExpression).toBe("attribute_exists(PK)");
+
+      expect(result.sessionUlid).toBe(SESSION_ULID);
+      expect(result.budgetCents).toBe(100_000);
+      expect(typeof result.onboardingCompletedAt).toBe("string");
+      expect(result.onboardingCompletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("propagates ConditionalCheckFailedException so the controller can map it to 404", async () => {
+      const conditionalError = Object.assign(new Error("Condition failed"), {
+        name: "ConditionalCheckFailedException",
+      });
+
+      ddbMock.on(UpdateCommand).rejects(conditionalError);
+
+      await expect(service.updateOnboarding(SESSION_ULID, 50_000)).rejects.toMatchObject({
+        name: "ConditionalCheckFailedException",
+      });
     });
   });
 });

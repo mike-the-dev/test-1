@@ -36,6 +36,30 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-20 — Web chat: server-authoritative onboarding + history hydration
+
+**Goal:** Upgrade web chat sessions to be server-authoritative for onboarding state (splash completion + budget) and hydratable for returning visitors. Drops the "auto-send budget as an opening user message" hack in favor of structured fields on the session METADATA record, and gives the agent budget context via an uncached second system block so the 2,734-token static prefix keeps cache-hitting.
+
+**What changed:**
+- `ChatSessionMetadataRecord` gains `onboarding_completed_at?: string` and `budget_cents?: number`. On the wire, the same values are surfaced as `onboardingCompletedAt: string | null` and `budgetCents: number | null`.
+- `POST /chat/web/sessions` response now includes the onboarding fields. For a new session both are `null`; for a returning session (existing identity pointer) `IdentityService.lookupOrCreateSession` does a second `GetItem` on the METADATA record and echoes the stored values.
+- New `POST /chat/web/sessions/:sessionUlid/onboarding` with body `{ budgetCents }` (positive integer, $1M cap). Maps `ConditionalCheckFailedException` from the `attribute_exists(PK)` guard to 404.
+- New `GET /chat/web/sessions/:sessionUlid/messages` returns `{ messages: [{ id, role, content, timestamp }] }` — filters out user records whose content is only `tool_result` blocks and assistant records that carry only `tool_use` blocks. Tool-loop scaffolding stays on the backend; the UI only sees real user/assistant text.
+- `AnthropicService.sendMessage` accepts an optional fourth `dynamicSystemContext` argument and appends it as a **second, uncached** `TextBlockParam`. The first block keeps `cache_control`, so the static prefix still hits the 5-minute prompt cache and the per-session budget note only costs ~1 extra input token per call.
+- `ChatSessionService.handleMessage` reads `budget_cents` off METADATA and passes `"User context: shopping budget is approximately $X."` into the new arg. Verified end-to-end: the first call after onboarding shows `cacheCreate=2734` (static prefix cached) with `input_tokens` one higher than the no-budget baseline.
+
+**Decisions worth remembering:**
+- **Cents everywhere, not dollars.** `budgetCents` on the wire and `budget_cents` in DynamoDB. Integer math from the browser input through the DB. No float edge cases possible; matches Affirm's convention; converting at the boundary was the less-clean option we considered and rejected.
+- **`onboardingCompletedAt: string | null`, not a boolean.** Same `!!` semantics at the edge, free analytics (when did each visitor splash), and lets us add an expiry window later without a schema change. Zero added complexity on the frontend.
+- **Budget goes in a second system block, not by extending the cached prefix.** The 2026-04-19 A/B test showed the ~90% cost reduction hinges on the 2,734-token static prefix cache-hitting. Concatenating the budget into the cached prompt would've broken that per-session. Second block keeps the cache intact and is the standard Anthropic pattern for this.
+- **Tool-use/tool-result blocks stay server-side.** `getHistoryForClient` filters them out; the UI only sees user + assistant text. Keeps the ChatPanel hydration dumb and the stored message log complete.
+
+**Next:**
+- Still queued from the prior plan: `allowedEmbedOrigins: string[]` on accounts + `Referer` check on `/embed` initial load + `Content-Security-Policy: frame-ancestors`. That's the actual parent-page enforcement layer.
+- Optional: backend-generated welcome turn on onboarding so returning-visitor-like warmth lands on first paint for new visitors too. Static empty-state ("What are you shopping for today?") is fine for v1; revisit if conversion on the empty state is weak.
+
+---
+
 ## 2026-04-19 — Web chat: swap `hostDomain` for `accountUlid` on session create
 
 **Goal:** Stop resolving the account from a GSI1 `DOMAIN#<host>` query on session create and start resolving it directly from an `accountUlid` sent in the body. Sets us up to authorize the widget on domains beyond the customer's primary ecommerce store without duplicating GSI entries.

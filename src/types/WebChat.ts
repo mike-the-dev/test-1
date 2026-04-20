@@ -12,8 +12,31 @@ export interface WebChatSendMessageRequest {
 export interface WebChatCreateSessionResponse {
   sessionUlid: string;
   displayName: string;
+  onboardingCompletedAt: string | null;
+  budgetCents: number | null;
 }
 
 export interface WebChatSendMessageResponse {
   reply: string;
+}
+
+export interface WebChatOnboardingRequest {
+  budgetCents: number;
+}
+
+export interface WebChatOnboardingResponse {
+  sessionUlid: string;
+  onboardingCompletedAt: string;
+  budgetCents: number;
+}
+
+export interface WebChatHistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+export interface WebChatMessagesResponse {
+  messages: WebChatHistoryMessage[];
 }

@@ -57,7 +57,7 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
       try {
         this.logger.debug(`Received DM [user=${authorId} channel=${channelId}]`);
 
-        const sessionUlid = await this.identityService.lookupOrCreateSession(
+        const { sessionUlid } = await this.identityService.lookupOrCreateSession(
           "discord",
           authorId,
           DISCORD_DEFAULT_AGENT_NAME,
@@ -92,7 +92,7 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
       try {
         this.logger.debug(`Received Discord message [user=${authorId} channel=${channelId}]`);
 
-        const sessionUlid = await this.identityService.lookupOrCreateSession(
+        const { sessionUlid } = await this.identityService.lookupOrCreateSession(
           "discord",
           authorId,
           DISCORD_DEFAULT_AGENT_NAME,

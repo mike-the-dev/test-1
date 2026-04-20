@@ -9,6 +9,10 @@ const ulidRegex = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 // lookup; downstream code works with the raw ULID only.
 const accountUlidRegex = /^A#[0-9A-HJKMNP-TV-Z]{26}$/;
 
+// Generous upper bound: 100,000,000 cents = $1,000,000. Rejects obvious abuse
+// without constraining legit medical-spa budgets.
+const MAX_BUDGET_CENTS = 100_000_000;
+
 export const createSessionSchema = z.object({
   agentName: z.string().min(1),
   guestUlid: z.string().regex(ulidRegex, "guestUlid must be a valid 26-character ULID"),
@@ -22,5 +26,18 @@ export const sendMessageSchema = z.object({
   message: z.string().min(1, "message must not be empty"),
 });
 
+export const onboardingSchema = z.object({
+  budgetCents: z
+    .number()
+    .int("budgetCents must be an integer")
+    .positive("budgetCents must be positive")
+    .max(MAX_BUDGET_CENTS, "budgetCents exceeds the maximum allowed value"),
+});
+
+export const sessionUlidParamSchema = z
+  .string()
+  .regex(ulidRegex, "sessionUlid must be a valid 26-character ULID");
+
 export type CreateSessionBody = z.infer<typeof createSessionSchema>;
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
+export type OnboardingBody = z.infer<typeof onboardingSchema>;

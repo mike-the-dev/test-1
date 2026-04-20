@@ -32,7 +32,12 @@ export class IdentityService {
     private readonly databaseConfig: DatabaseConfigService,
   ) {}
 
-  async lookupOrCreateSession(source: string, externalId: string, defaultAgentName: string, accountUlid?: string): Promise<string> {
+  async lookupOrCreateSession(
+    source: string,
+    externalId: string,
+    defaultAgentName: string,
+    accountUlid?: string,
+  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string | null; budgetCents: number | null }> {
     const table = this.databaseConfig.conversationsTable;
     const pk = `${IDENTITY_PK_PREFIX}${source}#${externalId}`;
 
@@ -50,7 +55,17 @@ export class IdentityService {
 
       this.logger.debug(`Found existing session [sessionUlid=${sessionUlid} source=${source} externalId=${externalId}]`);
 
-      return sessionUlid;
+      const metadataResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: table,
+          Key: { PK: `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`, SK: METADATA_SK },
+        }),
+      );
+
+      const onboardingCompletedAt = metadataResult.Item?.onboarding_completed_at ?? null;
+      const budgetCents = metadataResult.Item?.budget_cents ?? null;
+
+      return { sessionUlid, onboardingCompletedAt, budgetCents };
     }
 
     const sessionUlid = ulid();
@@ -91,7 +106,7 @@ export class IdentityService {
 
         this.logger.warn(`Race condition recovered on identity creation [source=${source} externalId=${externalId} sessionUlid=${winnerSessionUlid}]`);
 
-        return winnerSessionUlid;
+        return { sessionUlid: winnerSessionUlid, onboardingCompletedAt: null, budgetCents: null };
       }
 
       throw error;
@@ -172,6 +187,30 @@ export class IdentityService {
       }
     }
 
-    return sessionUlid;
+    return { sessionUlid, onboardingCompletedAt: null, budgetCents: null };
+  }
+
+  async updateOnboarding(
+    sessionUlid: string,
+    budgetCents: number,
+  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string; budgetCents: number }> {
+    const table = this.databaseConfig.conversationsTable;
+    const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
+    const now = new Date().toISOString();
+
+    await this.dynamoDb.send(
+      new UpdateCommand({
+        TableName: table,
+        Key: { PK: sessionPk, SK: METADATA_SK },
+        UpdateExpression: "SET onboarding_completed_at = :now, budget_cents = :cents, #lastUpdated = :now",
+        ConditionExpression: "attribute_exists(PK)",
+        ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
+        ExpressionAttributeValues: { ":now": now, ":cents": budgetCents },
+      }),
+    );
+
+    this.logger.debug(`Onboarding recorded [sessionUlid=${sessionUlid} budgetCents=${budgetCents}]`);
+
+    return { sessionUlid, onboardingCompletedAt: now, budgetCents };
   }
 }

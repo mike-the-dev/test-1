@@ -1,13 +1,33 @@
-import { BadRequestException, Body, Controller, InternalServerErrorException, Logger, Post } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+  Param,
+  Post,
+} from "@nestjs/common";
 
 import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import { ChatSessionService } from "../services/chat-session.service";
 import { IdentityService } from "../services/identity.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
-import { WebChatCreateSessionResponse, WebChatSendMessageResponse } from "../types/WebChat";
-import { createSessionSchema, sendMessageSchema } from "../validation/web-chat.schema";
-import type { CreateSessionBody, SendMessageBody } from "../validation/web-chat.schema";
+import {
+  WebChatCreateSessionResponse,
+  WebChatMessagesResponse,
+  WebChatOnboardingResponse,
+  WebChatSendMessageResponse,
+} from "../types/WebChat";
+import {
+  createSessionSchema,
+  onboardingSchema,
+  sendMessageSchema,
+  sessionUlidParamSchema,
+} from "../validation/web-chat.schema";
+import type { CreateSessionBody, OnboardingBody, SendMessageBody } from "../validation/web-chat.schema";
 
 @Controller("chat/web")
 export class WebChatController {
@@ -41,14 +61,56 @@ export class WebChatController {
       throw new InternalServerErrorException("Unable to resolve account for request.");
     }
 
-    const sessionUlid = await this.identityService.lookupOrCreateSession("web", body.guestUlid, body.agentName, accountUlid);
+    const sessionResult = await this.identityService.lookupOrCreateSession(
+      "web",
+      body.guestUlid,
+      body.agentName,
+      accountUlid,
+    );
+
     const displayName = agent.displayName ?? agent.name;
 
     this.logger.debug(
-      `Session created [agentName=${body.agentName} sessionUlid=${sessionUlid} accountUlid=${accountUlid} source=accountUlid]`,
+      `Session created [agentName=${body.agentName} sessionUlid=${sessionResult.sessionUlid} accountUlid=${accountUlid} source=accountUlid]`,
     );
 
-    return { sessionUlid, displayName };
+    return {
+      sessionUlid: sessionResult.sessionUlid,
+      displayName,
+      onboardingCompletedAt: sessionResult.onboardingCompletedAt,
+      budgetCents: sessionResult.budgetCents,
+    };
+  }
+
+  @Post("sessions/:sessionUlid/onboarding")
+  async completeOnboarding(
+    @Param("sessionUlid", new ZodValidationPipe(sessionUlidParamSchema)) sessionUlid: string,
+    @Body(new ZodValidationPipe(onboardingSchema)) body: OnboardingBody,
+  ): Promise<WebChatOnboardingResponse> {
+    try {
+      const result = await this.identityService.updateOnboarding(sessionUlid, body.budgetCents);
+
+      this.logger.debug(`Onboarding completed [sessionUlid=${sessionUlid} budgetCents=${body.budgetCents}]`);
+
+      return result;
+    } catch (error: unknown) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+
+      if (errorName === "ConditionalCheckFailedException") {
+        throw new NotFoundException(`Session not found: ${sessionUlid}`);
+      }
+
+      this.logger.error(`Onboarding update failed [sessionUlid=${sessionUlid} errorType=${errorName}]`);
+      throw new InternalServerErrorException("Failed to record onboarding.");
+    }
+  }
+
+  @Get("sessions/:sessionUlid/messages")
+  async getMessages(
+    @Param("sessionUlid", new ZodValidationPipe(sessionUlidParamSchema)) sessionUlid: string,
+  ): Promise<WebChatMessagesResponse> {
+    const messages = await this.chatSessionService.getHistoryForClient(sessionUlid);
+    return { messages };
   }
 
   @Post("messages")

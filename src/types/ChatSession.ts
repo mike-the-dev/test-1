@@ -50,6 +50,8 @@ export interface ChatSessionMetadataRecord {
   source: string;
   agent_name?: string;
   account_id?: string;
+  onboarding_completed_at?: string;
+  budget_cents?: number;
 }
 
 /**

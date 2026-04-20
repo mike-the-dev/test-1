@@ -636,5 +636,123 @@ describe("ChatSessionService", () => {
 
       expect(calledTools).toEqual(fakeDefs);
     });
+
+    it("passes a dynamic system context with budget when budget_cents is set on METADATA", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", budget_cents: 100_000 },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      const call = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(call[3]).toBe("User context: shopping budget is approximately $1000.");
+    });
+
+    it("omits the dynamic system context when budget_cents is not set", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      const call = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(call[3]).toBeUndefined();
+    });
+  });
+
+  describe("getHistoryForClient", () => {
+    const SESSION_ULID = "01HISTSESSION0000000000000";
+
+    it("filters out user records whose content is only tool_result blocks and assistant records with no text", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01TEXTUSER00000000000000000",
+            role: "user",
+            content: JSON.stringify([{ type: "text", text: "Hi" }]),
+            _createdAt_: "2026-04-19T20:00:00.000Z",
+          },
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01TOOLRESULT00000000000000",
+            role: "user",
+            content: JSON.stringify([{ type: "tool_result", tool_use_id: "x", content: "{}" }]),
+            _createdAt_: "2026-04-19T20:00:01.000Z",
+          },
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01ASSISTANT00000000000000",
+            role: "assistant",
+            content: JSON.stringify([
+              { type: "text", text: "Hello!" },
+              { type: "tool_use", id: "x", name: "foo", input: {} },
+            ]),
+            _createdAt_: "2026-04-19T20:00:02.000Z",
+          },
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01ASSISTANTNOTEXT000000000",
+            role: "assistant",
+            content: JSON.stringify([{ type: "tool_use", id: "y", name: "foo", input: {} }]),
+            _createdAt_: "2026-04-19T20:00:03.000Z",
+          },
+        ],
+      });
+
+      const history = await service.getHistoryForClient(SESSION_ULID);
+
+      expect(history).toEqual([
+        { id: "01TEXTUSER00000000000000000", role: "user", content: "Hi", timestamp: "2026-04-19T20:00:00.000Z" },
+        { id: "01ASSISTANT00000000000000", role: "assistant", content: "Hello!", timestamp: "2026-04-19T20:00:02.000Z" },
+      ]);
+    });
+
+    it("returns an empty array when no messages exist", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const history = await service.getHistoryForClient(SESSION_ULID);
+
+      expect(history).toEqual([]);
+    });
+
+    it("queries messages in ascending chronological order", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      await service.getHistoryForClient(SESSION_ULID);
+
+      const call = ddbMock.commandCalls(QueryCommand)[0].args[0].input;
+      expect(call.KeyConditionExpression).toBe("PK = :pk AND begins_with(SK, :skPrefix)");
+      expect(call.ExpressionAttributeValues?.[":pk"]).toBe(`CHAT_SESSION#${SESSION_ULID}`);
+      expect(call.ExpressionAttributeValues?.[":skPrefix"]).toBe("MESSAGE#");
+      expect(call.ScanIndexForward).toBe(true);
+    });
+
+    it("handles legacy plain-string content by returning it as the text payload", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01LEGACY0000000000000000000",
+            role: "assistant",
+            content: "Legacy plain text",
+            _createdAt_: "2026-04-19T20:00:00.000Z",
+          },
+        ],
+      });
+
+      const history = await service.getHistoryForClient(SESSION_ULID);
+
+      expect(history).toEqual([
+        { id: "01LEGACY0000000000000000000", role: "assistant", content: "Legacy plain text", timestamp: "2026-04-19T20:00:00.000Z" },
+      ]);
+    });
   });
 });

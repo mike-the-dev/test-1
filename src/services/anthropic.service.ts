@@ -19,6 +19,7 @@ export class AnthropicService {
     messages: ChatSessionMessage[],
     tools: ChatToolDefinition[],
     systemPrompt?: string,
+    dynamicSystemContext?: string,
   ): Promise<ChatAnthropicResponse> {
     this.logger.debug(
       `Sending messages to Anthropic [count=${messages.length} toolCount=${tools.length} model=${this.anthropicConfig.model}]`,
@@ -32,15 +33,21 @@ export class AnthropicService {
       };
     });
 
-    // System prompt is structured as a single text block with cache_control
-    // so Anthropic caches the full static prefix (tools render before system,
-    // so a breakpoint on the system block caches tools + system together).
-    // Every turn re-sends the same system prompt + tool definitions, so this
-    // is the highest-leverage caching point — reads are billed at ~0.1x
-    // versus the 1.25x write premium paid once per 5-minute window.
-    const cachedSystem: Anthropic.TextBlockParam[] | undefined = systemPrompt
-      ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
-      : undefined;
+    // The first block carries cache_control and is the cached static prefix
+    // (system prompt + tool schemas). Any dynamic per-session context (e.g.
+    // the visitor's budget) goes in a second, uncached text block so it does
+    // not invalidate the cache on the static prefix.
+    const systemBlocks: Anthropic.TextBlockParam[] = [];
+
+    if (systemPrompt) {
+      systemBlocks.push({ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } });
+    }
+
+    if (dynamicSystemContext) {
+      systemBlocks.push({ type: "text", text: dynamicSystemContext });
+    }
+
+    const cachedSystem: Anthropic.TextBlockParam[] | undefined = systemBlocks.length > 0 ? systemBlocks : undefined;
 
     let response: Anthropic.Message;
 
