@@ -28,3 +28,7 @@ yarn-error.log
 # local-only workflow file — populated per-task for the orchestration agent
 # and intentionally kept untracked. Reset/edit locally as needed.
 PROMPT_DISCOVERY_SERVICE.md
+
+# local-only scratch file for pasting Playwright transcripts during dev.
+# Not meant to be tracked.
+CURRENT_CONVERSATION_TEST.md
