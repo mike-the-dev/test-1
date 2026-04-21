@@ -18,6 +18,14 @@ const MESSAGE_SK_PREFIX = "MESSAGE#";
 const METADATA_SK = "METADATA";
 const DEFAULT_AGENT_NAME = "lead_capture";
 
+// Shared convention between frontend and backend: the frontend auto-sends this
+// exact string as a user message after onboarding completes so the agent can
+// open the conversation with a greeting. Both sides hide this message from
+// the visible UI — it exists only to satisfy Anthropic's user-first message
+// requirement and to trigger the agent's opening turn. Do not change this
+// string without a coordinated frontend update.
+const SESSION_KICKOFF_MARKER = "__SESSION_KICKOFF__";
+
 function buildUserTextMessage(text: string): ChatSessionNewMessage {
   return { role: "user", content: [{ type: "text", text }] };
 }
@@ -413,6 +421,10 @@ export class ChatSessionService {
       const content = textParts.join("\n\n").trim();
 
       if (!content) {
+        continue;
+      }
+
+      if (content === SESSION_KICKOFF_MARKER) {
         continue;
       }
 

@@ -872,6 +872,38 @@ describe("ChatSessionService", () => {
       expect(call.ScanIndexForward).toBe(true);
     });
 
+    it("filters out the session-kickoff marker so it never appears in hydrated history", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01KICKOFF0000000000000000",
+            role: "user",
+            content: JSON.stringify([{ type: "text", text: "__SESSION_KICKOFF__" }]),
+            _createdAt_: "2026-04-20T21:00:00.000Z",
+          },
+          {
+            PK: `CHAT_SESSION#${SESSION_ULID}`,
+            SK: "MESSAGE#01ASSISTANTWELCOME000000000",
+            role: "assistant",
+            content: JSON.stringify([{ type: "text", text: "Welcome, Mike!" }]),
+            _createdAt_: "2026-04-20T21:00:01.000Z",
+          },
+        ],
+      });
+
+      const history = await service.getHistoryForClient(SESSION_ULID);
+
+      expect(history).toEqual([
+        {
+          id: "01ASSISTANTWELCOME000000000",
+          role: "assistant",
+          content: "Welcome, Mike!",
+          timestamp: "2026-04-20T21:00:01.000Z",
+        },
+      ]);
+    });
+
     it("handles legacy plain-string content by returning it as the text payload", async () => {
       ddbMock.on(QueryCommand).resolves({
         Items: [
