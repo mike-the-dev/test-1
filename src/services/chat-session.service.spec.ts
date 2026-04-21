@@ -354,9 +354,9 @@ describe("ChatSessionService", () => {
 
       mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
 
-      const reply = await service.handleMessage("01TESTSESSION0000000000000", "Message");
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Message");
 
-      expect(reply).toBe("Hello from assistant");
+      expect(result.reply).toBe("Hello from assistant");
     });
 
     it("returns the text from the final assistant message", async () => {
@@ -373,7 +373,7 @@ describe("ChatSessionService", () => {
 
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Question?");
 
-      expect(result).toBe(expectedReply);
+      expect(result.reply).toBe(expectedReply);
     });
 
     it("returns text from an earlier assistant message when the final assistant message is empty", async () => {
@@ -403,7 +403,7 @@ describe("ChatSessionService", () => {
 
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Sure its Michael");
 
-      expect(result).toBe("Nice to meet you, Michael! Could I get your last name?");
+      expect(result.reply).toBe("Nice to meet you, Michael! Could I get your last name?");
     });
 
     it("concatenates text from multiple assistant messages across a tool loop into a single reply", async () => {
@@ -428,7 +428,7 @@ describe("ChatSessionService", () => {
 
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
 
-      expect(result).toBe("Let me check that for you.\n\nAll set!");
+      expect(result.reply).toBe("Let me check that for you.\n\nAll set!");
     });
 
     it("queries with begins_with SK prefix to exclude METADATA items from history", async () => {
@@ -497,7 +497,7 @@ describe("ChatSessionService", () => {
         { key: "employer", value: "Acme Corp" },
         { sessionUlid: "01TESTSESSION0000000000000", accountUlid: "01ACCOUNTULID00000000000000" },
       );
-      expect(result).toBe("Got it, I have saved that you work at Acme Corp.");
+      expect(result.reply).toBe("Got it, I have saved that you work at Acme Corp.");
     });
 
     it("sends all tool_result blocks in a single user message when multiple tool_use blocks appear", async () => {
@@ -635,6 +635,97 @@ describe("ChatSessionService", () => {
       const [, calledTools] = mockAnthropicService.sendMessage.mock.calls[0];
 
       expect(calledTools).toEqual(fakeDefs);
+    });
+
+    it("returns an empty toolOutputs array when no tools fire during the turn", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      expect(result.toolOutputs).toEqual([]);
+    });
+
+    it("returns toolOutputs pairing each tool_result with its tool_use name (generic across any agent/tool)", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "FACT_SAVED_PAYLOAD" });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            { type: "tool_use", id: "toolu_01", name: "save_user_fact", input: { key: "k", value: "v" } },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+        });
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      expect(result.toolOutputs).toEqual([
+        { tool_name: "save_user_fact", content: "FACT_SAVED_PAYLOAD" },
+      ]);
+    });
+
+    it("includes is_error on a toolOutput entry when the tool result was flagged as an error", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "Tool exploded", isError: true });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            { type: "tool_use", id: "toolu_01", name: "save_user_fact", input: { key: "k", value: "v" } },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Apologies." }],
+          stop_reason: "end_turn",
+        });
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      expect(result.toolOutputs).toEqual([
+        { tool_name: "save_user_fact", content: "Tool exploded", is_error: true },
+      ]);
+    });
+
+    it("returns multiple toolOutputs when multiple tools fire in the same turn", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "ok" });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            { type: "tool_use", id: "toolu_01", name: "save_user_fact", input: { key: "a", value: "1" } },
+            { type: "tool_use", id: "toolu_02", name: "save_user_fact", input: { key: "b", value: "2" } },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Saved." }],
+          stop_reason: "end_turn",
+        });
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      expect(result.toolOutputs).toHaveLength(2);
+      expect(result.toolOutputs[0].tool_name).toBe("save_user_fact");
+      expect(result.toolOutputs[1].tool_name).toBe("save_user_fact");
     });
 
     it("passes a dynamic system context with budget when budget_cents is set on METADATA", async () => {

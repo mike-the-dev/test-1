@@ -24,7 +24,8 @@ import { AgentRegistryService } from "./agents/agent-registry.service";
 import { LeadCaptureAgent } from "./agents/lead-capture.agent";
 import { ShoppingAssistantAgent } from "./agents/shopping-assistant.agent";
 import { ListServicesTool } from "./tools/list-services.tool";
-import { CreateGuestCartTool } from "./tools/create-guest-cart.tool";
+import { PreviewCartTool } from "./tools/preview-cart.tool";
+import { GenerateCheckoutLinkTool } from "./tools/generate-checkout-link.tool";
 import { EmailReplyService } from "./services/email-reply.service";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
 import { WebChatController } from "./controllers/web-chat.controller";
@@ -57,7 +58,8 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     CollectContactInfoTool,
     SendEmailTool,
     ListServicesTool,
-    CreateGuestCartTool,
+    PreviewCartTool,
+    GenerateCheckoutLinkTool,
     ToolRegistryService,
     LeadCaptureAgent,
     ShoppingAssistantAgent,

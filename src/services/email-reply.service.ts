@@ -175,7 +175,7 @@ export class EmailReplyService {
       return "rejected_malformed";
     }
 
-    const assistantText = await this.chatSessionService.handleMessage(sessionUlid, cleanBody);
+    const { reply: assistantText } = await this.chatSessionService.handleMessage(sessionUlid, cleanBody);
 
     const rawSubject = formFields.subject ?? "";
     const replySubject = rawSubject.startsWith("Re:") ? rawSubject : `Re: ${rawSubject}`;

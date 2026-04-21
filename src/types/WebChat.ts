@@ -16,8 +16,15 @@ export interface WebChatCreateSessionResponse {
   budgetCents: number | null;
 }
 
+export interface WebChatToolOutput {
+  tool_name: string;
+  content: string;
+  is_error?: boolean;
+}
+
 export interface WebChatSendMessageResponse {
   reply: string;
+  tool_outputs?: WebChatToolOutput[];
 }
 
 export interface WebChatOnboardingRequest {

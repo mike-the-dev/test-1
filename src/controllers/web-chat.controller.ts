@@ -128,10 +128,12 @@ export class WebChatController {
   async sendMessage(
     @Body(new ZodValidationPipe(sendMessageSchema)) body: SendMessageBody,
   ): Promise<WebChatSendMessageResponse> {
-    const reply = await this.chatSessionService.handleMessage(body.sessionUlid, body.message);
+    const { reply, toolOutputs } = await this.chatSessionService.handleMessage(body.sessionUlid, body.message);
 
-    this.logger.debug(`Message handled [sessionUlid=${body.sessionUlid}]`);
+    this.logger.debug(
+      `Message handled [sessionUlid=${body.sessionUlid} toolOutputCount=${toolOutputs.length}]`,
+    );
 
-    return { reply };
+    return toolOutputs.length > 0 ? { reply, tool_outputs: toolOutputs } : { reply };
   }
 }

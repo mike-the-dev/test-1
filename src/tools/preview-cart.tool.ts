@@ -7,6 +7,7 @@ import {
   NativeAttributeValue,
   PutCommand,
   QueryCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ulid } from "ulid";
 
@@ -14,16 +15,16 @@ import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
 import {
-  GuestCartCheckoutBaseResult,
   GuestCartCustomerRecord,
   GuestCartCustomerResult,
   GuestCartItem,
 } from "../types/GuestCart";
-import { createGuestCartInputSchema } from "../validation/tool.schema";
+import { previewCartInputSchema } from "../validation/tool.schema";
 import { ChatToolProvider } from "./chat-tool.decorator";
 
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const USER_CONTACT_INFO_SK = "USER_CONTACT_INFO";
+const METADATA_SK = "METADATA";
 
 function toRecordArray(value: NativeAttributeValue | undefined): Record<string, NativeAttributeValue>[] {
   if (!value) {
@@ -59,15 +60,14 @@ function resolveServicePrice(raw: NativeAttributeValue | undefined): number {
 
 @ChatToolProvider()
 @Injectable()
-export class CreateGuestCartTool implements ChatTool {
-  private readonly logger = new Logger(CreateGuestCartTool.name);
-  private readonly checkoutBaseUrlOverride: string | null;
+export class PreviewCartTool implements ChatTool {
+  private readonly logger = new Logger(PreviewCartTool.name);
   private readonly gsiName: string;
 
-  readonly name = "create_guest_cart";
+  readonly name = "preview_cart";
 
   readonly description =
-    "Create a guest cart containing the services the visitor has committed to, look up or create their customer record, and return a checkout URL that will take them directly to step two of the Instapaytient checkout flow. Call this exactly once per session, after the visitor has confirmed interest in one or more specific services and you already have their email, first name, and last name saved via collect_contact_info. Pass each committed service as an item — with its variant_id and option_id if the service has variants. The tool returns a checkout URL you must present to the visitor as a clickable link as the final action of the conversation.";
+    "Build or replace the visitor's cart with the items they've committed to, and return a structured preview of what's in the cart for them to confirm before checkout. Call this any time the visitor adds items, changes items, or decides to modify their selection. Pass every item currently intended for the cart (not just new ones) — calling this tool REPLACES the cart contents with the items you pass. After calling, present the structured preview to the visitor and ask them to confirm the cart looks correct. Do NOT call generate_checkout_link until the visitor has explicitly confirmed.";
 
   readonly inputSchema: ChatToolInputSchema = {
     type: "object",
@@ -114,8 +114,6 @@ export class CreateGuestCartTool implements ChatTool {
     private readonly databaseConfig: DatabaseConfigService,
     private readonly configService: ConfigService,
   ) {
-    this.checkoutBaseUrlOverride =
-      this.configService.get<string>("webChat.checkoutBaseUrlOverride", { infer: true }) ?? null;
     this.gsiName =
       this.configService.get<string>("webChat.domainGsiName", { infer: true }) ?? "GSI1";
   }
@@ -124,11 +122,11 @@ export class CreateGuestCartTool implements ChatTool {
     const { sessionUlid, accountUlid } = context;
 
     this.logger.debug(
-      `Executing tool [name=create_guest_cart sessionUlid=${sessionUlid} accountUlid=${accountUlid ?? "null"}]`,
+      `Executing tool [name=preview_cart sessionUlid=${sessionUlid} accountUlid=${accountUlid ?? "null"}]`,
     );
 
     // Step 1 — validate input
-    const parseResult = createGuestCartInputSchema.safeParse(input);
+    const parseResult = previewCartInputSchema.safeParse(input);
 
     if (!parseResult.success) {
       return { result: `Invalid input: ${parseResult.error.message}`, isError: true };
@@ -138,7 +136,7 @@ export class CreateGuestCartTool implements ChatTool {
 
     // Step 2 — check account context
     if (!accountUlid) {
-      return { result: "Missing account context — cannot create cart.", isError: true };
+      return { result: "Missing account context — cannot preview cart.", isError: true };
     }
 
     const tableName = this.databaseConfig.conversationsTable;
@@ -177,27 +175,71 @@ export class CreateGuestCartTool implements ChatTool {
     } catch (error: unknown) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `create_guest_cart contact info fetch failed [errorType=${errorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+        `preview_cart contact info fetch failed [errorType=${errorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
       );
       return { result: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    // Steps 4 & 5 — customer lookup or create
-    const customerResult = await this.resolveCustomerUlid(
-      tableName,
-      accountUlid,
-      email,
-      firstName,
-      lastName,
-      phone,
-      sessionUlid,
-    );
+    // Step 4 — read METADATA for existing cart/guest/customer IDs
+    let metadataCartId: string | undefined;
+    let metadataGuestId: string | undefined;
+    let metadataCustomerId: string | undefined;
+    let metadataCustomerEmail: string | undefined;
 
-    if (customerResult.isError) {
-      return { result: customerResult.error, isError: true };
+    try {
+      const metadataResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            PK: `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`,
+            SK: METADATA_SK,
+          },
+        }),
+      );
+
+      const metadataItem = metadataResult.Item;
+
+      if (metadataItem) {
+        metadataCartId = metadataItem.cart_id !== undefined ? String(metadataItem.cart_id) : undefined;
+        metadataGuestId = metadataItem.guest_id !== undefined ? String(metadataItem.guest_id) : undefined;
+        metadataCustomerId = metadataItem.customer_id !== undefined ? String(metadataItem.customer_id) : undefined;
+        metadataCustomerEmail = metadataItem.customer_email !== undefined ? String(metadataItem.customer_email) : undefined;
+      }
+    } catch (error: unknown) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(
+        `preview_cart metadata fetch failed [errorType=${errorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+      );
+      return { result: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    const customerUlid = customerResult.customerUlid;
+    // Step 5 — resolve customer ULID
+    let customerUlid = metadataCustomerId ?? "";
+
+    if (metadataCustomerId) {
+      // Reuse from METADATA — skip GSI query
+      this.logger.debug(
+        `Customer lookup [sessionUlid=${sessionUlid} outcome=metadata customerUlid=${customerUlid}]`,
+      );
+    }
+
+    if (!metadataCustomerId) {
+      const customerResult = await this.resolveCustomerUlid(
+        tableName,
+        accountUlid,
+        email,
+        firstName,
+        lastName,
+        phone,
+        sessionUlid,
+      );
+
+      if (customerResult.isError) {
+        return { result: customerResult.error, isError: true };
+      }
+
+      customerUlid = customerResult.customerUlid;
+    }
 
     // Step 6 — batch fetch services
     const batchKeys = validated.items.map((item) => {
@@ -259,12 +301,12 @@ export class CreateGuestCartTool implements ChatTool {
     } catch (batchError: unknown) {
       const batchErrorName = batchError instanceof Error ? batchError.name : "UnknownError";
       this.logger.error(
-        `create_guest_cart batch get services failed [errorType=${batchErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+        `preview_cart batch get services failed [errorType=${batchErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
       );
       return { result: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    // Build cart items
+    // Step 7 — build cart items
     const cartItems: GuestCartItem[] = [];
 
     for (const item of validated.items) {
@@ -281,7 +323,7 @@ export class CreateGuestCartTool implements ChatTool {
       const servicePrice = resolveServicePrice(service.price);
       const serviceVariants = toRecordArray(service.variants);
 
-      let optionPrice: number = servicePrice;
+      let optionPrice = servicePrice;
       let variantString: string | null = null;
       let variantLabel: string | null = null;
 
@@ -328,7 +370,7 @@ export class CreateGuestCartTool implements ChatTool {
       if (item.variant_id === undefined && serviceVariants.length > 0) {
         return {
           result:
-            "The selected service requires a variant choice. Please ask the visitor which option they prefer and call create_guest_cart again with variant_id and option_id.",
+            "The selected service requires a variant choice. Please ask the visitor which option they prefer and call preview_cart again with variant_id and option_id.",
           isError: true,
         };
       }
@@ -349,25 +391,44 @@ export class CreateGuestCartTool implements ChatTool {
       });
     }
 
-    // Step 7 — generate IDs
-    const guestUlid = ulid();
-    const cartUlid = ulid();
+    // Step 8 — determine ULIDs (reuse from METADATA if available)
+    // Both IDs must be present together — reusing only one leads to SK drift on crash-retry.
+    const hasBothIds = metadataCartId !== undefined && metadataGuestId !== undefined;
+    const guestUlid = hasBothIds ? metadataGuestId! : ulid();
+    const cartUlid = hasBothIds ? metadataCartId! : ulid();
+
+    if (hasBothIds) {
+      this.logger.debug(
+        `Cart IDs reused from metadata [sessionUlid=${sessionUlid} cartUlid=${cartUlid} guestUlid=${guestUlid}]`,
+      );
+    }
+
     const sk = `G#${guestUlid}C#${cartUlid}`;
     const now = new Date().toISOString();
 
-    // Step 8 — write guest cart
+    // Step 9 — write cart record via UpdateCommand with if_not_exists on _createdAt_
     try {
       await this.dynamoDb.send(
-        new PutCommand({
+        new UpdateCommand({
           TableName: tableName,
-          Item: {
+          Key: {
             PK: `A#${accountUlid}`,
             SK: sk,
-            customer_id: `C#${customerUlid}`,
-            email,
-            cart_items: cartItems,
-            _createdAt_: now,
-            _lastUpdated_: now,
+          },
+          UpdateExpression:
+            "SET #cart_items = :items, #customer_id = :customer_id, #email = :email, #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now",
+          ExpressionAttributeNames: {
+            "#cart_items": "cart_items",
+            "#customer_id": "customer_id",
+            "#email": "email",
+            "#createdAt": "_createdAt_",
+            "#lastUpdated": "_lastUpdated_",
+          },
+          ExpressionAttributeValues: {
+            ":items": cartItems,
+            ":customer_id": `C#${customerUlid}`,
+            ":email": email,
+            ":now": now,
           },
         }),
       );
@@ -378,36 +439,75 @@ export class CreateGuestCartTool implements ChatTool {
     } catch (cartError: unknown) {
       const cartErrorName = cartError instanceof Error ? cartError.name : "UnknownError";
       this.logger.error(
-        `create_guest_cart cart put failed [errorType=${cartErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+        `preview_cart cart update failed [errorType=${cartErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
       );
       return { result: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    // Step 9 — determine checkout base URL
-    const baseResult = await this.resolveCheckoutBase(tableName, accountUlid, sessionUlid);
+    // Step 10 — write IDs to METADATA via if_not_exists
+    const resolvedCustomerEmail = metadataCustomerEmail ?? email;
 
-    if (baseResult.isError) {
-      return { result: baseResult.error, isError: true };
+    try {
+      await this.dynamoDb.send(
+        new UpdateCommand({
+          TableName: tableName,
+          Key: {
+            PK: `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`,
+            SK: METADATA_SK,
+          },
+          UpdateExpression:
+            "SET #cart_id = if_not_exists(#cart_id, :cart_id), #guest_id = if_not_exists(#guest_id, :guest_id), #customer_id = if_not_exists(#customer_id, :customer_id), #customer_email = if_not_exists(#customer_email, :customer_email)",
+          ExpressionAttributeNames: {
+            "#cart_id": "cart_id",
+            "#guest_id": "guest_id",
+            "#customer_id": "customer_id",
+            "#customer_email": "customer_email",
+          },
+          ExpressionAttributeValues: {
+            ":cart_id": cartUlid,
+            ":guest_id": guestUlid,
+            ":customer_id": customerUlid,
+            ":customer_email": resolvedCustomerEmail,
+          },
+        }),
+      );
+    } catch (metaError: unknown) {
+      const metaErrorName = metaError instanceof Error ? metaError.name : "UnknownError";
+      this.logger.error(
+        `preview_cart metadata update failed [errorType=${metaErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+      );
+      return { result: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    // Step 10 — construct checkout URL. guestId + cartId are passed so the
-    // e-commerce front-end middleware can set them as cookies directly and
-    // bypass the default minting path, which lets the checkout page find the
-    // cart we just wrote instead of redirecting to /shop on an empty cart.
-    const checkoutUrl = `${baseResult.base}/checkout?email=${encodeURIComponent(email)}&customerId=${customerUlid}&guestId=${guestUlid}&cartId=${cartUlid}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
+    // Step 11 — build CartPreviewPayload
+    const lines = cartItems.map((cartItem) => {
+      return {
+        line_id: ulid(),
+        service_id: cartItem.service_id,
+        name: cartItem.name,
+        category: cartItem.category,
+        image_url: cartItem.image_url,
+        variant: cartItem.variant,
+        variant_label: cartItem.variant_label,
+        quantity: cartItem.quantity,
+        price: cartItem.price,
+        total: cartItem.total,
+      };
+    });
 
-    // Step 11 — return result. Snake-case JSON keys so that when this payload
-    // is stored inside the tool_result message record's content blob it stays
-    // consistent with the rest of the Instapaytient DB convention.
-    return {
-      result: JSON.stringify({
-        checkout_url: checkoutUrl,
-        customer_id: customerUlid,
-        cart_id: cartUlid,
-        guest_id: guestUlid,
-        item_count: cartItems.length,
-      }),
+    const itemCount = cartItems.reduce((sum, cartItem) => sum + cartItem.quantity, 0);
+    const cartTotal = cartItems.reduce((sum, cartItem) => sum + cartItem.total, 0);
+
+    const payload = {
+      cart_id: cartUlid,
+      item_count: itemCount,
+      currency: "usd",
+      cart_total: cartTotal,
+      lines,
     };
+
+    // Step 12 — return result
+    return { result: JSON.stringify(payload) };
   }
 
   private async queryCustomerUlidByEmail(
@@ -467,7 +567,7 @@ export class CreateGuestCartTool implements ChatTool {
     } catch (queryError: unknown) {
       const queryErrorName = queryError instanceof Error ? queryError.name : "UnknownError";
       this.logger.error(
-        `create_guest_cart customer GSI query failed [errorType=${queryErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+        `preview_cart customer GSI query failed [errorType=${queryErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
       );
       return { isError: true, error: genericError };
     }
@@ -520,7 +620,7 @@ export class CreateGuestCartTool implements ChatTool {
 
       if (putErrorName !== "ConditionalCheckFailedException") {
         this.logger.error(
-          `create_guest_cart customer put failed [errorType=${putErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+          `preview_cart customer put failed [errorType=${putErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
         );
         return { isError: true, error: genericError };
       }
@@ -534,14 +634,14 @@ export class CreateGuestCartTool implements ChatTool {
       } catch (reQueryError: unknown) {
         const reQueryErrorName = reQueryError instanceof Error ? reQueryError.name : "UnknownError";
         this.logger.error(
-          `create_guest_cart race recovery query failed [errorType=${reQueryErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+          `preview_cart race recovery query failed [errorType=${reQueryErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
         );
         return { isError: true, error: genericError };
       }
 
       if (recoveredUlid === null) {
         this.logger.error(
-          `create_guest_cart race recovery re-query returned zero items [errorType=RaceRecoveryFailed sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
+          `preview_cart race recovery re-query returned zero items [errorType=RaceRecoveryFailed sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
         );
         return { isError: true, error: genericError };
       }
@@ -550,57 +650,6 @@ export class CreateGuestCartTool implements ChatTool {
         `Customer lookup [sessionUlid=${sessionUlid} outcome=existing customerUlid=${recoveredUlid}]`,
       );
       return { isError: false, customerUlid: recoveredUlid };
-    }
-  }
-
-  private async resolveCheckoutBase(
-    tableName: string,
-    accountUlid: string,
-    sessionUlid: string,
-  ): Promise<GuestCartCheckoutBaseResult> {
-    if (this.checkoutBaseUrlOverride !== null && this.checkoutBaseUrlOverride !== "") {
-      const base = this.checkoutBaseUrlOverride.replace(/\/+$/, "");
-      this.logger.debug(`URL path [sessionUlid=${sessionUlid} path=override]`);
-      return { isError: false, base };
-    }
-
-    try {
-      const accountResult = await this.dynamoDb.send(
-        new GetCommand({
-          TableName: tableName,
-          Key: {
-            PK: `A#${accountUlid}`,
-            SK: `A#${accountUlid}`,
-          },
-        }),
-      );
-
-      const accountItem = accountResult.Item;
-      const gsi1pk = accountItem ? String(accountItem["GSI1-PK"] ?? "") : "";
-
-      if (!gsi1pk.startsWith("DOMAIN#")) {
-        this.logger.error(
-          `create_guest_cart account GSI1-PK missing or malformed [errorType=MalformedAccountRecord sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
-        );
-        return {
-          isError: true,
-          error: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.",
-        };
-      }
-
-      const host = gsi1pk.slice("DOMAIN#".length);
-      const base = `https://${host}`;
-      this.logger.debug(`URL path [sessionUlid=${sessionUlid} path=account_domain]`);
-      return { isError: false, base };
-    } catch (accountError: unknown) {
-      const accountErrorName = accountError instanceof Error ? accountError.name : "UnknownError";
-      this.logger.error(
-        `create_guest_cart account get failed [errorType=${accountErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
-      );
-      return {
-        isError: true,
-        error: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.",
-      };
     }
   }
 }

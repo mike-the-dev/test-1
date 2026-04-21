@@ -52,6 +52,13 @@ export interface ChatSessionMetadataRecord {
   account_id?: string;
   onboarding_completed_at?: string;
   budget_cents?: number;
+  // Cart state — set by preview_cart on first call in the session, reused on
+  // subsequent preview_cart calls (idempotent stable IDs via if_not_exists)
+  // and read by generate_checkout_link to build the checkout URL.
+  cart_id?: string; // bare cart ULID
+  guest_id?: string; // bare guest ULID
+  customer_id?: string; // bare customer ULID (no C# prefix)
+  customer_email?: string;
 }
 
 /**

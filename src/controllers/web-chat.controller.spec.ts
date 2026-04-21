@@ -286,13 +286,35 @@ describe("WebChatController", () => {
   });
 
   describe("POST /messages — sendMessage", () => {
-    it("returns reply on valid request", async () => {
-      mockChatSessionService.handleMessage.mockResolvedValue("Hello from the assistant.");
+    it("returns reply on valid request when no tools fired", async () => {
+      mockChatSessionService.handleMessage.mockResolvedValue({
+        reply: "Hello from the assistant.",
+        toolOutputs: [],
+      });
 
       const result = await controller.sendMessage({ sessionUlid: VALID_SESSION_ULID, message: "Hi there" });
 
       expect(result).toEqual({ reply: "Hello from the assistant." });
+      expect(result).not.toHaveProperty("tool_outputs");
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(VALID_SESSION_ULID, "Hi there");
+    });
+
+    it("includes tool_outputs on the wire when tools fired during the turn", async () => {
+      mockChatSessionService.handleMessage.mockResolvedValue({
+        reply: "Here's your cart.",
+        toolOutputs: [
+          { tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
+        ],
+      });
+
+      const result = await controller.sendMessage({ sessionUlid: VALID_SESSION_ULID, message: "add that" });
+
+      expect(result).toEqual({
+        reply: "Here's your cart.",
+        tool_outputs: [
+          { tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
+        ],
+      });
     });
 
     it("throws BadRequestException for empty message (pipe)", () => {

@@ -33,7 +33,7 @@ export type SendEmailInput = z.infer<typeof sendEmailInputSchema>;
 export const listServicesInputSchema = z.object({}).strict();
 export type ListServicesInput = z.infer<typeof listServicesInputSchema>;
 
-export const createGuestCartInputSchema = z
+export const previewCartInputSchema = z
   .object({
     items: z
       .array(
@@ -54,4 +54,7 @@ export const createGuestCartInputSchema = z
   })
   .strict();
 
-export type CreateGuestCartInput = z.infer<typeof createGuestCartInputSchema>;
+export type PreviewCartInput = z.infer<typeof previewCartInputSchema>;
+
+export const generateCheckoutLinkInputSchema = z.object({}).strict();
+export type GenerateCheckoutLinkInput = z.infer<typeof generateCheckoutLinkInputSchema>;

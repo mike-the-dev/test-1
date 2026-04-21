@@ -41,14 +41,6 @@ export interface GuestCartCustomerRecord {
   _lastUpdated_: string;
 }
 
-export interface GuestCartCreateResult {
-  checkout_url: string;
-  customer_id: string; // BARE ULID, no "C#" prefix
-  cart_id: string; // BARE ULID
-  guest_id: string; // BARE ULID
-  item_count: number;
-}
-
 export type GuestCartCheckoutBaseResolved = { isError: false; base: string };
 export type GuestCartCheckoutBaseError = { isError: true; error: string };
 export type GuestCartCheckoutBaseResult = GuestCartCheckoutBaseResolved | GuestCartCheckoutBaseError;

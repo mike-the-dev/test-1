@@ -63,7 +63,7 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
           DISCORD_DEFAULT_AGENT_NAME,
         );
 
-        const reply = await this.chatSessionService.handleMessage(sessionUlid, content);
+        const { reply } = await this.chatSessionService.handleMessage(sessionUlid, content);
 
         const user = await this.client.users.fetch(authorId);
         await user.send(reply);
@@ -98,7 +98,7 @@ export class DiscordService implements OnModuleInit, OnModuleDestroy {
           DISCORD_DEFAULT_AGENT_NAME,
         );
 
-        const reply = await this.chatSessionService.handleMessage(sessionUlid, message.content);
+        const { reply } = await this.chatSessionService.handleMessage(sessionUlid, message.content);
 
         await message.reply(reply);
 

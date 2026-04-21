@@ -78,7 +78,7 @@ describe("EmailReplyService", () => {
         Item: { email: SENDER_EMAIL },
       });
 
-      mockChatSessionService.handleMessage.mockResolvedValue("Hello from the assistant.");
+      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hello from the assistant.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({ messageId: "outbound-id" });
 
       const result = await service.processInboundReply(VALID_FORM_FIELDS);
@@ -95,7 +95,7 @@ describe("EmailReplyService", () => {
         Item: { email: SENDER_EMAIL },
       });
 
-      mockChatSessionService.handleMessage.mockResolvedValue("Reply text.");
+      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Reply text.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({ messageId: "outbound-id" });
 
       await service.processInboundReply(VALID_FORM_FIELDS);
@@ -207,7 +207,7 @@ describe("EmailReplyService", () => {
         Item: { email: "john@example.com" },
       });
 
-      mockChatSessionService.handleMessage.mockResolvedValue("Hi John.");
+      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi John.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({ messageId: "out-id" });
 
       const displayNameFields = {

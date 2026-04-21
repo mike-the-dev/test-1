@@ -9,7 +9,7 @@ import { ToolRegistryService } from "../tools/tool-registry.service";
 import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ChatSessionMessageRecord, ChatSessionNewMessage } from "../types/ChatSession";
 import { ChatContentBlock, ChatToolResultContentBlock, ChatToolUseContentBlock } from "../types/ChatContent";
-import { WebChatHistoryMessage } from "../types/WebChat";
+import { WebChatHistoryMessage, WebChatToolOutput } from "../types/WebChat";
 
 const MAX_TOOL_LOOP_ITERATIONS = 10;
 const MAX_HISTORY_MESSAGES = 50;
@@ -50,7 +50,10 @@ export class ChatSessionService {
     private readonly agentRegistry: AgentRegistryService,
   ) {}
 
-  async handleMessage(sessionUlid: string, userMessage: string): Promise<string> {
+  async handleMessage(
+    sessionUlid: string,
+    userMessage: string,
+  ): Promise<{ reply: string; toolOutputs: WebChatToolOutput[] }> {
     try {
       const table = this.databaseConfig.conversationsTable;
       const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
@@ -280,7 +283,51 @@ export class ChatSessionService {
         this.logger.warn(`No text blocks across any assistant messages this turn [sessionUlid=${sessionUlid}]`);
       }
 
-      return finalText;
+      // Collect structured tool outputs from this turn so the frontend can
+      // render typed components (cart card, etc.) keyed by tool name. Agent-
+      // agnostic: every tool result flows through; renderers live frontend-side
+      // and ignore tools they don't know.
+      const toolUseNamesById = new Map<string, string>();
+
+      for (const assistantMessage of assistantMessagesThisTurn) {
+        for (const block of assistantMessage.content) {
+          if (block.type === "tool_use") {
+            toolUseNamesById.set(block.id, block.name);
+          }
+        }
+      }
+
+      const toolOutputs: WebChatToolOutput[] = [];
+
+      for (const message of newMessages) {
+        if (message.role !== "user") {
+          continue;
+        }
+
+        for (const block of message.content) {
+          if (block.type !== "tool_result") {
+            continue;
+          }
+
+          const toolName = toolUseNamesById.get(block.tool_use_id);
+
+          if (!toolName) {
+            continue;
+          }
+
+          if (typeof block.content !== "string") {
+            continue;
+          }
+
+          toolOutputs.push({
+            tool_name: toolName,
+            content: block.content,
+            ...(block.is_error === true ? { is_error: true } : {}),
+          });
+        }
+      }
+
+      return { reply: finalText, toolOutputs };
     } catch (error) {
       this.logger.error(`Failed to handle message [sessionUlid=${sessionUlid}]`, error);
       throw error;

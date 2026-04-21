@@ -20,10 +20,11 @@ describe("ShoppingAssistantAgent", () => {
     expect(agent.description.length).toBeGreaterThan(0);
   });
 
-  it("has exactly the allowed tool names list_services, collect_contact_info, and create_guest_cart", () => {
-    expect(agent.allowedToolNames).toEqual(["list_services", "collect_contact_info", "create_guest_cart"]);
-    expect(agent.allowedToolNames).toHaveLength(3);
-    expect(agent.allowedToolNames).toContain("create_guest_cart");
+  it("has exactly the allowed tool names list_services, collect_contact_info, preview_cart, and generate_checkout_link", () => {
+    expect(agent.allowedToolNames).toEqual(["list_services", "collect_contact_info", "preview_cart", "generate_checkout_link"]);
+    expect(agent.allowedToolNames).toHaveLength(4);
+    expect(agent.allowedToolNames).toContain("preview_cart");
+    expect(agent.allowedToolNames).toContain("generate_checkout_link");
   });
 
   it("does not include save_user_fact in allowedToolNames", () => {

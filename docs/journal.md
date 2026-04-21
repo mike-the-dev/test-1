@@ -36,6 +36,31 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-20 — Cart confirm-before-checkout: split create_guest_cart + generic tool_outputs on sendMessage
+
+**Goal:** Give visitors a chance to verify their cart before being dropped onto checkout, and let the frontend render the cart as a deterministic UI component instead of relying on LLM prose. Shipped as a tool-surface change plus a small generic wire-level addition to `POST /chat/web/messages` so any agent's structured tool results can reach the UI.
+
+**What changed:**
+- **`create_guest_cart` tool deleted, split into two:**
+  - **`preview_cart(items)`** — writes or replaces the cart record in DynamoDB and returns a structured `CartPreviewPayload` (lines + quantities + unit price + total). Idempotent: reuses the session's `cart_id`/`guest_id`/`customer_id` on repeat calls so URL stays stable across edits.
+  - **`generate_checkout_link()`** — zero-arg, reads persisted cart IDs from session METADATA, builds the checkout URL (preserving the `aiSessionId` attribution param byte-for-byte). Pure read, idempotent.
+- **Session `METADATA` gains four optional fields** (`cart_id`, `guest_id`, `customer_id`, `customer_email`) all written via `if_not_exists` so the IDs are stable across repeat previews. Cart record write uses `UpdateCommand` with `if_not_exists` on `_createdAt_` so cart age is preserved through edits.
+- **Generic `tool_outputs` on `POST /chat/web/messages` response.** `WebChatSendMessageResponse` now optionally carries `tool_outputs: { tool_name, content, is_error? }[]`. The backend collects every tool_result from the turn, pairs it with its tool_use name, and surfaces it agent-agnostically — no shopper-specific shape on a shared endpoint. Frontend registers per-tool renderers (`preview_cart` → cart card, future tools → their own components), and tools it doesn't know about are silently ignored.
+- **Shopping assistant prompt rewritten**: step 6 now requires `preview_cart` → wait for explicit visitor confirmation → `generate_checkout_link` → present URL. Boundaries section updated from "three tools" to "four tools."
+
+**Decisions worth remembering:**
+- **Paired-ID check for crash safety.** `preview_cart` treats `cart_id` + `guest_id` as a set: if either is missing on read (e.g., a crash ever split a previous write), mint both fresh. Prevents orphaned cart rows at stale SKs. Small fix, but the naïve independent-field check would have silently accumulated garbage rows in a crash scenario.
+- **Agent-agnostic `tool_outputs` instead of a `cart_preview` field.** The tempting first design was to bolt a `cart_preview: CartPreviewPayload | null` onto the response. That hardcodes shopper-specific concerns into a shared endpoint and breaks the moment a non-shopper agent has its own renderable tool. The generic array of `{ tool_name, content }` entries scales — adding new agents with new tools requires zero backend changes, only a frontend-side renderer registration.
+- **Stable cart_id across previews = stable checkout URL across edits.** Because the ecommerce store hydrates from live cart state when the URL is opened, the same URL keeps working after the visitor adds or changes items. No URL invalidation, no versioning — the URL is a pointer, not a snapshot. Matches Shopify's cart/checkout separation pattern.
+- **`_createdAt_` on the cart is preserved via `UpdateCommand` + `if_not_exists(_createdAt_, :now)`, not clobbered by `PutCommand`.** Worth one extra expression clause to avoid resetting "when the cart was first built" on every preview — analytics and the ecommerce side care about cart age.
+
+**Next:**
+- **Frontend rendering (cross-repo, not done yet):** the widget's ChatPanel registers a per-tool renderer for `preview_cart` that parses the tool_result JSON and renders a cart card component (qty × name × variant × unit price × line total × cart total). Without this, the visitor sees the agent's "here's your cart" prose but no visible cart card.
+- Cart editing tool (`update_cart`) still deferred — `preview_cart`'s idempotent replace-array semantics cover the "change my selection" flow for now.
+- Still queued separately: CSP `frame-ancestors` as the browser-enforced companion to the Referer gate.
+
+---
+
 ## 2026-04-20 — AI conversion attribution: chat-service half shipped (write-first, read-later)
 
 **Goal:** Lay the foundation for measuring AI-driven revenue with server-side accuracy. The single most important business question for an AI chat product is "how much money is the AI actually making?" — and until this commit, there was no way to close the loop between "a visitor chatted" and "a visitor paid." This ships the chat-service half: the session ULID now flows out on the checkout URL and the DynamoDB record shape is locked in as a shared contract.
