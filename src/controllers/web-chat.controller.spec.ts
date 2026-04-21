@@ -51,6 +51,7 @@ describe("WebChatController", () => {
     mockIdentityService.lookupOrCreateSession.mockResolvedValue({
       sessionUlid: VALID_SESSION_ULID,
       onboardingCompletedAt: null,
+      kickoffCompletedAt: null,
       budgetCents: null,
     });
 
@@ -95,6 +96,7 @@ describe("WebChatController", () => {
         sessionUlid: VALID_SESSION_ULID,
         displayName: "Lead Capture Assistant",
         onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
         budgetCents: null,
       });
       expect(mockIdentityService.lookupOrCreateSession).toHaveBeenCalledWith(
@@ -110,6 +112,7 @@ describe("WebChatController", () => {
       mockIdentityService.lookupOrCreateSession.mockResolvedValue({
         sessionUlid: VALID_SESSION_ULID,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        kickoffCompletedAt: null,
         budgetCents: 100_000,
       });
 
@@ -121,6 +124,24 @@ describe("WebChatController", () => {
 
       expect(result.onboardingCompletedAt).toBe("2026-04-19T20:00:00.000Z");
       expect(result.budgetCents).toBe(100_000);
+    });
+
+    it("echoes kickoffCompletedAt from IdentityService when the session has a kickoff stamp", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "Lead Capture Assistant" });
+      mockIdentityService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: VALID_SESSION_ULID,
+        onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        kickoffCompletedAt: "2026-04-20T22:00:00.000Z",
+        budgetCents: 100_000,
+      });
+
+      const result = await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(result.kickoffCompletedAt).toBe("2026-04-20T22:00:00.000Z");
     });
 
     it("falls back to agent.name when displayName is not set", async () => {
@@ -205,6 +226,7 @@ describe("WebChatController", () => {
       mockIdentityService.updateOnboarding.mockResolvedValue({
         sessionUlid: VALID_SESSION_ULID,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        kickoffCompletedAt: null,
         budgetCents: 100_000,
       });
 
@@ -213,6 +235,7 @@ describe("WebChatController", () => {
       expect(result).toEqual({
         sessionUlid: VALID_SESSION_ULID,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        kickoffCompletedAt: null,
         budgetCents: 100_000,
       });
 

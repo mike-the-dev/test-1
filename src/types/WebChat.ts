@@ -13,6 +13,7 @@ export interface WebChatCreateSessionResponse {
   sessionUlid: string;
   displayName: string;
   onboardingCompletedAt: string | null;
+  kickoffCompletedAt: string | null;
   budgetCents: number | null;
 }
 
@@ -36,6 +37,7 @@ export interface WebChatOnboardingRequest {
 export interface WebChatOnboardingResponse {
   sessionUlid: string;
   onboardingCompletedAt: string;
+  kickoffCompletedAt: string | null;
   budgetCents: number;
 }
 

@@ -802,6 +802,102 @@ describe("ChatSessionService", () => {
       const call = mockAnthropicService.sendMessage.mock.calls[0];
       expect(call[3]).toBeUndefined();
     });
+
+    it("stamps kickoff_completed_at on first successful kickoff turn", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000" } });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "__SESSION_KICKOFF__");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const stampUpdate = updateCalls.find(
+        (call) => call.args[0].input.UpdateExpression?.includes("kickoff_completed_at"),
+      );
+
+      expect(stampUpdate).toBeDefined();
+      expect(stampUpdate!.args[0].input.UpdateExpression).toBe(
+        "SET kickoff_completed_at = if_not_exists(kickoff_completed_at, :now)",
+      );
+      expect(typeof stampUpdate!.args[0].input.ExpressionAttributeValues?.[":now"]).toBe("string");
+      expect(stampUpdate!.args[0].input.ExpressionAttributeValues?.[":now"]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    });
+
+    it("does not stamp kickoff_completed_at on non-kickoff messages", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const stampUpdate = updateCalls.find(
+        (call) => call.args[0].input.UpdateExpression?.includes("kickoff_completed_at"),
+      );
+
+      expect(stampUpdate).toBeUndefined();
+    });
+
+    it("short-circuits on repeat kickoff, returns stored welcome without calling Anthropic", async () => {
+      const sessionUlid = "01TESTSESSION0000000000000";
+
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          kickoff_completed_at: "2026-04-20T22:00:00.000Z",
+        },
+      });
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: [
+          {
+            PK: `CHAT_SESSION#${sessionUlid}`,
+            SK: "MESSAGE#01KICKOFF0000000000000000",
+            role: "user",
+            content: JSON.stringify([{ type: "text", text: "__SESSION_KICKOFF__" }]),
+            _createdAt_: "2026-04-20T22:00:00.000Z",
+          },
+          {
+            PK: `CHAT_SESSION#${sessionUlid}`,
+            SK: "MESSAGE#01WELCOME0000000000000000",
+            role: "assistant",
+            content: JSON.stringify([{ type: "text", text: "Welcome, Mike!" }]),
+            _createdAt_: "2026-04-20T22:00:01.000Z",
+          },
+        ],
+      });
+
+      const result = await service.handleMessage(sessionUlid, "__SESSION_KICKOFF__");
+
+      expect(mockAnthropicService.sendMessage).not.toHaveBeenCalled();
+      expect(result.reply).toBe("Welcome, Mike!");
+      expect(result.toolOutputs).toEqual([]);
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+    });
+
+    it("short-circuit returns empty reply and logs warning when no stored welcome exists", async () => {
+      const sessionUlid = "01TESTSESSION0000000000000";
+
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          kickoff_completed_at: "2026-04-20T22:00:00.000Z",
+        },
+      });
+
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const result = await service.handleMessage(sessionUlid, "__SESSION_KICKOFF__");
+
+      expect(mockAnthropicService.sendMessage).not.toHaveBeenCalled();
+      expect(result).toEqual({ reply: "", toolOutputs: [] });
+    });
   });
 
   describe("getHistoryForClient", () => {

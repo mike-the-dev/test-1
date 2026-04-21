@@ -80,6 +80,7 @@ export class WebChatController {
       sessionUlid: sessionResult.sessionUlid,
       displayName,
       onboardingCompletedAt: sessionResult.onboardingCompletedAt,
+      kickoffCompletedAt: sessionResult.kickoffCompletedAt,
       budgetCents: sessionResult.budgetCents,
     };
   }

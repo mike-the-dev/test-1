@@ -80,6 +80,9 @@ export class ChatSessionService {
       const accountUlid = metadataResult.Item?.account_id;
       const budgetCents: number | undefined = metadataResult.Item?.budget_cents;
 
+      const isKickoff = userMessage === SESSION_KICKOFF_MARKER;
+      const existingKickoffCompletedAt: string | undefined = metadataResult.Item?.kickoff_completed_at;
+
       let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
 
       if (resolvedAgent === null) {
@@ -101,6 +104,61 @@ export class ChatSessionService {
       });
 
       this.logger.log(`Agent resolved [sessionUlid=${sessionUlid} agentName=${agent.name} toolCount=${filteredDefinitions.length}]`);
+
+      if (isKickoff && existingKickoffCompletedAt) {
+        const replayItems = (await this.dynamoDb.send(
+          new QueryCommand({
+            TableName: table,
+            KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
+            ExpressionAttributeValues: { ":pk": sessionPk, ":skPrefix": MESSAGE_SK_PREFIX },
+            ScanIndexForward: true,
+          }),
+        )).Items ?? [];
+
+        const kickoffUserIndex = replayItems.findIndex((messageItem) => {
+          if (messageItem.role !== "user") return false;
+          try {
+            const blocks: ChatContentBlock[] = JSON.parse(messageItem.content);
+            return blocks.some((block) => block.type === "text" && block.text === SESSION_KICKOFF_MARKER);
+          } catch {
+            return messageItem.content === SESSION_KICKOFF_MARKER;
+          }
+        });
+
+        const storedWelcome = kickoffUserIndex !== -1
+          ? replayItems.slice(kickoffUserIndex + 1).find((messageItem) => messageItem.role === "assistant")
+          : undefined;
+
+        if (!storedWelcome) {
+          this.logger.warn(
+            `Kickoff replay found no stored welcome [sessionUlid=${sessionUlid}]`,
+          );
+          return { reply: "", toolOutputs: [] };
+        }
+
+        let welcomeBlocks: ChatContentBlock[];
+        try {
+          welcomeBlocks = JSON.parse(storedWelcome.content);
+        } catch {
+          welcomeBlocks = [{ type: "text", text: storedWelcome.content }];
+        }
+
+        const replayTextParts: string[] = [];
+
+        for (const block of welcomeBlocks) {
+          if (block.type === "text" && block.text) {
+            replayTextParts.push(block.text);
+          }
+        }
+
+        const replayText = replayTextParts.join("\n\n").trim();
+
+        this.logger.debug(
+          `Kickoff replay served from history [sessionUlid=${sessionUlid} kickoffCompletedAt=${existingKickoffCompletedAt}]`,
+        );
+
+        return { reply: replayText, toolOutputs: [] };
+      }
 
       const historyResult = await this.dynamoDb.send(
         new QueryCommand({
@@ -236,6 +294,24 @@ export class ChatSessionService {
           ExpressionAttributeValues: { ":now": now },
         }),
       );
+
+      if (isKickoff) {
+        try {
+          await this.dynamoDb.send(
+            new UpdateCommand({
+              TableName: table,
+              Key: { PK: sessionPk, SK: METADATA_SK },
+              UpdateExpression: "SET kickoff_completed_at = if_not_exists(kickoff_completed_at, :now)",
+              ExpressionAttributeValues: { ":now": now },
+            }),
+          );
+        } catch (stampError) {
+          const errorName = stampError instanceof Error ? stampError.name : "UnknownError";
+          this.logger.warn(
+            `Failed to stamp kickoff_completed_at [errorType=${errorName} sessionUlid=${sessionUlid}]`,
+          );
+        }
+      }
 
       // Also update _lastUpdated_ on the account-scoped session pointer so
       // per-account "sessions sorted by recency" queries stay accurate. The

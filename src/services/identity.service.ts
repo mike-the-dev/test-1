@@ -37,7 +37,7 @@ export class IdentityService {
     externalId: string,
     defaultAgentName: string,
     accountUlid?: string,
-  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string | null; budgetCents: number | null }> {
+  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string | null; kickoffCompletedAt: string | null; budgetCents: number | null }> {
     const table = this.databaseConfig.conversationsTable;
     const pk = `${IDENTITY_PK_PREFIX}${source}#${externalId}`;
 
@@ -63,9 +63,10 @@ export class IdentityService {
       );
 
       const onboardingCompletedAt = metadataResult.Item?.onboarding_completed_at ?? null;
+      const kickoffCompletedAt = metadataResult.Item?.kickoff_completed_at ?? null;
       const budgetCents = metadataResult.Item?.budget_cents ?? null;
 
-      return { sessionUlid, onboardingCompletedAt, budgetCents };
+      return { sessionUlid, onboardingCompletedAt, kickoffCompletedAt, budgetCents };
     }
 
     const sessionUlid = ulid();
@@ -106,7 +107,7 @@ export class IdentityService {
 
         this.logger.warn(`Race condition recovered on identity creation [source=${source} externalId=${externalId} sessionUlid=${winnerSessionUlid}]`);
 
-        return { sessionUlid: winnerSessionUlid, onboardingCompletedAt: null, budgetCents: null };
+        return { sessionUlid: winnerSessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null };
       }
 
       throw error;
@@ -187,13 +188,13 @@ export class IdentityService {
       }
     }
 
-    return { sessionUlid, onboardingCompletedAt: null, budgetCents: null };
+    return { sessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null };
   }
 
   async updateOnboarding(
     sessionUlid: string,
     budgetCents: number,
-  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string; budgetCents: number }> {
+  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string; kickoffCompletedAt: string | null; budgetCents: number }> {
     const table = this.databaseConfig.conversationsTable;
     const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
     const now = new Date().toISOString();
@@ -211,6 +212,15 @@ export class IdentityService {
 
     this.logger.debug(`Onboarding recorded [sessionUlid=${sessionUlid} budgetCents=${budgetCents}]`);
 
-    return { sessionUlid, onboardingCompletedAt: now, budgetCents };
+    const metadataResult = await this.dynamoDb.send(
+      new GetCommand({
+        TableName: table,
+        Key: { PK: sessionPk, SK: METADATA_SK },
+      }),
+    );
+
+    const kickoffCompletedAt = metadataResult.Item?.kickoff_completed_at ?? null;
+
+    return { sessionUlid, onboardingCompletedAt: now, kickoffCompletedAt, budgetCents };
   }
 }

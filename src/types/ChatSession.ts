@@ -51,6 +51,12 @@ export interface ChatSessionMetadataRecord {
   agent_name?: string;
   account_id?: string;
   onboarding_completed_at?: string;
+  // Stamped by ChatSessionService.handleMessage the first time the session's
+  // kickoff marker message commits successfully. Read by IdentityService to
+  // expose kickoffCompletedAt on the wire so the frontend can decide whether
+  // to dispatch the kickoff auto-greeting. Set via UpdateCommand with
+  // if_not_exists so it is write-once — never clobbered.
+  kickoff_completed_at?: string;
   budget_cents?: number;
   // Cart state — set by preview_cart on first call in the session, reused on
   // subsequent preview_cart calls (idempotent stable IDs via if_not_exists)

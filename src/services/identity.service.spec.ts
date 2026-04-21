@@ -65,6 +65,7 @@ describe("IdentityService", () => {
       expect(result).toEqual({
         sessionUlid: existingSessionUlid,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        kickoffCompletedAt: null,
         budgetCents: 100_000,
       });
     });
@@ -94,8 +95,35 @@ describe("IdentityService", () => {
       expect(result).toEqual({
         sessionUlid: existingSessionUlid,
         onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
         budgetCents: null,
       });
+    });
+
+    it("echoes kickoff_completed_at from METADATA when the session already has a kickoff stamp", async () => {
+      const existingSessionUlid = "01EXISTING00000000000000000";
+
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({
+          Item: {
+            PK: "IDENTITY#discord#123456789",
+            SK: "IDENTITY#discord#123456789",
+            session_id: existingSessionUlid,
+            _createdAt_: "2026-01-01T00:00:00.000Z",
+          },
+        })
+        .resolvesOnce({
+          Item: {
+            PK: `CHAT_SESSION#${existingSessionUlid}`,
+            SK: "METADATA",
+            kickoff_completed_at: "2026-04-20T22:00:00.000Z",
+          },
+        });
+
+      const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+
+      expect(result.kickoffCompletedAt).toBe("2026-04-20T22:00:00.000Z");
     });
 
     it("does not issue a PutCommand on a cache hit", async () => {
@@ -123,6 +151,7 @@ describe("IdentityService", () => {
 
       expect(result.sessionUlid).toMatch(/^[0-9A-Z]{26}$/);
       expect(result.onboardingCompletedAt).toBeNull();
+      expect(result.kickoffCompletedAt).toBeNull();
       expect(result.budgetCents).toBeNull();
 
       const putCalls = ddbMock.commandCalls(PutCommand);
@@ -174,6 +203,7 @@ describe("IdentityService", () => {
       expect(result).toEqual({
         sessionUlid: winnerSessionUlid,
         onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
         budgetCents: null,
       });
     });
@@ -367,6 +397,7 @@ describe("IdentityService", () => {
 
     it("writes onboarding_completed_at and budget_cents to the METADATA record", async () => {
       ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
 
       const result = await service.updateOnboarding(SESSION_ULID, 100_000);
 
@@ -381,10 +412,36 @@ describe("IdentityService", () => {
       expect(input.ExpressionAttributeValues?.[":cents"]).toBe(100_000);
       expect(input.ConditionExpression).toBe("attribute_exists(PK)");
 
+      const metadataGets = ddbMock
+        .commandCalls(GetCommand)
+        .filter((call) => call.args[0].input.Key?.SK === "METADATA");
+      expect(metadataGets).toHaveLength(1);
+
       expect(result.sessionUlid).toBe(SESSION_ULID);
       expect(result.budgetCents).toBe(100_000);
       expect(typeof result.onboardingCompletedAt).toBe("string");
       expect(result.onboardingCompletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(result.kickoffCompletedAt).toBeNull();
+    });
+
+    it("echoes kickoff_completed_at from METADATA read-back when stamp exists", async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          PK: `CHAT_SESSION#${SESSION_ULID}`,
+          SK: "METADATA",
+          kickoff_completed_at: "2026-04-20T22:00:00.000Z",
+        },
+      });
+
+      const result = await service.updateOnboarding(SESSION_ULID, 100_000);
+
+      const getCalls = ddbMock.commandCalls(GetCommand);
+      expect(getCalls).toHaveLength(1);
+      expect(getCalls[0].args[0].input.Key?.PK).toBe(`CHAT_SESSION#${SESSION_ULID}`);
+      expect(getCalls[0].args[0].input.Key?.SK).toBe("METADATA");
+
+      expect(result.kickoffCompletedAt).toBe("2026-04-20T22:00:00.000Z");
     });
 
     it("propagates ConditionalCheckFailedException so the controller can map it to 404", async () => {
