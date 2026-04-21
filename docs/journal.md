@@ -36,6 +36,27 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-20 — tool_outputs: backend-enforced latest-only dedupe + per-call call_id
+
+**Goal:** Close a correctness gap in the `tool_outputs` contract. The backend was emitting every tool result in a turn, including stale ones — if a "latest-wins" tool like `preview_cart` was called twice in a turn (rare but possible), the earlier result described a cart record that had already been overwritten. That's not a polish issue, it's actively wrong data heading to the frontend. Also gave every tool_output a stable `call_id` so the frontend's React-key strategy can drop its composite-key workaround.
+
+**What changed:**
+- **`ChatTool` interface gains `emitLatestOnly?: boolean`.** Each tool declares its own dedupe semantic at registration time. `preview_cart` and `generate_checkout_link` set it to `true` (their results describe mutable state the latest call overwrites). Other tools (`save_user_fact`, `collect_contact_info`, `list_services`) leave it unset — their calls are independent events and multiple-per-turn is valid.
+- **`ChatSessionService.handleMessage` applies the dedupe.** After collecting all tool outputs for the turn, it reads `toolRegistry.getAll()`, builds the set of tool names with `emitLatestOnly: true`, and filters the output array to keep only the final entry per latest-only tool name. Other tools pass through unchanged.
+- **`WebChatToolOutput` gains `call_id: string`.** Populated from the Anthropic `tool_use_id` (e.g., `toolu_01K...`) — stable, unique per call, naturally perfect as a React key. Emitted on every entry.
+- Tests cover both semantics: multi-call `preview_cart` keeps only the last entry; parallel `save_user_fact` calls both survive with distinct `call_id`s.
+
+**Decisions worth remembering:**
+- **Dedupe semantic belongs on the tool, not a central allowlist.** Hardcoding `["preview_cart", "generate_checkout_link"]` in the service would've shipped for v1 but doesn't scale. Each tool knowing its own mutation pattern is the right long-term shape — adding a new latest-wins tool is just a one-line flag on the tool class, no central registration or service edit.
+- **Why dedupe in the backend even though the frontend already has a safety net for it.** The frontend shipped within-turn dedupe per earlier guidance from this side. That code becomes a harmless no-op now, not wasted work — belt and suspenders on an invariant. But the backend is the proper source of truth for "which tool_output represents reality" — it's the only layer that knows a `preview_cart` call mutated the cart record. Pushing that reasoning to every consumer would have been a slow leak of correctness responsibility out of the API contract. Owning it here means future consumers (dashboards, analytics pipelines, different frontend clients) all get the right data by default.
+- **`call_id` was free to add.** Anthropic already generates a unique `tool_use_id` per call and threads it through the tool_result block. Exposing it on the wire costs nothing and buys the frontend a stable key without composite-key tricks. The frontend can migrate their `${index}-${output.toolName}` strategy to `output.callId` whenever it's convenient — old code keeps working in the meantime.
+
+**Next:**
+- Frontend work from this cycle (cart preview card rendering + registry) is ready to commit once live Playwright E2E passes against the updated backend contract. Backend is at commit `<filled after commit>`, waiting for frontend.
+- When frontend migrates React keys to `output.callId`, the composite-key code and within-turn dedupe code both become deletable. Optional cleanup on their side.
+
+---
+
 ## 2026-04-20 — Cart confirm-before-checkout: split create_guest_cart + generic tool_outputs on sendMessage
 
 **Goal:** Give visitors a chance to verify their cart before being dropped onto checkout, and let the frontend render the cart as a deterministic UI component instead of relying on LLM prose. Shipped as a tool-surface change plus a small generic wire-level addition to `POST /chat/web/messages` so any agent's structured tool results can reach the UI.

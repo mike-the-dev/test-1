@@ -297,7 +297,7 @@ export class ChatSessionService {
         }
       }
 
-      const toolOutputs: WebChatToolOutput[] = [];
+      const collected: WebChatToolOutput[] = [];
 
       for (const message of newMessages) {
         if (message.role !== "user") {
@@ -319,13 +319,47 @@ export class ChatSessionService {
             continue;
           }
 
-          toolOutputs.push({
+          collected.push({
+            call_id: block.tool_use_id,
             tool_name: toolName,
             content: block.content,
             ...(block.is_error === true ? { is_error: true } : {}),
           });
         }
       }
+
+      // Dedupe "latest-only" tools: if a tool's result describes mutable state
+      // (e.g., preview_cart replaces the cart record — earlier previews in the
+      // same turn describe data that no longer exists), keep only the final
+      // entry per tool_name. Other tools emit-all (e.g., save_user_fact called
+      // twice in parallel produces two legitimate events).
+      const latestOnlyNames = new Set(
+        this.toolRegistry
+          .getAll()
+          .filter((tool) => tool.emitLatestOnly === true)
+          .map((tool) => tool.name),
+      );
+
+      const toolOutputs: WebChatToolOutput[] =
+        latestOnlyNames.size === 0
+          ? collected
+          : (() => {
+              const lastIndexByName = new Map<string, number>();
+
+              collected.forEach((output, index) => {
+                if (latestOnlyNames.has(output.tool_name)) {
+                  lastIndexByName.set(output.tool_name, index);
+                }
+              });
+
+              return collected.filter((output, index) => {
+                if (!latestOnlyNames.has(output.tool_name)) {
+                  return true;
+                }
+
+                return lastIndexByName.get(output.tool_name) === index;
+              });
+            })();
 
       return { reply: finalText, toolOutputs };
     } catch (error) {

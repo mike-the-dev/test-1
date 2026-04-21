@@ -66,6 +66,8 @@ export class PreviewCartTool implements ChatTool {
 
   readonly name = "preview_cart";
 
+  readonly emitLatestOnly = true;
+
   readonly description =
     "Build or replace the visitor's cart with the items they've committed to, and return a structured preview of what's in the cart for them to confirm before checkout. Call this any time the visitor adds items, changes items, or decides to modify their selection. Pass every item currently intended for the cart (not just new ones) — calling this tool REPLACES the cart contents with the items you pass. After calling, present the structured preview to the visitor and ask them to confirm the cart looks correct. Do NOT call generate_checkout_link until the visitor has explicitly confirmed.";
 

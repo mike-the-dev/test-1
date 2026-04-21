@@ -17,6 +17,8 @@ export interface WebChatCreateSessionResponse {
 }
 
 export interface WebChatToolOutput {
+  /** Stable per-call identifier (Anthropic tool_use_id). Safe to use as a React key. */
+  call_id: string;
   tool_name: string;
   content: string;
   is_error?: boolean;

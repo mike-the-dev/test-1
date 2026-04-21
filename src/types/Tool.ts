@@ -31,5 +31,12 @@ export interface ChatTool {
   name: string;
   description: string;
   inputSchema: ChatToolInputSchema;
+  /**
+   * When true, only the most recent tool_output for this tool name survives
+   * a multi-call turn. Use for tools whose result describes mutable state that
+   * the latest call overwrites (e.g., cart preview, checkout link generation).
+   * Leave unset for tools that emit independent events (e.g., save_user_fact).
+   */
+  emitLatestOnly?: boolean;
   execute(input: unknown, context: ChatToolExecutionContext): Promise<ChatToolExecutionResult>;
 }

@@ -303,7 +303,7 @@ describe("WebChatController", () => {
       mockChatSessionService.handleMessage.mockResolvedValue({
         reply: "Here's your cart.",
         toolOutputs: [
-          { tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
+          { call_id: "toolu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
         ],
       });
 
@@ -312,7 +312,7 @@ describe("WebChatController", () => {
       expect(result).toEqual({
         reply: "Here's your cart.",
         tool_outputs: [
-          { tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
+          { call_id: "toolu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
         ],
       });
     });

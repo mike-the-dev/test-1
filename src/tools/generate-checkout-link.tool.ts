@@ -23,6 +23,8 @@ export class GenerateCheckoutLinkTool implements ChatTool {
 
   readonly name = "generate_checkout_link";
 
+  readonly emitLatestOnly = true;
+
   readonly description =
     "Generate the final checkout URL from the visitor's current cart and return it for you to present. Call this ONLY after the visitor has explicitly confirmed the cart preview looks correct. Do not call this before preview_cart has run. Do not call this speculatively or before the visitor has committed — this is the terminal action of the conversation. Takes no arguments. After calling, present the URL to the visitor as the final message and stop the conversation.";
 

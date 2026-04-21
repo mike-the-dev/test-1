@@ -28,6 +28,7 @@ const mockAnthropicService = {
 
 const mockToolRegistry = {
   getDefinitions: jest.fn().mockReturnValue([]),
+  getAll: jest.fn().mockReturnValue([]),
   execute: jest.fn(),
 };
 
@@ -56,6 +57,7 @@ describe("ChatSessionService", () => {
     jest.clearAllMocks();
 
     mockToolRegistry.getDefinitions.mockReturnValue([]);
+    mockToolRegistry.getAll.mockReturnValue([]);
     mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
 
     ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000" } });
@@ -671,7 +673,7 @@ describe("ChatSessionService", () => {
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
 
       expect(result.toolOutputs).toEqual([
-        { tool_name: "save_user_fact", content: "FACT_SAVED_PAYLOAD" },
+        { call_id: "toolu_01", tool_name: "save_user_fact", content: "FACT_SAVED_PAYLOAD" },
       ]);
     });
 
@@ -697,7 +699,7 @@ describe("ChatSessionService", () => {
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
 
       expect(result.toolOutputs).toEqual([
-        { tool_name: "save_user_fact", content: "Tool exploded", is_error: true },
+        { call_id: "toolu_01", tool_name: "save_user_fact", content: "Tool exploded", is_error: true },
       ]);
     });
 
@@ -724,8 +726,52 @@ describe("ChatSessionService", () => {
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
 
       expect(result.toolOutputs).toHaveLength(2);
-      expect(result.toolOutputs[0].tool_name).toBe("save_user_fact");
-      expect(result.toolOutputs[1].tool_name).toBe("save_user_fact");
+      expect(result.toolOutputs[0]).toEqual({ call_id: "toolu_01", tool_name: "save_user_fact", content: "ok" });
+      expect(result.toolOutputs[1]).toEqual({ call_id: "toolu_02", tool_name: "save_user_fact", content: "ok" });
+    });
+
+    it("dedupes tool outputs for tools with emitLatestOnly=true, keeping only the latest per tool_name", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      // Stub a tool with emitLatestOnly + a parallel tool without it in one turn.
+      mockToolRegistry.getAll.mockReturnValue([
+        { name: "preview_cart", emitLatestOnly: true },
+        { name: "save_user_fact" },
+      ]);
+
+      mockToolRegistry.execute.mockImplementation((toolName: string) => {
+        if (toolName === "preview_cart") {
+          return Promise.resolve({ result: JSON.stringify({ which: "call" }) });
+        }
+        return Promise.resolve({ result: "fact-ok" });
+      });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [
+            { type: "tool_use", id: "toolu_cart_1", name: "preview_cart", input: { items: [] } },
+            { type: "tool_use", id: "toolu_cart_2", name: "preview_cart", input: { items: [] } },
+            { type: "tool_use", id: "toolu_fact_1", name: "save_user_fact", input: { key: "a", value: "1" } },
+          ],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+        });
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      expect(result.toolOutputs).toHaveLength(2);
+
+      const cartOutputs = result.toolOutputs.filter((output) => output.tool_name === "preview_cart");
+      expect(cartOutputs).toHaveLength(1);
+      expect(cartOutputs[0].call_id).toBe("toolu_cart_2");
+
+      const factOutputs = result.toolOutputs.filter((output) => output.tool_name === "save_user_fact");
+      expect(factOutputs).toHaveLength(1);
     });
 
     it("passes a dynamic system context with budget when budget_cents is set on METADATA", async () => {
