@@ -15,6 +15,10 @@ const configuration = () => ({
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.ANTHROPIC_MODEL || "claude-opus-4-6",
   },
+  voyage: {
+    apiKey: process.env.VOYAGE_API_KEY,
+    model: process.env.VOYAGE_MODEL || "voyage-3-large",
+  },
   discord: {
     botToken: process.env.DISCORD_BOT_TOKEN,
     guildId: process.env.DISCORD_GUILD_ID,

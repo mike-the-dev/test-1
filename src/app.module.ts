@@ -8,6 +8,8 @@ import configuration from "./config/configuration";
 import { validate } from "./config/env.validation";
 import { DatabaseConfigService } from "./services/database-config.service";
 import { AnthropicConfigService } from "./services/anthropic-config.service";
+import { VoyageConfigService } from "./services/voyage-config.service";
+import { VoyageService } from "./services/voyage.service";
 import { DiscordConfigService } from "./services/discord-config.service";
 import { SendGridConfigService } from "./services/sendgrid-config.service";
 import { DynamoDBProvider } from "./providers/dynamodb.provider";
@@ -46,10 +48,12 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     AppService,
     DatabaseConfigService,
     AnthropicConfigService,
+    VoyageConfigService,
     DiscordConfigService,
     SendGridConfigService,
     DynamoDBProvider,
     AnthropicService,
+    VoyageService,
     ChatSessionService,
     DiscordService,
     EmailService,
