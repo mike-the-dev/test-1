@@ -6,7 +6,7 @@ import { QdrantConfigService } from "../services/qdrant-config.service";
 
 jest.mock("@qdrant/js-client-rest");
 
-const MockQdrantClient = QdrantClient as jest.MockedClass<typeof QdrantClient>;
+const MockQdrantClient = jest.mocked(QdrantClient);
 
 const mockConfig: Pick<QdrantConfigService, "url" | "apiKey"> = {
   url: "http://localhost:6333",
@@ -25,7 +25,7 @@ describe("QdrantProvider", () => {
     MockQdrantClient.mockImplementation(() => {
       return {
         getCollections: getCollectionsMock,
-      } as unknown as QdrantClient;
+      };
     });
 
     logSpy = jest.spyOn(Logger, "log").mockImplementation(() => undefined);
@@ -38,13 +38,13 @@ describe("QdrantProvider", () => {
     });
 
     it("returns the QdrantClient instance", async () => {
-      const result = await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      const result = await QdrantProvider.useFactory(mockConfig);
 
       expect(result).toBeInstanceOf(MockQdrantClient);
     });
 
     it("logs a connected message with url and collectionCount", async () => {
-      await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      await QdrantProvider.useFactory(mockConfig);
 
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Qdrant connected"),
@@ -61,7 +61,7 @@ describe("QdrantProvider", () => {
     });
 
     it("does not log a warning on success", async () => {
-      await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      await QdrantProvider.useFactory(mockConfig);
 
       expect(warnSpy).not.toHaveBeenCalled();
     });
@@ -74,18 +74,18 @@ describe("QdrantProvider", () => {
 
     it("resolves without throwing", async () => {
       await expect(
-        QdrantProvider.useFactory(mockConfig as QdrantConfigService),
+        QdrantProvider.useFactory(mockConfig),
       ).resolves.toBeDefined();
     });
 
     it("returns the QdrantClient instance even on failure", async () => {
-      const result = await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      const result = await QdrantProvider.useFactory(mockConfig);
 
       expect(result).toBeInstanceOf(MockQdrantClient);
     });
 
     it("logs an unreachable warning with url and error message", async () => {
-      await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      await QdrantProvider.useFactory(mockConfig);
 
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("Qdrant unreachable"),
@@ -102,7 +102,7 @@ describe("QdrantProvider", () => {
     });
 
     it("does not log a connected message on failure", async () => {
-      await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      await QdrantProvider.useFactory(mockConfig);
 
       expect(logSpy).not.toHaveBeenCalled();
     });
@@ -114,7 +114,7 @@ describe("QdrantProvider", () => {
     });
 
     it("constructs client with url only when apiKey is undefined", async () => {
-      await QdrantProvider.useFactory(mockConfig as QdrantConfigService);
+      await QdrantProvider.useFactory(mockConfig);
 
       expect(MockQdrantClient).toHaveBeenCalledWith({ url: mockConfig.url });
     });
@@ -125,7 +125,7 @@ describe("QdrantProvider", () => {
         apiKey: "test-api-key",
       };
 
-      await QdrantProvider.useFactory(configWithKey as QdrantConfigService);
+      await QdrantProvider.useFactory(configWithKey);
 
       expect(MockQdrantClient).toHaveBeenCalledWith({
         url: configWithKey.url,

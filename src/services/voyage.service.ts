@@ -1,6 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { VoyageAIClient } from "voyageai";
 
+type EmbedResponse = Awaited<ReturnType<VoyageAIClient["embed"]>>;
+
 import { VoyageConfigService } from "./voyage-config.service";
 
 const VOYAGE_MAX_BATCH = 1000;
@@ -34,7 +36,7 @@ export class VoyageService {
         `Calling Voyage embed API [batchSize=${batch.length} model=${model} offset=${offset}]`,
       );
 
-      let response;
+      let response: EmbedResponse;
 
       try {
         response = await this.client.embed({ input: batch, model });
@@ -51,9 +53,7 @@ export class VoyageService {
 
       for (const item of data) {
         if (!item.embedding) {
-          throw new Error(
-            `Voyage API returned a malformed response: EmbedResponseDataItem at index ${item.index ?? "unknown"} is missing the embedding field`,
-          );
+          throw new Error(`Voyage API returned a malformed response: EmbedResponseDataItem at index ${item.index ?? "unknown"} is missing the embedding field`);
         }
 
         results.push(item.embedding);
