@@ -34,6 +34,10 @@ const configuration = () => ({
       .map((value) => value.trim())
       .filter((value) => value.length > 0),
   },
+  qdrant: {
+    url: process.env.QDRANT_URL || "",
+    apiKey: process.env.QDRANT_API_KEY,
+  },
 });
 
 export default configuration;

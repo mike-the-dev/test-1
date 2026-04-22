@@ -7,10 +7,12 @@ import { AppService } from "./app.service";
 import configuration from "./config/configuration";
 import { validate } from "./config/env.validation";
 import { DatabaseConfigService } from "./services/database-config.service";
+import { QdrantConfigService } from "./services/qdrant-config.service";
 import { AnthropicConfigService } from "./services/anthropic-config.service";
 import { DiscordConfigService } from "./services/discord-config.service";
 import { SendGridConfigService } from "./services/sendgrid-config.service";
 import { DynamoDBProvider } from "./providers/dynamodb.provider";
+import { QdrantProvider } from "./providers/qdrant.provider";
 import { AnthropicService } from "./services/anthropic.service";
 import { ChatSessionService } from "./services/chat-session.service";
 import { DiscordService } from "./services/discord.service";
@@ -45,10 +47,12 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
   providers: [
     AppService,
     DatabaseConfigService,
+    QdrantConfigService,
     AnthropicConfigService,
     DiscordConfigService,
     SendGridConfigService,
     DynamoDBProvider,
+    QdrantProvider,
     AnthropicService,
     ChatSessionService,
     DiscordService,
