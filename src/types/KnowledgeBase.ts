@@ -1,5 +1,5 @@
 /** A single chunk produced by chunkText(). */
-export interface Chunk {
+export interface KnowledgeBaseChunk {
   /** The trimmed text content of this chunk. */
   text: string;
   /** Zero-based position of this chunk in the ordered sequence. */
@@ -11,7 +11,7 @@ export interface Chunk {
 }
 
 /** Options for chunkText(). All fields are optional; defaults are applied inside the function. */
-export interface ChunkOptions {
+export interface KnowledgeBaseChunkOptions {
   /** Target chunk size in characters. Defaults to DEFAULT_TARGET_CHARS. */
   targetChars?: number;
   /** Number of characters to overlap between adjacent chunks. Defaults to DEFAULT_OVERLAP_CHARS. */

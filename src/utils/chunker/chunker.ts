@@ -1,4 +1,4 @@
-import { Chunk, ChunkOptions } from "../../types/KnowledgeBase";
+import { KnowledgeBaseChunk, KnowledgeBaseChunkOptions } from "../../types/KnowledgeBase";
 
 export const DEFAULT_TARGET_CHARS = 2000;
 export const DEFAULT_OVERLAP_CHARS = 200;
@@ -25,6 +25,7 @@ function findBoundary(
   }
 
   // Tier 2: sentence boundary
+  // Returns the first delimiter type that has a match in the window, not the cross-type rightmost match.
   const sentenceDelimiters = [". ", "! ", "? ", ".\n", "!\n", "?\n"];
   for (const delimiter of sentenceDelimiters) {
     const idx = source.lastIndexOf(delimiter, windowEnd);
@@ -56,7 +57,7 @@ function findBoundary(
  * - Prefers to break on paragraph breaks > sentence boundaries > word boundaries.
  * - Falls back to hard-cutting at targetChars when no boundary exists within the search window.
  */
-export function chunkText(source: string, options?: ChunkOptions): Chunk[] {
+export function chunkText(source: string, options?: KnowledgeBaseChunkOptions): KnowledgeBaseChunk[] {
   if (source.trim() === "") {
     return [];
   }
@@ -64,7 +65,7 @@ export function chunkText(source: string, options?: ChunkOptions): Chunk[] {
   const targetChars = options?.targetChars ?? DEFAULT_TARGET_CHARS;
   const overlapChars = options?.overlapChars ?? DEFAULT_OVERLAP_CHARS;
 
-  const chunks: Chunk[] = [];
+  const chunks: KnowledgeBaseChunk[] = [];
   let position = 0;
   let index = 0;
 

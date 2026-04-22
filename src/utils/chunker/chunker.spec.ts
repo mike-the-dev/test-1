@@ -114,7 +114,6 @@ describe("chunkText", () => {
       overlapChars: 200,
     });
     // Just assert it ran and returned something.
-    expect(chunks).toBeDefined();
     expect(chunks.length).toBeGreaterThan(0);
   });
 });
