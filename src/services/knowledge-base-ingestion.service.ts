@@ -10,10 +10,10 @@ import { DatabaseConfigService } from "./database-config.service";
 import { VoyageService } from "./voyage.service";
 import { chunkText } from "../utils/chunker/chunker";
 import {
-  IngestDocumentInput,
-  IngestDocumentResult,
   KnowledgeBaseChunk,
   KnowledgeBaseDocumentRecord,
+  KnowledgeBaseIngestDocumentInput,
+  KnowledgeBaseIngestDocumentResult,
   KnowledgeBasePointPayload,
 } from "../types/KnowledgeBase";
 
@@ -39,7 +39,7 @@ export class KnowledgeBaseIngestionService {
     private readonly databaseConfig: DatabaseConfigService,
   ) {}
 
-  async ingestDocument(input: IngestDocumentInput): Promise<IngestDocumentResult> {
+  async ingestDocument(input: KnowledgeBaseIngestDocumentInput): Promise<KnowledgeBaseIngestDocumentResult> {
     const startedAt = Date.now();
     const createdAt = new Date().toISOString();
 
@@ -52,15 +52,13 @@ export class KnowledgeBaseIngestionService {
     const chunks = chunkText(input.text);
 
     if (chunks.length === 0) {
-      throw new BadRequestException(
-        "Document text produced no content after chunking. Ensure the text field is not empty or whitespace-only.",
-      );
+      throw new BadRequestException("Document text produced no content after chunking. Ensure the text field is not empty or whitespace-only.");
     }
 
     this.logger.debug(`Chunked document [documentUlid=${documentUlid} chunkCount=${chunks.length}]`);
 
     // VoyageService already produces sanitized error messages — let them propagate.
-    const embeddings = await this.voyageService.embedTexts(chunks.map((c) => c.text));
+    const embeddings = await this.voyageService.embedTexts(chunks.map((chunk) => chunk.text));
 
     await this.ensureCollection();
 
@@ -127,27 +125,29 @@ export class KnowledgeBaseIngestionService {
 
   private async writeQdrantPoints(
     documentUlid: string,
-    input: IngestDocumentInput,
+    input: KnowledgeBaseIngestDocumentInput,
     chunks: KnowledgeBaseChunk[],
     embeddings: number[][],
     createdAt: string,
   ): Promise<void> {
-    const points = chunks.map((chunk, i) => ({
-      id: randomUUID(),
-      vector: embeddings[i],
-      payload: {
-        account_ulid: input.accountUlid,
-        document_ulid: documentUlid,
-        document_title: input.title,
-        external_id: input.externalId,
-        chunk_index: chunk.index,
-        chunk_text: chunk.text,
-        start_offset: chunk.startOffset,
-        end_offset: chunk.endOffset,
-        source_type: input.sourceType,
-        created_at: createdAt,
-      } satisfies KnowledgeBasePointPayload,
-    }));
+    const points = chunks.map((chunk, index) => {
+      return {
+        id: randomUUID(),
+        vector: embeddings[index],
+        payload: {
+          account_ulid: input.accountUlid,
+          document_ulid: documentUlid,
+          document_title: input.title,
+          external_id: input.externalId,
+          chunk_index: chunk.index,
+          chunk_text: chunk.text,
+          start_offset: chunk.startOffset,
+          end_offset: chunk.endOffset,
+          source_type: input.sourceType,
+          created_at: createdAt,
+        } satisfies KnowledgeBasePointPayload,
+      };
+    });
 
     try {
       await this.qdrantClient.upsert(KB_COLLECTION_NAME, { wait: true, points });
@@ -162,7 +162,7 @@ export class KnowledgeBaseIngestionService {
 
   private async writeDynamoRecord(
     documentUlid: string,
-    input: IngestDocumentInput,
+    input: KnowledgeBaseIngestDocumentInput,
     chunkCount: number,
     createdAt: string,
   ): Promise<void> {

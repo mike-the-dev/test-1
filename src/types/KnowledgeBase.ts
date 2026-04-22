@@ -26,7 +26,7 @@ export interface KnowledgeBaseChunkOptions {
 export type KnowledgeBaseSourceType = "pdf" | "csv" | "docx" | "txt" | "html";
 
 /** Validated request body passed from the controller to the ingestion service. */
-export interface IngestDocumentInput {
+export interface KnowledgeBaseIngestDocumentInput {
   /** Raw 26-character ULID (A# prefix already stripped by the controller). */
   accountUlid: string;
   externalId: string;
@@ -37,7 +37,7 @@ export interface IngestDocumentInput {
 }
 
 /** Response body returned on successful ingestion (201 Created). */
-export interface IngestDocumentResult {
+export interface KnowledgeBaseIngestDocumentResult {
   documentUlid: string;
   chunkCount: number;
   status: "ready";

@@ -5,7 +5,8 @@ import { KnowledgeBaseController } from "./knowledge-base.controller";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { ingestDocumentSchema } from "../validation/knowledge-base.schema";
-import type { IngestDocumentResult } from "../types/KnowledgeBase";
+import type { IngestDocumentBody } from "../validation/knowledge-base.schema";
+import type { KnowledgeBaseIngestDocumentResult } from "../types/KnowledgeBase";
 
 // Must be a valid 26-char Crockford base32 ULID (only [0-9A-HJKMNP-TV-Z] — no I, L, O, U).
 const VALID_ACCOUNT_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -16,15 +17,15 @@ const VALID_BODY = {
   externalId: "ext-doc-001",
   title: "My Document",
   text: "Some meaningful document text.",
-  sourceType: "pdf" as const,
-};
+  sourceType: "pdf",
+} satisfies IngestDocumentBody;
 
-const STUB_RESULT: IngestDocumentResult = {
+const STUB_RESULT = {
   documentUlid: "01TESTULID000000000000000A",
   chunkCount: 3,
   status: "ready",
   createdAt: "2026-04-21T00:00:00.000Z",
-};
+} satisfies KnowledgeBaseIngestDocumentResult;
 
 const mockIngestionService = {
   ingestDocument: jest.fn(),

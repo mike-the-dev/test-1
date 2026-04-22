@@ -9,6 +9,7 @@ import { VoyageService } from "./voyage.service";
 import { DatabaseConfigService } from "./database-config.service";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { QDRANT_CLIENT } from "../providers/qdrant.provider";
+import { KnowledgeBaseIngestDocumentInput } from "../types/KnowledgeBase";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
@@ -50,8 +51,8 @@ const STUB_INPUT = {
   externalId: "ext-001",
   title: "Test Document",
   text: "Some meaningful text here.",
-  sourceType: "pdf" as const,
-};
+  sourceType: "pdf",
+} satisfies KnowledgeBaseIngestDocumentInput;
 
 const STUB_CHUNKS = [
   { text: "chunk one", index: 0, startOffset: 0, endOffset: 9 },
@@ -169,7 +170,9 @@ describe("KnowledgeBaseIngestionService", () => {
 
       expect(mockQdrantClient.upsert).toHaveBeenCalledTimes(1);
 
-      const [collectionName, upsertArgs] = mockQdrantClient.upsert.mock.calls[0] as [string, { wait: boolean; points: Array<{ id: string; vector: number[]; payload: Record<string, unknown> }> }];
+      const upsertCall = mockQdrantClient.upsert.mock.calls[0];
+      const collectionName = upsertCall[0];
+      const upsertArgs = upsertCall[1];
       expect(collectionName).toBe("knowledge_base");
       expect(upsertArgs.wait).toBe(true);
       expect(upsertArgs.points).toHaveLength(3);
@@ -192,7 +195,7 @@ describe("KnowledgeBaseIngestionService", () => {
       const putCalls = ddbMock.commandCalls(PutCommand);
       expect(putCalls).toHaveLength(1);
 
-      const item = putCalls[0].args[0].input.Item as Record<string, unknown>;
+      const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
       expect(item.pk).toBe(`A#${ACCOUNT_ULID}`);
       expect(item.sk).toBe(`KB#DOC#${DOCUMENT_ULID}`);
       expect(item.entity).toBe("KB_DOCUMENT");
@@ -210,7 +213,7 @@ describe("KnowledgeBaseIngestionService", () => {
       await service.ingestDocument(inputWithMime);
 
       const putCalls = ddbMock.commandCalls(PutCommand);
-      const item = putCalls[0].args[0].input.Item as Record<string, unknown>;
+      const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
       expect(item.mime_type).toBe("application/pdf");
     });
 
@@ -218,19 +221,19 @@ describe("KnowledgeBaseIngestionService", () => {
       await service.ingestDocument(STUB_INPUT);
 
       const putCalls = ddbMock.commandCalls(PutCommand);
-      const item = putCalls[0].args[0].input.Item as Record<string, unknown>;
+      const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
       expect(item).not.toHaveProperty("mime_type");
     });
 
     it("chunkCount in response matches the actual number of points written", async () => {
       const result = await service.ingestDocument(STUB_INPUT);
-      const [, upsertArgs] = mockQdrantClient.upsert.mock.calls[0] as [string, { points: unknown[] }];
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
       expect(result.chunkCount).toBe(upsertArgs.points.length);
     });
 
     it("account_ulid appears in every Qdrant point payload", async () => {
       await service.ingestDocument(STUB_INPUT);
-      const [, upsertArgs] = mockQdrantClient.upsert.mock.calls[0] as [string, { points: Array<{ payload: Record<string, unknown> }> }];
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
       for (const point of upsertArgs.points) {
         expect(point.payload.account_ulid).toBe(ACCOUNT_ULID);
       }

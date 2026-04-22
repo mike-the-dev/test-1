@@ -2,7 +2,7 @@ import { Body, Controller, HttpCode, Post } from "@nestjs/common";
 
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
-import { IngestDocumentResult } from "../types/KnowledgeBase";
+import { KnowledgeBaseIngestDocumentResult } from "../types/KnowledgeBase";
 import { ingestDocumentSchema } from "../validation/knowledge-base.schema";
 import type { IngestDocumentBody } from "../validation/knowledge-base.schema";
 
@@ -14,7 +14,7 @@ export class KnowledgeBaseController {
   @HttpCode(201)
   async ingestDocument(
     @Body(new ZodValidationPipe(ingestDocumentSchema)) body: IngestDocumentBody,
-  ): Promise<IngestDocumentResult> {
+  ): Promise<KnowledgeBaseIngestDocumentResult> {
     // Schema validates the A#-prefixed form; strip the prefix so the service
     // and all downstream writes operate on the raw 26-character ULID only.
     const rawAccountUlid = body.accountUlid.slice(2);
