@@ -31,8 +31,10 @@ import { ListServicesTool } from "./tools/list-services.tool";
 import { PreviewCartTool } from "./tools/preview-cart.tool";
 import { GenerateCheckoutLinkTool } from "./tools/generate-checkout-link.tool";
 import { EmailReplyService } from "./services/email-reply.service";
+import { KnowledgeBaseController } from "./controllers/knowledge-base.controller";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
 import { WebChatController } from "./controllers/web-chat.controller";
+import { KnowledgeBaseIngestionService } from "./services/knowledge-base-ingestion.service";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
 
 @Module({
@@ -45,7 +47,7 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     }),
     DiscoveryModule,
   ],
-  controllers: [AppController, SendgridWebhookController, WebChatController],
+  controllers: [AppController, SendgridWebhookController, WebChatController, KnowledgeBaseController],
   providers: [
     AppService,
     DatabaseConfigService,
@@ -74,6 +76,7 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     AgentRegistryService,
     EmailReplyService,
     OriginAllowlistService,
+    KnowledgeBaseIngestionService,
   ],
 })
 export class AppModule {}
