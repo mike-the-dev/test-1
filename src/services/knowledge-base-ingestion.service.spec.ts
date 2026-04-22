@@ -291,12 +291,28 @@ describe("KnowledgeBaseIngestionService", () => {
       });
     });
 
-    it("does not call createPayloadIndex when the collection already exists", async () => {
+    it("calls createPayloadIndex even when the collection already exists", async () => {
       mockQdrantClient.collectionExists.mockResolvedValue({ exists: true });
 
       await service.ingestDocument(STUB_INPUT);
 
-      expect(mockQdrantClient.createPayloadIndex).not.toHaveBeenCalled();
+      expect(mockQdrantClient.createPayloadIndex).toHaveBeenCalledWith("knowledge_base", {
+        field_name: "account_ulid",
+        field_schema: "keyword",
+        wait: true,
+      });
+    });
+
+    it("continues successfully when createPayloadIndex fails with a non-'already exists' error", async () => {
+      mockQdrantClient.collectionExists.mockResolvedValue({ exists: true });
+      mockQdrantClient.createPayloadIndex.mockRejectedValue(new Error("Network timeout"));
+
+      const result = await service.ingestDocument(STUB_INPUT);
+
+      expect(result).toBeDefined();
+      expect(result.status).toBe("ready");
+      expect(mockQdrantClient.upsert).toHaveBeenCalledTimes(1);
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(1);
     });
 
     it("handles the create-collection race (already exists error) gracefully and continues", async () => {

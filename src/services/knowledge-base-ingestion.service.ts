@@ -61,6 +61,7 @@ export class KnowledgeBaseIngestionService {
     const embeddings = await this.voyageService.embedTexts(chunks.map((chunk) => chunk.text));
 
     await this.ensureCollection();
+    await this.ensurePayloadIndex();
 
     await this.writeQdrantPoints(documentUlid, input, chunks, embeddings, createdAt);
 
@@ -104,9 +105,12 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(`Failed to create Qdrant collection [errorType=${errorName}]`);
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
+  }
 
-    // Add a keyword index on account_ulid so retrieval queries can filter efficiently.
-    // Idempotent: if the index already exists (e.g., race on first-ever ingestion), swallow the error.
+  // Add a keyword index on account_ulid so retrieval queries can filter efficiently.
+  // Runs on every ingestion — idempotent: "already exists" errors are swallowed.
+  // Non-fatal: the index is a performance optimization, not a correctness requirement.
+  private async ensurePayloadIndex(): Promise<void> {
     try {
       await this.qdrantClient.createPayloadIndex(KB_COLLECTION_NAME, {
         field_name: KB_ACCOUNT_ULID_INDEX_FIELD,
@@ -119,7 +123,6 @@ export class KnowledgeBaseIngestionService {
         const errorName = error instanceof Error ? error.name : "UnknownError";
         this.logger.warn(`Failed to create payload index on account_ulid [errorType=${errorName}]`);
       }
-      // Non-fatal: the index is a performance optimization, not a correctness requirement.
     }
   }
 

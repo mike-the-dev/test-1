@@ -1,4 +1,5 @@
 import { BadRequestException, InternalServerErrorException } from "@nestjs/common";
+import { HTTP_CODE_METADATA } from "@nestjs/common/constants";
 import { Test, TestingModule } from "@nestjs/testing";
 
 import { KnowledgeBaseController } from "./knowledge-base.controller";
@@ -49,6 +50,20 @@ describe("KnowledgeBaseController", () => {
     }).compile();
 
     controller = module.get<KnowledgeBaseController>(KnowledgeBaseController);
+  });
+
+  // -------------------------------------------------------------------------
+  // Decorator metadata
+  // -------------------------------------------------------------------------
+
+  describe("decorator metadata", () => {
+    it("returns 201 Created on success", () => {
+      const httpCode = Reflect.getMetadata(
+        HTTP_CODE_METADATA,
+        KnowledgeBaseController.prototype.ingestDocument,
+      );
+      expect(httpCode).toBe(201);
+    });
   });
 
   // -------------------------------------------------------------------------
