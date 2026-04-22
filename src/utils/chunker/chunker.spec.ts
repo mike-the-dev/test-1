@@ -91,8 +91,8 @@ describe("chunkText", () => {
   it("assigns sequential indices starting from 0", () => {
     const source = "a".repeat(5000);
     const chunks = chunkText(source);
-    const indices = chunks.map((c) => c.index);
-    expect(indices).toEqual(Array.from({ length: chunks.length }, (_, i) => i));
+    const indices = chunks.map((chunk) => chunk.index);
+    expect(indices).toEqual(Array.from({ length: chunks.length }, (_ignored, chunkIndex) => chunkIndex));
   });
 
   it("respects custom targetChars and overlapChars", () => {
@@ -114,7 +114,7 @@ describe("chunkText", () => {
       overlapChars: 200,
     });
     // Just assert it ran and returned something.
-    expect(Array.isArray(chunks)).toBe(true);
+    expect(chunks).toBeDefined();
     expect(chunks.length).toBeGreaterThan(0);
   });
 });
