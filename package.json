@@ -29,6 +29,7 @@
     "@nestjs/config": "^4.0.3",
     "@nestjs/core": "^11.0.1",
     "@nestjs/platform-express": "^11.0.1",
+    "@qdrant/js-client-rest": "^1.17.0",
     "@sendgrid/mail": "^8.1.6",
     "discord.js": "^14.26.2",
     "reflect-metadata": "^0.2.2",

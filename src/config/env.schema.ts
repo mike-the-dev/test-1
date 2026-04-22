@@ -36,6 +36,8 @@ export const envSchema = z
     // widget iframe's origin is NOT an allowlisted customer practice domain —
     // the practice's domain flows through the request body as `hostDomain`.
     WEB_CHAT_WIDGET_ORIGINS: z.string().optional(),
+    QDRANT_URL: z.string().url(),
+    QDRANT_API_KEY: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.WEB_CHAT_CORS_ALLOW_ALL === true && data.APP_ENV === "prod") {
