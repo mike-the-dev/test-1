@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { VoyageAIClient } from "voyageai";
+import { VoyageAIClient, VoyageAIError } from "voyageai";
 
 type EmbedResponse = Awaited<ReturnType<VoyageAIClient["embed"]>>;
 
@@ -41,8 +41,20 @@ export class VoyageService {
       try {
         response = await this.client.embed({ input: batch, model });
       } catch (error) {
-        this.logger.error("Voyage API call failed", error);
-        throw error;
+        if (error instanceof VoyageAIError) {
+          const statusCode = error.statusCode ?? "unknown";
+          this.logger.error(`Voyage API error [statusCode=${statusCode}]`);
+          if (error.statusCode === 401) {
+            throw new Error("Voyage API authentication failed — check VOYAGE_API_KEY");
+          }
+          if (error.statusCode === 429) {
+            throw new Error("Voyage API rate limit exceeded");
+          }
+          throw new Error(`Voyage API call failed with status ${statusCode}`);
+        }
+        const errorName = error instanceof Error ? error.name : "UnknownError";
+        this.logger.error(`Voyage call failed [errorType=${errorName}]`);
+        throw new Error("Voyage API call failed due to a network or unknown error");
       }
 
       const data = response.data ?? [];
@@ -51,7 +63,8 @@ export class VoyageService {
         `Voyage embed response [returned=${data.length} totalUsage=${response.usage?.totalTokens ?? "unknown"}]`,
       );
 
-      for (const item of data) {
+      const sorted = [...data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      for (const item of sorted) {
         if (!item.embedding) {
           throw new Error(`Voyage API returned a malformed response: EmbedResponseDataItem at index ${item.index ?? "unknown"} is missing the embedding field`);
         }

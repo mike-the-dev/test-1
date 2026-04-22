@@ -23,9 +23,9 @@ describe("QdrantProvider", () => {
 
     getCollectionsMock = jest.fn();
     MockQdrantClient.mockImplementation(() => {
-      return {
-        getCollections: getCollectionsMock,
-      };
+      const instance = Object.create(MockQdrantClient.prototype);
+      instance.getCollections = getCollectionsMock;
+      return instance;
     });
 
     logSpy = jest.spyOn(Logger, "log").mockImplementation(() => undefined);
