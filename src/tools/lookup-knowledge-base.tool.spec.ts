@@ -1,3 +1,4 @@
+import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 
 import { LookupKnowledgeBaseTool } from "./lookup-knowledge-base.tool";
@@ -214,7 +215,7 @@ describe("LookupKnowledgeBaseTool", () => {
       });
       voyageMock.embedText.mockRejectedValue(voyageError);
 
-      const loggerErrorSpy = jest.spyOn((tool as unknown as { logger: { error: jest.Mock } }).logger, "error");
+      const loggerErrorSpy = jest.spyOn(Logger.prototype, "error");
 
       const result = await tool.execute({ query: "some query" }, context);
 
@@ -223,7 +224,7 @@ describe("LookupKnowledgeBaseTool", () => {
       expect(qdrantMock.search).not.toHaveBeenCalled();
 
       expect(loggerErrorSpy).toHaveBeenCalled();
-      const loggedMessage: string = loggerErrorSpy.mock.calls[0][0];
+      const loggedMessage = loggerErrorSpy.mock.calls[0][0];
       expect(loggedMessage).toContain("RateLimitError");
       expect(loggedMessage).not.toContain("Voyage API rate limit exceeded");
     });
@@ -236,7 +237,7 @@ describe("LookupKnowledgeBaseTool", () => {
       });
       qdrantMock.search.mockRejectedValue(qdrantError);
 
-      const loggerErrorSpy = jest.spyOn((tool as unknown as { logger: { error: jest.Mock } }).logger, "error");
+      const loggerErrorSpy = jest.spyOn(Logger.prototype, "error");
 
       const result = await tool.execute({ query: "some query" }, context);
 
@@ -246,7 +247,7 @@ describe("LookupKnowledgeBaseTool", () => {
       expect(voyageMock.embedText).toHaveBeenCalledTimes(1);
 
       expect(loggerErrorSpy).toHaveBeenCalled();
-      const loggedMessage: string = loggerErrorSpy.mock.calls[0][0];
+      const loggedMessage = loggerErrorSpy.mock.calls[0][0];
       expect(loggedMessage).toContain("ConnectionError");
       expect(loggedMessage).not.toContain("connection refused");
     });

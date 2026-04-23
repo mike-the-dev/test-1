@@ -5,12 +5,16 @@ import { QDRANT_CLIENT } from "../providers/qdrant.provider";
 import { VoyageService } from "../services/voyage.service";
 import { KB_COLLECTION_NAME } from "../utils/knowledge-base/constants";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
-import { KnowledgeBasePointPayload, KnowledgeBaseRetrievalChunk } from "../types/KnowledgeBase";
+import { KnowledgeBasePointPayload } from "../types/KnowledgeBase";
 import { lookupKnowledgeBaseInputSchema } from "../validation/tool.schema";
 import { ChatToolProvider } from "./chat-tool.decorator";
 
 const DEFAULT_TOP_K = 5;
 const MAX_TOP_K = 20;
+
+function toPointPayload(value: Record<string, unknown>): KnowledgeBasePointPayload {
+  return value as unknown as KnowledgeBasePointPayload;
+}
 
 @ChatToolProvider()
 @Injectable()
@@ -60,49 +64,54 @@ export class LookupKnowledgeBaseTool implements ChatTool {
     const topK = parseResult.data.top_k ?? DEFAULT_TOP_K;
     const { query } = parseResult.data;
 
-    let vector: number[];
-    let searchResults: Awaited<ReturnType<QdrantClient["search"]>>;
-
-    try {
-      vector = await this.voyageService.embedText(query);
-    } catch (error) {
+    const vector = await this.voyageService.embedText(query).catch((error: unknown) => {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(`lookup_knowledge_base Voyage error [errorType=${errorName}]`);
+      return null;
+    });
+
+    if (vector === null) {
       return { result: "Knowledge base is temporarily unavailable. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    try {
-      searchResults = await this.qdrantClient.search(KB_COLLECTION_NAME, {
+    const searchResults = await this.qdrantClient
+      .search(KB_COLLECTION_NAME, {
         vector,
         filter: {
           must: [{ key: "account_ulid", match: { value: context.accountUlid } }],
         },
         limit: topK,
         with_payload: true,
+      })
+      .catch((error: unknown) => {
+        const errorName = error instanceof Error ? error.name : "UnknownError";
+        this.logger.error(`lookup_knowledge_base Qdrant error [errorType=${errorName}]`);
+        return null;
       });
-    } catch (error) {
-      const errorName = error instanceof Error ? error.name : "UnknownError";
-      this.logger.error(`lookup_knowledge_base Qdrant error [errorType=${errorName}]`);
+
+    if (searchResults === null) {
       return { result: "Knowledge base is temporarily unavailable. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    const chunks: KnowledgeBaseRetrievalChunk[] = [];
-    let skippedCount = 0;
-
-    for (const point of searchResults) {
+    const chunks = searchResults.flatMap((point) => {
       if (!point.payload) {
-        skippedCount++;
-        continue;
+        return [];
       }
-      const payload = point.payload as unknown as KnowledgeBasePointPayload;
-      chunks.push({
-        text: payload.chunk_text,
-        score: point.score,
-        document_title: payload.document_title,
-        document_ulid: payload.document_ulid,
-        chunk_index: payload.chunk_index,
-      });
-    }
+
+      const payload = toPointPayload(point.payload);
+
+      return [
+        {
+          text: payload.chunk_text,
+          score: point.score,
+          document_title: payload.document_title,
+          document_ulid: payload.document_ulid,
+          chunk_index: payload.chunk_index,
+        },
+      ];
+    });
+
+    const skippedCount = searchResults.length - chunks.length;
 
     if (skippedCount > 0) {
       this.logger.warn(
