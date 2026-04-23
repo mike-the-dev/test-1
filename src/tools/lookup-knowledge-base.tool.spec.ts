@@ -65,6 +65,10 @@ describe("LookupKnowledgeBaseTool", () => {
     tool = module.get<LookupKnowledgeBaseTool>(LookupKnowledgeBaseTool);
   });
 
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
   describe("happy path — default top_k", () => {
     it("calls embedText with the query and search with limit=5 when top_k is omitted", async () => {
       const result = await tool.execute({ query: "what is the cancellation policy" }, context);
