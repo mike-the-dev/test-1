@@ -78,3 +78,31 @@ export interface KnowledgeBasePointPayload {
   /** ISO-8601 */
   created_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Retrieval tool types (Phase 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single matched chunk returned by the lookup_knowledge_base tool.
+ * This is the agent-facing DTO — it maps from KnowledgeBasePointPayload,
+ * renaming chunk_text → text for cleaner agent consumption.
+ */
+export interface KnowledgeBaseRetrievalChunk {
+  /** The text content of the matched chunk. */
+  text: string;
+  /** Cosine similarity score from Qdrant. Higher is more similar. */
+  score: number;
+  /** Title of the source document this chunk was extracted from. */
+  document_title: string;
+  /** ULID of the source document. */
+  document_ulid: string;
+  /** Zero-based position of this chunk within its source document. */
+  chunk_index: number;
+}
+
+/** The JSON structure returned by the lookup_knowledge_base tool. */
+export interface KnowledgeBaseRetrievalResult {
+  chunks: KnowledgeBaseRetrievalChunk[];
+  count: number;
+}

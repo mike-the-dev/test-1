@@ -58,3 +58,12 @@ export type PreviewCartInput = z.infer<typeof previewCartInputSchema>;
 
 export const generateCheckoutLinkInputSchema = z.object({}).strict();
 export type GenerateCheckoutLinkInput = z.infer<typeof generateCheckoutLinkInputSchema>;
+
+export const lookupKnowledgeBaseInputSchema = z
+  .object({
+    query: z.string().min(1),
+    top_k: z.number().int().min(1).max(20).optional(),
+  })
+  .strict();
+
+export type LookupKnowledgeBaseInput = z.infer<typeof lookupKnowledgeBaseInputSchema>;

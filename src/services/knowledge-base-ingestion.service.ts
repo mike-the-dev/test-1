@@ -9,6 +9,7 @@ import { QDRANT_CLIENT } from "../providers/qdrant.provider";
 import { DatabaseConfigService } from "./database-config.service";
 import { VoyageService } from "./voyage.service";
 import { chunkText } from "../utils/chunker/chunker";
+import { KB_COLLECTION_NAME } from "../utils/knowledge-base/constants";
 import {
   KnowledgeBaseChunk,
   KnowledgeBaseDocumentRecord,
@@ -16,8 +17,6 @@ import {
   KnowledgeBaseIngestDocumentResult,
   KnowledgeBasePointPayload,
 } from "../types/KnowledgeBase";
-
-const KB_COLLECTION_NAME = "knowledge_base";
 const KB_DOCUMENT_ENTITY = "KB_DOCUMENT";
 // Qdrant collection vector size matches the voyage-3-large default output dimension.
 // Phase 8: add a startup assertion that the deployed Voyage model produces exactly

@@ -28,6 +28,7 @@ import { AgentRegistryService } from "./agents/agent-registry.service";
 import { LeadCaptureAgent } from "./agents/lead-capture.agent";
 import { ShoppingAssistantAgent } from "./agents/shopping-assistant.agent";
 import { ListServicesTool } from "./tools/list-services.tool";
+import { LookupKnowledgeBaseTool } from "./tools/lookup-knowledge-base.tool";
 import { PreviewCartTool } from "./tools/preview-cart.tool";
 import { GenerateCheckoutLinkTool } from "./tools/generate-checkout-link.tool";
 import { EmailReplyService } from "./services/email-reply.service";
@@ -68,6 +69,7 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     CollectContactInfoTool,
     SendEmailTool,
     ListServicesTool,
+    LookupKnowledgeBaseTool,
     PreviewCartTool,
     GenerateCheckoutLinkTool,
     ToolRegistryService,
