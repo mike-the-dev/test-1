@@ -100,6 +100,11 @@ export class LookupKnowledgeBaseTool implements ChatTool {
 
       const payload = toPointPayload(point.payload);
 
+      if (!payload.chunk_text || typeof payload.chunk_text !== "string" || !payload.document_title || typeof payload.document_title !== "string") {
+        this.logger.warn(`lookup_knowledge_base skipped malformed payload [pointId=${String(point.id ?? "unknown")} reason=missing_fields]`);
+        return [];
+      }
+
       return [
         {
           text: payload.chunk_text,

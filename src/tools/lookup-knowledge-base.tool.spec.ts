@@ -150,6 +150,40 @@ describe("LookupKnowledgeBaseTool", () => {
     });
   });
 
+  describe("malformed payload — missing chunk_text", () => {
+    it("skips points with missing chunk_text, returns only valid chunks, and logs a warning", async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, "warn");
+
+      const goodPoint1 = makeScoredPoint({ id: "aaaaaaaa-0000-0000-0000-000000000001" });
+      const malformedPoint = makeScoredPoint({
+        id: "bbbbbbbb-0000-0000-0000-000000000002",
+        payload: {
+          account_ulid: ACCOUNT_ULID,
+          document_ulid: "01DOCUMULID000000000000001",
+          document_title: "Some Policy",
+          chunk_index: 1,
+          // chunk_text intentionally omitted
+          start_offset: 0,
+          end_offset: 50,
+          source_type: "pdf",
+          created_at: "2024-01-01T00:00:00.000Z",
+        },
+      });
+      const goodPoint2 = makeScoredPoint({ id: "cccccccc-0000-0000-0000-000000000003" });
+
+      qdrantMock.search.mockResolvedValue([goodPoint1, malformedPoint, goodPoint2]);
+
+      const result = await tool.execute({ query: "anything" }, context);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(parsed.count).toBe(2);
+      expect(parsed.chunks).toHaveLength(2);
+
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("missing_fields"));
+    });
+  });
+
   describe("missing accountUlid", () => {
     it("returns isError when accountUlid is undefined without calling embedText or search", async () => {
       const result = await tool.execute({ query: "test query" }, { sessionUlid: SESSION_ULID });
