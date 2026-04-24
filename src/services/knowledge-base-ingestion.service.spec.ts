@@ -196,8 +196,8 @@ describe("KnowledgeBaseIngestionService", () => {
       expect(putCalls).toHaveLength(1);
 
       const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
-      expect(item.pk).toBe(`A#${ACCOUNT_ULID}`);
-      expect(item.sk).toBe(`KB#DOC#${DOCUMENT_ULID}`);
+      expect(item.PK).toBe(`A#${ACCOUNT_ULID}`);
+      expect(item.SK).toBe(`KB#DOC#${DOCUMENT_ULID}`);
       expect(item.entity).toBe("KB_DOCUMENT");
       expect(item.account_ulid).toBe(ACCOUNT_ULID);
       expect(item.document_ulid).toBe(DOCUMENT_ULID);

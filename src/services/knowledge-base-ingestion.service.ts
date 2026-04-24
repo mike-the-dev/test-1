@@ -169,8 +169,8 @@ export class KnowledgeBaseIngestionService {
     createdAt: string,
   ): Promise<void> {
     const item = {
-      pk: `${KB_PK_PREFIX}${input.accountUlid}`,
-      sk: `${KB_SK_PREFIX}${documentUlid}`,
+      PK: `${KB_PK_PREFIX}${input.accountUlid}`,
+      SK: `${KB_SK_PREFIX}${documentUlid}`,
       entity: KB_DOCUMENT_ENTITY,
       document_ulid: documentUlid,
       account_ulid: input.accountUlid,

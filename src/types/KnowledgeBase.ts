@@ -48,9 +48,9 @@ export interface KnowledgeBaseIngestDocumentResult {
 /** DynamoDB record written for each ingested document. */
 export interface KnowledgeBaseDocumentRecord {
   /** "A#<accountUlid>" */
-  pk: string;
+  PK: string;
   /** "KB#DOC#<documentUlid>" */
-  sk: string;
+  SK: string;
   entity: "KB_DOCUMENT";
   document_ulid: string;
   account_ulid: string;
