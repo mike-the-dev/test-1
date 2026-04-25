@@ -8,8 +8,6 @@ export const ENRICHMENT_CONCURRENCY_CAP = 5;
 
 export const ENRICHMENT_MAX_TOKENS = 400;
 
-// If switching to Haiku in a future phase, change this constant.
-// Haiku costs ~6× less per token but may produce lower-quality enrichment.
 export const ENRICHMENT_PROMPT = `You are preparing knowledge base content for semantic vector search. A customer-facing AI assistant will use vector search to find relevant passages when answering visitor questions about a business.
 
 Read the passage below and generate enrichment text that will be embedded alongside the original passage. The goal is to make the combined vector match a wider range of natural customer query phrasings while preserving the passage's meaning.
@@ -33,16 +31,15 @@ PASSAGE:
 `;
 
 async function runWithConcurrency<T>(
-  tasks: Array<() => Promise<T>>,
+  tasks: (() => Promise<T>)[],
   cap: number,
 ): Promise<T[]> {
   const results: T[] = new Array(tasks.length);
   const active = new Set<Promise<void>>();
 
-  for (let i = 0; i < tasks.length; i++) {
-    const index = i;
-    const p: Promise<void> = tasks[index]().then((value) => {
-      results[index] = value;
+  for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
+    const p: Promise<void> = tasks[taskIndex]().then((value) => {
+      results[taskIndex] = value;
       active.delete(p);
     });
     active.add(p);
@@ -93,12 +90,11 @@ export class KnowledgeBaseEnrichmentService {
 
       return rawText;
     } catch (error) {
-      const errorType =
-        error instanceof Anthropic.APIError
-          ? `${error.constructor.name}(status=${error.status})`
-          : error instanceof Error
-            ? error.name
-            : "UnknownError";
+      let errorType = error instanceof Error ? error.name : "UnknownError";
+
+      if (error instanceof Anthropic.APIError) {
+        errorType = `${error.constructor.name}(status=${error.status})`;
+      }
 
       this.logger.warn(
         `Enrichment API call failed [chunkIndex=${chunkIndex} errorType=${errorType}]`,
@@ -108,7 +104,7 @@ export class KnowledgeBaseEnrichmentService {
     }
   }
 
-  async enrichAllChunks(chunks: KnowledgeBaseChunk[]): Promise<Array<string | null>> {
+  async enrichAllChunks(chunks: KnowledgeBaseChunk[]): Promise<(string | null)[]> {
     if (chunks.length === 0) {
       return [];
     }

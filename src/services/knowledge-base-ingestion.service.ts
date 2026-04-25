@@ -74,21 +74,24 @@ export class KnowledgeBaseIngestionService {
     // Per-chunk failures are isolated: enrichChunk returns null on failure.
     const enrichments = await this.enrichmentService.enrichAllChunks(chunks);
 
-    const failedCount = enrichments.filter((e) => e === null).length;
+    const failedCount = enrichments.filter((enrichment) => enrichment === null).length;
+
     if (failedCount === chunks.length) {
       this.logger.warn(
         `All chunk enrichments failed — embedding without enrichment [documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}]`,
       );
-    } else if (failedCount > chunks.length / 2) {
+    }
+
+    if (failedCount > chunks.length / 2 && failedCount < chunks.length) {
       this.logger.warn(
         `Majority of chunk enrichments failed [documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}]`,
       );
     }
 
     // Step 5c — build texts to embed: combined text when enrichment succeeded, chunk_text only on failure.
-    const textsToEmbed = chunks.map((chunk, i) =>
-      enrichments[i] !== null ? `${chunk.text}\n\n${enrichments[i]}` : chunk.text,
-    );
+    const textsToEmbed = chunks.map((chunk, index) => {
+      return enrichments[index] !== null ? `${chunk.text}\n\n${enrichments[index]}` : chunk.text;
+    });
 
     // VoyageService already produces sanitized error messages — let them propagate.
     const embeddings = await this.voyageService.embedTexts(textsToEmbed);
@@ -284,7 +287,7 @@ export class KnowledgeBaseIngestionService {
     input: KnowledgeBaseIngestDocumentInput,
     chunks: KnowledgeBaseChunk[],
     embeddings: number[][],
-    enrichments: Array<string | null>,
+    enrichments: (string | null)[],
     createdAt: string,
   ): Promise<void> {
     const points = chunks.map((chunk, index) => {

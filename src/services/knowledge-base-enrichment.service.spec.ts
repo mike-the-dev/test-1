@@ -256,23 +256,25 @@ describe("KnowledgeBaseEnrichmentService", () => {
 
     it("respects the concurrency cap — no more than ENRICHMENT_CONCURRENCY_CAP calls inflight at once", async () => {
       const totalChunks = 10;
-      const chunks = Array.from({ length: totalChunks }, (_, i) => ({
-        text: `chunk ${i}`,
-        index: i,
-        startOffset: i * 10,
-        endOffset: i * 10 + 9,
-      }));
+      const chunks = Array.from({ length: totalChunks }, (_element, index) => {
+        return {
+          text: `chunk ${index}`,
+          index,
+          startOffset: index * 10,
+          endOffset: index * 10 + 9,
+        };
+      });
 
       let inflight = 0;
       let maxInflight = 0;
 
-      const resolvers: Array<(value: void) => void> = [];
+      const resolvers: ((value: void) => void)[] = [];
 
       mockMessagesCreate.mockImplementation(() => {
         inflight++;
         maxInflight = Math.max(maxInflight, inflight);
 
-        return new Promise<{ content: Array<{ type: string; text: string }> }>((resolve) => {
+        return new Promise<{ content: { type: string; text: string }[] }>((resolve) => {
           resolvers.push(() => {
             inflight--;
             resolve({ content: [{ type: "text", text: "SUMMARY:\ns\n\nQUESTIONS:\n- Q\n\nKEY TERMS:\nt" }] });
