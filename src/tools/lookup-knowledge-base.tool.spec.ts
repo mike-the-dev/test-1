@@ -16,8 +16,8 @@ function makeScoredPoint(overrides: Record<string, unknown> = {}): Record<string
     version: 1,
     score: 0.8932,
     payload: {
-      account_ulid: ACCOUNT_ULID,
-      document_ulid: "01DOCUMULID000000000000000",
+      account_id: ACCOUNT_ULID,
+      document_id: "01DOCUMULID000000000000000",
       document_title: "Pet Care Emergency Policy V1",
       external_id: "pet-care-emergency",
       chunk_index: 3,
@@ -25,7 +25,7 @@ function makeScoredPoint(overrides: Record<string, unknown> = {}): Record<string
       start_offset: 100,
       end_offset: 200,
       source_type: "pdf",
-      created_at: "2024-01-01T00:00:00.000Z",
+      _createdAt_: "2024-01-01T00:00:00.000Z",
     },
     ...overrides,
   };
@@ -79,7 +79,7 @@ describe("LookupKnowledgeBaseTool", () => {
         "knowledge_base",
         expect.objectContaining({
           vector: MOCK_VECTOR,
-          filter: { must: [{ key: "account_ulid", match: { value: ACCOUNT_ULID } }] },
+          filter: { must: [{ key: "account_id", match: { value: ACCOUNT_ULID } }] },
           limit: 5,
           with_payload: true,
         }),
@@ -132,7 +132,7 @@ describe("LookupKnowledgeBaseTool", () => {
       expect(chunk.text).toBe("In case of emergency, contact the on-call vet immediately.");
       expect(chunk.score).toBe(0.9512);
       expect(chunk.document_title).toBe("Pet Care Emergency Policy V1");
-      expect(chunk.document_ulid).toBe("01DOCUMULID000000000000000");
+      expect(chunk.document_id).toBe("01DOCUMULID000000000000000");
       expect(chunk.chunk_index).toBe(3);
     });
   });
@@ -158,15 +158,15 @@ describe("LookupKnowledgeBaseTool", () => {
       const malformedPoint = makeScoredPoint({
         id: "bbbbbbbb-0000-0000-0000-000000000002",
         payload: {
-          account_ulid: ACCOUNT_ULID,
-          document_ulid: "01DOCUMULID000000000000001",
+          account_id: ACCOUNT_ULID,
+          document_id: "01DOCUMULID000000000000001",
           document_title: "Some Policy",
           chunk_index: 1,
           // chunk_text intentionally omitted
           start_offset: 0,
           end_offset: 50,
           source_type: "pdf",
-          created_at: "2024-01-01T00:00:00.000Z",
+          _createdAt_: "2024-01-01T00:00:00.000Z",
         },
       });
       const goodPoint2 = makeScoredPoint({ id: "cccccccc-0000-0000-0000-000000000003" });

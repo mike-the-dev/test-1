@@ -19,7 +19,7 @@ export interface KnowledgeBaseChunkOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Ingestion endpoint types (Phase 4)
+// Ingestion endpoint types (Phase 4, updated Phase 7a)
 // ---------------------------------------------------------------------------
 
 /** The set of source document types accepted by the ingestion endpoint. */
@@ -28,7 +28,7 @@ export type KnowledgeBaseSourceType = "pdf" | "csv" | "docx" | "txt" | "html";
 /** Validated request body passed from the controller to the ingestion service. */
 export interface KnowledgeBaseIngestDocumentInput {
   /** Raw 26-character ULID (A# prefix already stripped by the controller). */
-  accountUlid: string;
+  accountId: string;
   externalId: string;
   title: string;
   text: string;
@@ -38,36 +38,40 @@ export interface KnowledgeBaseIngestDocumentInput {
 
 /** Response body returned on successful ingestion (201 Created). */
 export interface KnowledgeBaseIngestDocumentResult {
-  documentUlid: string;
-  chunkCount: number;
+  document_id: string;
+  chunk_count: number;
   status: "ready";
-  /** ISO-8601 timestamp captured at the start of the ingestion pipeline. */
-  createdAt: string;
+  /** ISO-8601 timestamp set on create, preserved on update. */
+  _createdAt_: string;
+  /** ISO-8601 timestamp set on every create and every update. */
+  _lastUpdated_: string;
 }
 
 /** DynamoDB record written for each ingested document. */
 export interface KnowledgeBaseDocumentRecord {
-  /** "A#<accountUlid>" */
+  /** "A#<accountId>" */
   PK: string;
-  /** "KB#DOC#<documentUlid>" */
+  /** "KB#DOC#<documentId>" */
   SK: string;
-  entity: "KB_DOCUMENT";
-  document_ulid: string;
-  account_ulid: string;
+  entity: "KNOWLEDGE_BASE_DOCUMENT";
+  document_id: string;
+  account_id: string;
   external_id: string;
   title: string;
   source_type: KnowledgeBaseSourceType;
   mime_type?: string;
   chunk_count: number;
   status: "ready";
-  /** ISO-8601 */
-  created_at: string;
+  /** ISO-8601; set on create, preserved on update. */
+  _createdAt_: string;
+  /** ISO-8601; set on every create and update. */
+  _lastUpdated_: string;
 }
 
 /** Payload stored on each Qdrant point (one per chunk). */
 export interface KnowledgeBasePointPayload {
-  account_ulid: string;
-  document_ulid: string;
+  account_id: string;
+  document_id: string;
   document_title: string;
   external_id: string;
   chunk_index: number;
@@ -76,11 +80,25 @@ export interface KnowledgeBasePointPayload {
   end_offset: number;
   source_type: KnowledgeBaseSourceType;
   /** ISO-8601 */
-  created_at: string;
+  _createdAt_: string;
 }
 
 // ---------------------------------------------------------------------------
-// Retrieval tool types (Phase 5)
+// Delete endpoint types (Phase 7a)
+// ---------------------------------------------------------------------------
+
+/** Validated request body passed from the controller to the delete method. */
+export interface KnowledgeBaseDeleteDocumentInput {
+  /** Raw 26-character ULID (A# prefix already stripped by the controller). */
+  accountId: string;
+  externalId: string;
+}
+
+/** The delete method returns void (HTTP 204 No Content). */
+export type KnowledgeBaseDeleteDocumentResult = void;
+
+// ---------------------------------------------------------------------------
+// Retrieval tool types (Phase 5, updated Phase 7a)
 // ---------------------------------------------------------------------------
 
 /**
@@ -95,8 +113,8 @@ export interface KnowledgeBaseRetrievalChunk {
   score: number;
   /** Title of the source document this chunk was extracted from. */
   document_title: string;
-  /** ULID of the source document. */
-  document_ulid: string;
+  /** ID of the source document. */
+  document_id: string;
   /** Zero-based position of this chunk within its source document. */
   chunk_index: number;
 }

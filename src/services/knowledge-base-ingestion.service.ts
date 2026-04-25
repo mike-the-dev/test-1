@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { randomUUID } from "crypto";
 import { ulid } from "ulid";
@@ -12,12 +12,14 @@ import { chunkText } from "../utils/chunker/chunker";
 import { KB_COLLECTION_NAME } from "../utils/knowledge-base/constants";
 import {
   KnowledgeBaseChunk,
+  KnowledgeBaseDeleteDocumentInput,
   KnowledgeBaseDocumentRecord,
   KnowledgeBaseIngestDocumentInput,
   KnowledgeBaseIngestDocumentResult,
   KnowledgeBasePointPayload,
 } from "../types/KnowledgeBase";
-const KB_DOCUMENT_ENTITY = "KB_DOCUMENT";
+
+const KB_DOCUMENT_ENTITY = "KNOWLEDGE_BASE_DOCUMENT";
 // Qdrant collection vector size matches the voyage-3-large default output dimension.
 // Phase 8: add a startup assertion that the deployed Voyage model produces exactly
 // 1024-dimension vectors to catch a model/collection dimension mismatch at boot time.
@@ -25,7 +27,7 @@ const KB_VECTOR_SIZE = 1024;
 const KB_VECTOR_DISTANCE = "Cosine";
 const KB_PK_PREFIX = "A#";
 const KB_SK_PREFIX = "KB#DOC#";
-const KB_ACCOUNT_ULID_INDEX_FIELD = "account_ulid";
+const KB_ACCOUNT_ID_INDEX_FIELD = "account_id";
 
 @Injectable()
 export class KnowledgeBaseIngestionService {
@@ -40,21 +42,31 @@ export class KnowledgeBaseIngestionService {
 
   async ingestDocument(input: KnowledgeBaseIngestDocumentInput): Promise<KnowledgeBaseIngestDocumentResult> {
     const startedAt = Date.now();
-    const createdAt = new Date().toISOString();
+    const lastUpdated = new Date().toISOString();
 
     this.logger.log(
-      `Ingesting document [accountUlid=${input.accountUlid} externalId=${input.externalId} textLength=${input.text.length}]`,
+      `Ingesting document [accountId=${input.accountId} externalId=${input.externalId} textLength=${input.text.length}]`,
     );
 
-    const documentUlid = ulid();
+    // Generate a candidate documentId — used only if the lookup below finds no existing record.
+    const documentIdCandidate = ulid();
 
+    // Step 3 — look up whether a document with this (accountId, externalId) already exists.
+    const existing = await this.lookupExistingDocument(input.accountId, input.externalId);
+
+    // Step 4 — branch: update vs. create.
+    const isUpdate = existing !== null;
+    const documentId = isUpdate ? existing.documentId : documentIdCandidate;
+    const createdAt = isUpdate ? existing.createdAt : lastUpdated;
+
+    // Step 5 — chunk → embed → ensure collection + index.
     const chunks = chunkText(input.text);
 
     if (chunks.length === 0) {
       throw new BadRequestException("Document text produced no content after chunking. Ensure the text field is not empty or whitespace-only.");
     }
 
-    this.logger.debug(`Chunked document [documentUlid=${documentUlid} chunkCount=${chunks.length}]`);
+    this.logger.debug(`Chunked document [documentId=${documentId} chunkCount=${chunks.length}]`);
 
     // VoyageService already produces sanitized error messages — let them propagate.
     const embeddings = await this.voyageService.embedTexts(chunks.map((chunk) => chunk.text));
@@ -62,16 +74,132 @@ export class KnowledgeBaseIngestionService {
     await this.ensureCollection();
     await this.ensurePayloadIndex();
 
-    await this.writeQdrantPoints(documentUlid, input, chunks, embeddings, createdAt);
+    // Step 6 — if updating, delete old Qdrant chunks before writing new ones.
+    if (isUpdate) {
+      await this.deleteQdrantPoints(input.accountId, documentId);
+    }
 
-    await this.writeDynamoRecord(documentUlid, input, chunks.length, createdAt);
+    // Step 7 — upsert new Qdrant points.
+    await this.writeQdrantPoints(documentId, input, chunks, embeddings, lastUpdated);
+
+    // Step 8 — write DynamoDB record (PutCommand replaces existing item at same PK+SK).
+    await this.writeDynamoRecord(documentId, input, chunks.length, createdAt, lastUpdated);
 
     const durationMs = Date.now() - startedAt;
     this.logger.log(
-      `Ingestion complete [documentUlid=${documentUlid} chunkCount=${chunks.length} durationMs=${durationMs}]`,
+      `Ingestion complete [documentId=${documentId} chunkCount=${chunks.length} durationMs=${durationMs} isUpdate=${isUpdate}]`,
     );
 
-    return { documentUlid, chunkCount: chunks.length, status: "ready", createdAt };
+    // Step 9 — return result.
+    return { document_id: documentId, chunk_count: chunks.length, status: "ready", _createdAt_: createdAt, _lastUpdated_: lastUpdated };
+  }
+
+  async deleteDocument(input: KnowledgeBaseDeleteDocumentInput): Promise<void> {
+    this.logger.log(`Deleting document [accountId=${input.accountId} externalId=${input.externalId}]`);
+
+    // Step 2 — look up the document.
+    const existing = await this.lookupExistingDocument(input.accountId, input.externalId);
+
+    if (existing === null) {
+      this.logger.log(`Document not found, no-op [accountId=${input.accountId} externalId=${input.externalId} action=noop]`);
+      return;
+    }
+
+    const { documentId } = existing;
+
+    // Step 3 — delete all Qdrant chunks for this document.
+    await this.deleteQdrantPoints(input.accountId, documentId);
+
+    // Step 4 — delete the DynamoDB record.
+    try {
+      await this.dynamoDb.send(
+        new DeleteCommand({
+          TableName: this.databaseConfig.conversationsTable,
+          Key: {
+            PK: `${KB_PK_PREFIX}${input.accountId}`,
+            SK: `${KB_SK_PREFIX}${documentId}`,
+          },
+        }),
+      );
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(
+        `Failed to delete DynamoDB document record [errorType=${errorName} accountId=${input.accountId} documentId=${documentId}]`,
+      );
+      throw new InternalServerErrorException("Failed to delete document metadata.");
+    }
+
+    this.logger.log(`Document deleted [accountId=${input.accountId} documentId=${documentId} action=deleted]`);
+  }
+
+  /**
+   * Looks up an existing KB document record by (accountId, externalId).
+   * Returns { documentId, createdAt } if found, or null if not found.
+   * Throws InternalServerErrorException on DynamoDB error.
+   *
+   * Uses a Query on PK = A#<accountId> with begins_with(SK, "KB#DOC#") and a
+   * FilterExpression on external_id. No GSI required at current scale; a future
+   * phase can add one when accounts host > ~500 documents or p99 lookup latency
+   * exceeds 10ms in profiling.
+   */
+  private async lookupExistingDocument(
+    accountId: string,
+    externalId: string,
+  ): Promise<{ documentId: string; createdAt: string } | null> {
+    this.logger.debug(`Looking up existing document [accountId=${accountId} externalId=${externalId}]`);
+
+    try {
+      const result = await this.dynamoDb.send(
+        new QueryCommand({
+          TableName: this.databaseConfig.conversationsTable,
+          KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
+          FilterExpression: "external_id = :externalId",
+          ExpressionAttributeValues: {
+            ":pk": `${KB_PK_PREFIX}${accountId}`,
+            ":skPrefix": KB_SK_PREFIX,
+            ":externalId": externalId,
+          },
+          Limit: 1,
+        }),
+      );
+
+      if (!result.Items || result.Items.length === 0) {
+        return null;
+      }
+
+      const record = result.Items[0] as KnowledgeBaseDocumentRecord;
+      return { documentId: record.document_id, createdAt: record._createdAt_ };
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(
+        `Failed to query DynamoDB for existing document [errorType=${errorName} accountId=${accountId} externalId=${externalId}]`,
+      );
+      throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
+    }
+  }
+
+  /**
+   * Deletes all Qdrant points matching (accountId, documentId).
+   * Uses wait: true to ensure the delete is reflected before subsequent operations.
+   */
+  private async deleteQdrantPoints(accountId: string, documentId: string): Promise<void> {
+    try {
+      await this.qdrantClient.delete(KB_COLLECTION_NAME, {
+        wait: true,
+        filter: {
+          must: [
+            { key: "account_id", match: { value: accountId } },
+            { key: "document_id", match: { value: documentId } },
+          ],
+        },
+      });
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(
+        `Failed to delete Qdrant points [errorType=${errorName} accountId=${accountId} documentId=${documentId}]`,
+      );
+      throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
+    }
   }
 
   private async ensureCollection(): Promise<void> {
@@ -106,13 +234,13 @@ export class KnowledgeBaseIngestionService {
     }
   }
 
-  // Add a keyword index on account_ulid so retrieval queries can filter efficiently.
+  // Add a keyword index on account_id so retrieval queries can filter efficiently.
   // Runs on every ingestion — idempotent: "already exists" errors are swallowed.
   // Non-fatal: the index is a performance optimization, not a correctness requirement.
   private async ensurePayloadIndex(): Promise<void> {
     try {
       await this.qdrantClient.createPayloadIndex(KB_COLLECTION_NAME, {
-        field_name: KB_ACCOUNT_ULID_INDEX_FIELD,
+        field_name: KB_ACCOUNT_ID_INDEX_FIELD,
         field_schema: "keyword",
         wait: true,
       });
@@ -120,13 +248,13 @@ export class KnowledgeBaseIngestionService {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (!message.includes("already exists")) {
         const errorName = error instanceof Error ? error.name : "UnknownError";
-        this.logger.warn(`Failed to create payload index on account_ulid [errorType=${errorName}]`);
+        this.logger.warn(`Failed to create payload index on account_id [errorType=${errorName}]`);
       }
     }
   }
 
   private async writeQdrantPoints(
-    documentUlid: string,
+    documentId: string,
     input: KnowledgeBaseIngestDocumentInput,
     chunks: KnowledgeBaseChunk[],
     embeddings: number[][],
@@ -137,8 +265,8 @@ export class KnowledgeBaseIngestionService {
         id: randomUUID(),
         vector: embeddings[index],
         payload: {
-          account_ulid: input.accountUlid,
-          document_ulid: documentUlid,
+          account_id: input.accountId,
+          document_id: documentId,
           document_title: input.title,
           external_id: input.externalId,
           chunk_index: chunk.index,
@@ -146,7 +274,7 @@ export class KnowledgeBaseIngestionService {
           start_offset: chunk.startOffset,
           end_offset: chunk.endOffset,
           source_type: input.sourceType,
-          created_at: createdAt,
+          _createdAt_: createdAt,
         } satisfies KnowledgeBasePointPayload,
       };
     });
@@ -156,31 +284,33 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to upsert Qdrant points [errorType=${errorName} documentUlid=${documentUlid}]`,
+        `Failed to upsert Qdrant points [errorType=${errorName} documentId=${documentId}]`,
       );
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
   }
 
   private async writeDynamoRecord(
-    documentUlid: string,
+    documentId: string,
     input: KnowledgeBaseIngestDocumentInput,
     chunkCount: number,
     createdAt: string,
+    lastUpdated: string,
   ): Promise<void> {
     const item = {
-      PK: `${KB_PK_PREFIX}${input.accountUlid}`,
-      SK: `${KB_SK_PREFIX}${documentUlid}`,
+      PK: `${KB_PK_PREFIX}${input.accountId}`,
+      SK: `${KB_SK_PREFIX}${documentId}`,
       entity: KB_DOCUMENT_ENTITY,
-      document_ulid: documentUlid,
-      account_ulid: input.accountUlid,
+      document_id: documentId,
+      account_id: input.accountId,
       external_id: input.externalId,
       title: input.title,
       source_type: input.sourceType,
       ...(input.mimeType ? { mime_type: input.mimeType } : {}),
       chunk_count: chunkCount,
       status: "ready",
-      created_at: createdAt,
+      _createdAt_: createdAt,
+      _lastUpdated_: lastUpdated,
     } satisfies KnowledgeBaseDocumentRecord;
 
     try {
@@ -190,7 +320,7 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to write DynamoDB document record [errorType=${errorName} documentUlid=${documentUlid}]`,
+        `Failed to write DynamoDB document record [errorType=${errorName} documentId=${documentId}]`,
       );
       throw new InternalServerErrorException("Failed to record document metadata.");
     }

@@ -78,7 +78,7 @@ export class LookupKnowledgeBaseTool implements ChatTool {
       .search(KB_COLLECTION_NAME, {
         vector,
         filter: {
-          must: [{ key: "account_ulid", match: { value: context.accountUlid } }],
+          must: [{ key: "account_id", match: { value: context.accountUlid } }],
         },
         limit: topK,
         with_payload: true,
@@ -110,7 +110,7 @@ export class LookupKnowledgeBaseTool implements ChatTool {
           text: payload.chunk_text,
           score: point.score,
           document_title: payload.document_title,
-          document_ulid: payload.document_ulid,
+          document_id: payload.document_id,
           chunk_index: payload.chunk_index,
         },
       ];

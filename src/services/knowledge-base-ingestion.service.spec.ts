@@ -1,7 +1,7 @@
 import { BadRequestException, InternalServerErrorException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
 import { mockClient } from "aws-sdk-client-mock";
 
 import { KnowledgeBaseIngestionService } from "./knowledge-base-ingestion.service";
@@ -42,12 +42,13 @@ const { chunkText } = jest.requireMock<{ chunkText: jest.Mock }>("../utils/chunk
 // ---------------------------------------------------------------------------
 
 // Valid 26-char Crockford base32 ULID (only [0-9A-HJKMNP-TV-Z]).
-const ACCOUNT_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-const DOCUMENT_ULID = "01TESTULID000000000000000A";
+const ACCOUNT_ID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const DOCUMENT_ID = "01TESTULID000000000000000A";
+const EXISTING_DOCUMENT_ID = "01EXISTINGDOCID0000000000A";
 const TABLE_NAME = "test-table";
 
 const STUB_INPUT = {
-  accountUlid: ACCOUNT_ULID,
+  accountId: ACCOUNT_ID,
   externalId: "ext-001",
   title: "Test Document",
   text: "Some meaningful text here.",
@@ -75,6 +76,7 @@ const mockQdrantClient = {
   createCollection: jest.fn(),
   createPayloadIndex: jest.fn(),
   upsert: jest.fn(),
+  delete: jest.fn(),
 };
 
 // ---------------------------------------------------------------------------
@@ -108,7 +110,7 @@ describe("KnowledgeBaseIngestionService", () => {
       .mockReturnValueOnce("uuid-0000-0000-0000-000000000002")
       .mockReturnValueOnce("uuid-0000-0000-0000-000000000003");
 
-    ulid.mockReturnValue(DOCUMENT_ULID);
+    ulid.mockReturnValue(DOCUMENT_ID);
 
     // Default happy-path setup
     chunkText.mockReturnValue(STUB_CHUNKS);
@@ -117,7 +119,12 @@ describe("KnowledgeBaseIngestionService", () => {
     mockQdrantClient.createCollection.mockResolvedValue(true);
     mockQdrantClient.createPayloadIndex.mockResolvedValue({});
     mockQdrantClient.upsert.mockResolvedValue({ status: "completed", operation_id: 1 });
+    mockQdrantClient.delete.mockResolvedValue({ status: "completed", operation_id: 2 });
+
+    // Default: no existing document (create path)
+    ddbMock.on(QueryCommand).resolves({ Items: [] });
     ddbMock.on(PutCommand).resolves({});
+    ddbMock.on(DeleteCommand).resolves({});
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -145,18 +152,20 @@ describe("KnowledgeBaseIngestionService", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Happy path
+  // Happy path — create (no existing document)
   // -------------------------------------------------------------------------
 
-  describe("happy path — 3 chunks in, 3 points out", () => {
+  describe("happy path — 3 chunks in, 3 points out (create)", () => {
     it("returns the correct result DTO", async () => {
       const result = await service.ingestDocument(STUB_INPUT);
 
-      expect(result.documentUlid).toBe(DOCUMENT_ULID);
-      expect(result.chunkCount).toBe(3);
+      expect(result.document_id).toBe(DOCUMENT_ID);
+      expect(result.chunk_count).toBe(3);
       expect(result.status).toBe("ready");
-      expect(typeof result.createdAt).toBe("string");
-      expect(result.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(typeof result._createdAt_).toBe("string");
+      expect(result._createdAt_).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      expect(typeof result._lastUpdated_).toBe("string");
+      expect(result._lastUpdated_).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
     it("calls embedTexts with the chunk texts in chunker order", async () => {
@@ -165,7 +174,7 @@ describe("KnowledgeBaseIngestionService", () => {
       expect(mockVoyageService.embedTexts).toHaveBeenCalledWith(["chunk one", "chunk two", "chunk three"]);
     });
 
-    it("upserts 3 points with correct payload fields including account_ulid and chunk_index", async () => {
+    it("upserts 3 points with correct payload fields including account_id and chunk_index", async () => {
       await service.ingestDocument(STUB_INPUT);
 
       expect(mockQdrantClient.upsert).toHaveBeenCalledTimes(1);
@@ -179,8 +188,8 @@ describe("KnowledgeBaseIngestionService", () => {
 
       const [p0, p1, p2] = upsertArgs.points;
 
-      expect(p0.payload.account_ulid).toBe(ACCOUNT_ULID);
-      expect(p0.payload.document_ulid).toBe(DOCUMENT_ULID);
+      expect(p0.payload.account_id).toBe(ACCOUNT_ID);
+      expect(p0.payload.document_id).toBe(DOCUMENT_ID);
       expect(p0.payload.chunk_index).toBe(0);
       expect(p0.payload.chunk_text).toBe("chunk one");
       expect(p0.payload.source_type).toBe("pdf");
@@ -189,23 +198,25 @@ describe("KnowledgeBaseIngestionService", () => {
       expect(p2.payload.chunk_index).toBe(2);
     });
 
-    it("writes a DynamoDB record with the correct pk, sk, and account_ulid", async () => {
+    it("writes a DynamoDB record with the correct pk, sk, and account_id", async () => {
       await service.ingestDocument(STUB_INPUT);
 
       const putCalls = ddbMock.commandCalls(PutCommand);
       expect(putCalls).toHaveLength(1);
 
       const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
-      expect(item.PK).toBe(`A#${ACCOUNT_ULID}`);
-      expect(item.SK).toBe(`KB#DOC#${DOCUMENT_ULID}`);
-      expect(item.entity).toBe("KB_DOCUMENT");
-      expect(item.account_ulid).toBe(ACCOUNT_ULID);
-      expect(item.document_ulid).toBe(DOCUMENT_ULID);
+      expect(item.PK).toBe(`A#${ACCOUNT_ID}`);
+      expect(item.SK).toBe(`KB#DOC#${DOCUMENT_ID}`);
+      expect(item.entity).toBe("KNOWLEDGE_BASE_DOCUMENT");
+      expect(item.account_id).toBe(ACCOUNT_ID);
+      expect(item.document_id).toBe(DOCUMENT_ID);
       expect(item.chunk_count).toBe(3);
       expect(item.status).toBe("ready");
       expect(item.source_type).toBe("pdf");
       expect(item.external_id).toBe("ext-001");
       expect(item.title).toBe("Test Document");
+      expect(typeof item._createdAt_).toBe("string");
+      expect(typeof item._lastUpdated_).toBe("string");
     });
 
     it("includes mime_type in the DynamoDB record when provided", async () => {
@@ -225,18 +236,86 @@ describe("KnowledgeBaseIngestionService", () => {
       expect(item).not.toHaveProperty("mime_type");
     });
 
-    it("chunkCount in response matches the actual number of points written", async () => {
+    it("chunk_count in response matches the actual number of points written", async () => {
       const result = await service.ingestDocument(STUB_INPUT);
       const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
-      expect(result.chunkCount).toBe(upsertArgs.points.length);
+      expect(result.chunk_count).toBe(upsertArgs.points.length);
     });
 
-    it("account_ulid appears in every Qdrant point payload", async () => {
+    it("account_id appears in every Qdrant point payload", async () => {
       await service.ingestDocument(STUB_INPUT);
       const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
       for (const point of upsertArgs.points) {
-        expect(point.payload.account_ulid).toBe(ACCOUNT_ULID);
+        expect(point.payload.account_id).toBe(ACCOUNT_ID);
       }
+    });
+
+    it("does NOT call Qdrant delete when no existing document is found", async () => {
+      await service.ingestDocument(STUB_INPUT);
+      expect(mockQdrantClient.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Update path — existing document found
+  // -------------------------------------------------------------------------
+
+  describe("update path — existing document found", () => {
+    const EXISTING_CREATED_AT = "2026-01-01T00:00:00.000Z";
+
+    beforeEach(() => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ document_id: EXISTING_DOCUMENT_ID, _createdAt_: EXISTING_CREATED_AT }],
+      });
+    });
+
+    it("reuses the existing document_id, preserves _createdAt_, advances _lastUpdated_", async () => {
+      const result = await service.ingestDocument(STUB_INPUT);
+
+      expect(result.document_id).toBe(EXISTING_DOCUMENT_ID);
+      expect(result._createdAt_).toBe(EXISTING_CREATED_AT);
+      expect(typeof result._lastUpdated_).toBe("string");
+      expect(result._lastUpdated_).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      // _lastUpdated_ must be different from (or equal to) _createdAt_ but is always present
+      expect(result._lastUpdated_).toBeDefined();
+    });
+
+    it("calls Qdrant delete before upsert with the correct account_id and document_id filter", async () => {
+      await service.ingestDocument(STUB_INPUT);
+
+      expect(mockQdrantClient.delete).toHaveBeenCalledTimes(1);
+      expect(mockQdrantClient.delete).toHaveBeenCalledWith("knowledge_base", {
+        wait: true,
+        filter: {
+          must: [
+            { key: "account_id", match: { value: ACCOUNT_ID } },
+            { key: "document_id", match: { value: EXISTING_DOCUMENT_ID } },
+          ],
+        },
+      });
+
+      // upsert must be called after delete
+      expect(mockQdrantClient.upsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("writes DynamoDB record with the existing document_id", async () => {
+      await service.ingestDocument(STUB_INPUT);
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      expect(putCalls).toHaveLength(1);
+
+      const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
+      expect(item.document_id).toBe(EXISTING_DOCUMENT_ID);
+      expect(item.SK).toBe(`KB#DOC#${EXISTING_DOCUMENT_ID}`);
+      expect(item._createdAt_).toBe(EXISTING_CREATED_AT);
+    });
+
+    it("throws InternalServerErrorException and does NOT write DDB when Qdrant delete fails", async () => {
+      mockQdrantClient.delete.mockRejectedValue(new Error("Qdrant delete error"));
+
+      await expect(service.ingestDocument(STUB_INPUT)).rejects.toThrow(InternalServerErrorException);
+
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
     });
   });
 
@@ -279,13 +358,13 @@ describe("KnowledgeBaseIngestionService", () => {
       });
     });
 
-    it("calls createPayloadIndex on account_ulid after creating a new collection", async () => {
+    it("calls createPayloadIndex on account_id after creating a new collection", async () => {
       mockQdrantClient.collectionExists.mockResolvedValue({ exists: false });
 
       await service.ingestDocument(STUB_INPUT);
 
       expect(mockQdrantClient.createPayloadIndex).toHaveBeenCalledWith("knowledge_base", {
-        field_name: "account_ulid",
+        field_name: "account_id",
         field_schema: "keyword",
         wait: true,
       });
@@ -297,7 +376,7 @@ describe("KnowledgeBaseIngestionService", () => {
       await service.ingestDocument(STUB_INPUT);
 
       expect(mockQdrantClient.createPayloadIndex).toHaveBeenCalledWith("knowledge_base", {
-        field_name: "account_ulid",
+        field_name: "account_id",
         field_schema: "keyword",
         wait: true,
       });
@@ -378,6 +457,85 @@ describe("KnowledgeBaseIngestionService", () => {
 
       // Qdrant upsert was called (before DDB failed)
       expect(mockQdrantClient.upsert).toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // deleteDocument — happy paths
+  // -------------------------------------------------------------------------
+
+  describe("deleteDocument — found: deletes Qdrant chunks and DDB record", () => {
+    beforeEach(() => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ document_id: DOCUMENT_ID, _createdAt_: "2026-01-01T00:00:00.000Z" }],
+      });
+    });
+
+    it("calls Qdrant delete with account_id + document_id filter and DDB DeleteCommand, returns void", async () => {
+      await expect(service.deleteDocument({ accountId: ACCOUNT_ID, externalId: "ext-001" })).resolves.toBeUndefined();
+
+      expect(mockQdrantClient.delete).toHaveBeenCalledTimes(1);
+      expect(mockQdrantClient.delete).toHaveBeenCalledWith("knowledge_base", {
+        wait: true,
+        filter: {
+          must: [
+            { key: "account_id", match: { value: ACCOUNT_ID } },
+            { key: "document_id", match: { value: DOCUMENT_ID } },
+          ],
+        },
+      });
+
+      const deleteCalls = ddbMock.commandCalls(DeleteCommand);
+      expect(deleteCalls).toHaveLength(1);
+      expect(deleteCalls[0].args[0].input.Key).toEqual({
+        PK: `A#${ACCOUNT_ID}`,
+        SK: `KB#DOC#${DOCUMENT_ID}`,
+      });
+    });
+  });
+
+  describe("deleteDocument — not found: no-op, returns void (idempotent 204)", () => {
+    it("does not call Qdrant delete or DDB DeleteCommand when document is not found", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      await expect(service.deleteDocument({ accountId: ACCOUNT_ID, externalId: "nonexistent" })).resolves.toBeUndefined();
+
+      expect(mockQdrantClient.delete).not.toHaveBeenCalled();
+      expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+    });
+  });
+
+  describe("deleteDocument — Qdrant delete failure → 500", () => {
+    it("throws InternalServerErrorException and does NOT call DDB DeleteCommand", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ document_id: DOCUMENT_ID, _createdAt_: "2026-01-01T00:00:00.000Z" }],
+      });
+      mockQdrantClient.delete.mockRejectedValue(new Error("Qdrant error"));
+
+      await expect(service.deleteDocument({ accountId: ACCOUNT_ID, externalId: "ext-001" })).rejects.toThrow(InternalServerErrorException);
+
+      expect(ddbMock.commandCalls(DeleteCommand)).toHaveLength(0);
+    });
+  });
+
+  describe("deleteDocument — DDB DeleteCommand failure → 500", () => {
+    it("throws InternalServerErrorException after Qdrant delete succeeds", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ document_id: DOCUMENT_ID, _createdAt_: "2026-01-01T00:00:00.000Z" }],
+      });
+      ddbMock.on(DeleteCommand).rejects(new Error("DDB error"));
+
+      await expect(service.deleteDocument({ accountId: ACCOUNT_ID, externalId: "ext-001" })).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  describe("deleteDocument — DDB lookup failure → 500", () => {
+    it("throws InternalServerErrorException and does NOT call Qdrant delete", async () => {
+      ddbMock.on(QueryCommand).rejects(new Error("DDB timeout"));
+
+      await expect(service.deleteDocument({ accountId: ACCOUNT_ID, externalId: "ext-001" })).rejects.toThrow(InternalServerErrorException);
+
+      expect(mockQdrantClient.delete).not.toHaveBeenCalled();
     });
   });
 });
