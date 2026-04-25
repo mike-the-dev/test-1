@@ -1,4 +1,4 @@
-import { BadRequestException, InternalServerErrorException } from "@nestjs/common";
+import { BadRequestException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
@@ -380,6 +380,40 @@ describe("KnowledgeBaseIngestionService", () => {
       expect(p0.payload.chunk_text).toBe("chunk one");
       expect(p1.payload.chunk_text).toBe("chunk two");
       expect(p2.payload.chunk_text).toBe("chunk three");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Enrichment — majority (but not all) chunks fail
+  // -------------------------------------------------------------------------
+
+  describe("enrichment — majority of chunks fail", () => {
+    it("logs the 'Majority of chunk enrichments failed' WARN and completes successfully", async () => {
+      const warnSpy = jest.spyOn(Logger.prototype, "warn");
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue([null, "enriched two", null]);
+
+      const result = await service.ingestDocument(STUB_INPUT);
+
+      expect(result.status).toBe("ready");
+
+      const warnCalls = warnSpy.mock.calls.map((c) => String(c[0]));
+      const majorityWarn = warnCalls.find((m) => m.includes("Majority of chunk enrichments failed"));
+      const allWarn = warnCalls.find((m) => m.includes("All chunk enrichments failed"));
+
+      expect(majorityWarn).toBeDefined();
+      expect(allWarn).toBeUndefined();
+
+      // Successful chunk is embedded with combined text, failed chunks with chunk_text only.
+      expect(mockVoyageService.embedTexts).toHaveBeenCalledWith([
+        "chunk one",
+        "chunk two\n\nenriched two",
+        "chunk three",
+      ]);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      expect(upsertArgs.points[0].payload).not.toHaveProperty("enrichment");
+      expect(upsertArgs.points[1].payload.enrichment).toBe("enriched two");
+      expect(upsertArgs.points[2].payload).not.toHaveProperty("enrichment");
     });
   });
 

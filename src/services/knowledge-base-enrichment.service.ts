@@ -38,6 +38,10 @@ async function runWithConcurrency<T>(
   const active = new Set<Promise<void>>();
 
   for (let taskIndex = 0; taskIndex < tasks.length; taskIndex++) {
+    // p is const-per-iteration — the closure captures THIS iteration's promise binding,
+    // which is what makes `active.delete(p)` self-removal work. Do NOT change to `let` or
+    // hoist outside the loop without auditing this delete; doing so would silently break
+    // the concurrency cap (active set never shrinks → Promise.race stalls).
     const p: Promise<void> = tasks[taskIndex]().then((value) => {
       results[taskIndex] = value;
       active.delete(p);
