@@ -167,7 +167,7 @@ export class KnowledgeBaseIngestionService {
         return null;
       }
 
-      const record = result.Items[0] as KnowledgeBaseDocumentRecord;
+      const record = result.Items[0] as unknown as KnowledgeBaseDocumentRecord;
       return { documentId: record.document_id, createdAt: record._createdAt_ };
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
