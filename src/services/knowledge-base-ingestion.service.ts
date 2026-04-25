@@ -80,6 +80,10 @@ export class KnowledgeBaseIngestionService {
     }
 
     // Step 7 — upsert new Qdrant points.
+    // Chunks carry _createdAt_ = this run's timestamp (not the document's original creation
+    // time on the update path). On update, chunks are replaced wholesale, so they only ever
+    // reflect the time they were written. The DDB record's _createdAt_ preserves the
+    // original document creation time separately.
     await this.writeQdrantPoints(documentId, input, chunks, embeddings, lastUpdated);
 
     // Step 8 — write DynamoDB record (PutCommand replaces existing item at same PK+SK).
