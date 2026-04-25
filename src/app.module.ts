@@ -35,6 +35,7 @@ import { EmailReplyService } from "./services/email-reply.service";
 import { KnowledgeBaseController } from "./controllers/knowledge-base.controller";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
 import { WebChatController } from "./controllers/web-chat.controller";
+import { KnowledgeBaseEnrichmentService } from "./services/knowledge-base-enrichment.service";
 import { KnowledgeBaseIngestionService } from "./services/knowledge-base-ingestion.service";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
 
@@ -78,6 +79,7 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     AgentRegistryService,
     EmailReplyService,
     OriginAllowlistService,
+    KnowledgeBaseEnrichmentService,
     KnowledgeBaseIngestionService,
   ],
 })

@@ -81,6 +81,8 @@ export interface KnowledgeBasePointPayload {
   source_type: KnowledgeBaseSourceType;
   /** ISO-8601 */
   _createdAt_: string;
+  /** Claude-generated enrichment text (SUMMARY + QUESTIONS + KEY TERMS). Present only when enrichment succeeded for this chunk. */
+  enrichment?: string;
 }
 
 // ---------------------------------------------------------------------------

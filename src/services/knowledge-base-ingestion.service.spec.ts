@@ -6,6 +6,7 @@ import { mockClient } from "aws-sdk-client-mock";
 
 import { KnowledgeBaseIngestionService } from "./knowledge-base-ingestion.service";
 import { VoyageService } from "./voyage.service";
+import { KnowledgeBaseEnrichmentService } from "./knowledge-base-enrichment.service";
 import { DatabaseConfigService } from "./database-config.service";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { QDRANT_CLIENT } from "../providers/qdrant.provider";
@@ -88,6 +89,14 @@ const mockVoyageService = {
 };
 
 // ---------------------------------------------------------------------------
+// Enrichment service mock
+// ---------------------------------------------------------------------------
+
+const mockEnrichmentService = {
+  enrichAllChunks: jest.fn(),
+};
+
+// ---------------------------------------------------------------------------
 // DynamoDB mock
 // ---------------------------------------------------------------------------
 
@@ -114,6 +123,7 @@ describe("KnowledgeBaseIngestionService", () => {
 
     // Default happy-path setup
     chunkText.mockReturnValue(STUB_CHUNKS);
+    mockEnrichmentService.enrichAllChunks.mockResolvedValue(["enrich0", "enrich1", "enrich2"]);
     mockVoyageService.embedTexts.mockResolvedValue(STUB_EMBEDDINGS);
     mockQdrantClient.collectionExists.mockResolvedValue({ exists: true });
     mockQdrantClient.createCollection.mockResolvedValue(true);
@@ -142,6 +152,10 @@ describe("KnowledgeBaseIngestionService", () => {
           useValue: mockVoyageService,
         },
         {
+          provide: KnowledgeBaseEnrichmentService,
+          useValue: mockEnrichmentService,
+        },
+        {
           provide: DatabaseConfigService,
           useValue: { conversationsTable: TABLE_NAME },
         },
@@ -168,10 +182,14 @@ describe("KnowledgeBaseIngestionService", () => {
       expect(result._lastUpdated_).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
-    it("calls embedTexts with the chunk texts in chunker order", async () => {
+    it("calls embedTexts with the combined texts (chunk + enrichment) in chunker order", async () => {
       await service.ingestDocument(STUB_INPUT);
 
-      expect(mockVoyageService.embedTexts).toHaveBeenCalledWith(["chunk one", "chunk two", "chunk three"]);
+      expect(mockVoyageService.embedTexts).toHaveBeenCalledWith([
+        "chunk one\n\nenrich0",
+        "chunk two\n\nenrich1",
+        "chunk three\n\nenrich2",
+      ]);
     });
 
     it("upserts 3 points with correct payload fields including account_id and chunk_index", async () => {
@@ -253,6 +271,115 @@ describe("KnowledgeBaseIngestionService", () => {
     it("does NOT call Qdrant delete when no existing document is found", async () => {
       await service.ingestDocument(STUB_INPUT);
       expect(mockQdrantClient.delete).not.toHaveBeenCalled();
+    });
+
+    it("includes enrichment field in every Qdrant point payload when all enrichments succeed", async () => {
+      await service.ingestDocument(STUB_INPUT);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      const [p0, p1, p2] = upsertArgs.points;
+
+      expect(p0.payload.enrichment).toBe("enrich0");
+      expect(p1.payload.enrichment).toBe("enrich1");
+      expect(p2.payload.enrichment).toBe("enrich2");
+    });
+
+    it("chunk_text in payload is unchanged (not the combined text) when enrichment succeeds", async () => {
+      await service.ingestDocument(STUB_INPUT);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      const [p0, p1, p2] = upsertArgs.points;
+
+      expect(p0.payload.chunk_text).toBe("chunk one");
+      expect(p1.payload.chunk_text).toBe("chunk two");
+      expect(p2.payload.chunk_text).toBe("chunk three");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Enrichment paths
+  // -------------------------------------------------------------------------
+
+  describe("enrichment — single chunk failure", () => {
+    it("embeds that chunk with chunk_text only when one enrichment is null", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue(["enrich0", null, "enrich2"]);
+
+      await service.ingestDocument(STUB_INPUT);
+
+      expect(mockVoyageService.embedTexts).toHaveBeenCalledWith([
+        "chunk one\n\nenrich0",
+        "chunk two",
+        "chunk three\n\nenrich2",
+      ]);
+    });
+
+    it("omits the enrichment field (not empty string) on the failed chunk's payload", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue(["enrich0", null, "enrich2"]);
+
+      await service.ingestDocument(STUB_INPUT);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      expect(upsertArgs.points[1].payload).not.toHaveProperty("enrichment");
+    });
+
+    it("includes enrichment on the successful chunks when one fails", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue(["enrich0", null, "enrich2"]);
+
+      await service.ingestDocument(STUB_INPUT);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      expect(upsertArgs.points[0].payload.enrichment).toBe("enrich0");
+      expect(upsertArgs.points[2].payload.enrichment).toBe("enrich2");
+    });
+
+    it("completes ingestion (status: ready) when one enrichment fails", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue(["enrich0", null, "enrich2"]);
+
+      const result = await service.ingestDocument(STUB_INPUT);
+
+      expect(result.status).toBe("ready");
+    });
+  });
+
+  describe("enrichment — all chunks fail", () => {
+    it("embeds all chunks with chunk_text only when all enrichments are null", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue([null, null, null]);
+
+      await service.ingestDocument(STUB_INPUT);
+
+      expect(mockVoyageService.embedTexts).toHaveBeenCalledWith(["chunk one", "chunk two", "chunk three"]);
+    });
+
+    it("omits enrichment field from every Qdrant point when all fail", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue([null, null, null]);
+
+      await service.ingestDocument(STUB_INPUT);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      for (const point of upsertArgs.points) {
+        expect(point.payload).not.toHaveProperty("enrichment");
+      }
+    });
+
+    it("completes ingestion (status: ready) when all enrichments fail", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue([null, null, null]);
+
+      const result = await service.ingestDocument(STUB_INPUT);
+
+      expect(result.status).toBe("ready");
+    });
+
+    it("chunk_text in payload is unchanged for all points when all enrichments fail", async () => {
+      mockEnrichmentService.enrichAllChunks.mockResolvedValue([null, null, null]);
+
+      await service.ingestDocument(STUB_INPUT);
+
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+      const [p0, p1, p2] = upsertArgs.points;
+
+      expect(p0.payload.chunk_text).toBe("chunk one");
+      expect(p1.payload.chunk_text).toBe("chunk two");
+      expect(p2.payload.chunk_text).toBe("chunk three");
     });
   });
 

@@ -8,6 +8,7 @@ import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { QDRANT_CLIENT } from "../providers/qdrant.provider";
 import { DatabaseConfigService } from "./database-config.service";
 import { VoyageService } from "./voyage.service";
+import { KnowledgeBaseEnrichmentService } from "./knowledge-base-enrichment.service";
 import { chunkText } from "../utils/chunker/chunker";
 import { KB_COLLECTION_NAME } from "../utils/knowledge-base/constants";
 import {
@@ -37,6 +38,7 @@ export class KnowledgeBaseIngestionService {
     @Inject(QDRANT_CLIENT) private readonly qdrantClient: QdrantClient,
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly voyageService: VoyageService,
+    private readonly enrichmentService: KnowledgeBaseEnrichmentService,
     private readonly databaseConfig: DatabaseConfigService,
   ) {}
 
@@ -68,8 +70,28 @@ export class KnowledgeBaseIngestionService {
 
     this.logger.debug(`Chunked document [documentId=${documentId} chunkCount=${chunks.length}]`);
 
+    // Step 5b — enrich each chunk with Claude (SUMMARY + QUESTIONS + KEY TERMS).
+    // Per-chunk failures are isolated: enrichChunk returns null on failure.
+    const enrichments = await this.enrichmentService.enrichAllChunks(chunks);
+
+    const failedCount = enrichments.filter((e) => e === null).length;
+    if (failedCount === chunks.length) {
+      this.logger.warn(
+        `All chunk enrichments failed — embedding without enrichment [documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}]`,
+      );
+    } else if (failedCount > chunks.length / 2) {
+      this.logger.warn(
+        `Majority of chunk enrichments failed [documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}]`,
+      );
+    }
+
+    // Step 5c — build texts to embed: combined text when enrichment succeeded, chunk_text only on failure.
+    const textsToEmbed = chunks.map((chunk, i) =>
+      enrichments[i] !== null ? `${chunk.text}\n\n${enrichments[i]}` : chunk.text,
+    );
+
     // VoyageService already produces sanitized error messages — let them propagate.
-    const embeddings = await this.voyageService.embedTexts(chunks.map((chunk) => chunk.text));
+    const embeddings = await this.voyageService.embedTexts(textsToEmbed);
 
     await this.ensureCollection();
     await this.ensurePayloadIndex();
@@ -84,7 +106,7 @@ export class KnowledgeBaseIngestionService {
     // time on the update path). On update, chunks are replaced wholesale, so they only ever
     // reflect the time they were written. The DDB record's _createdAt_ preserves the
     // original document creation time separately.
-    await this.writeQdrantPoints(documentId, input, chunks, embeddings, lastUpdated);
+    await this.writeQdrantPoints(documentId, input, chunks, embeddings, enrichments, lastUpdated);
 
     // Step 8 — write DynamoDB record (PutCommand replaces existing item at same PK+SK).
     await this.writeDynamoRecord(documentId, input, chunks.length, createdAt, lastUpdated);
@@ -262,6 +284,7 @@ export class KnowledgeBaseIngestionService {
     input: KnowledgeBaseIngestDocumentInput,
     chunks: KnowledgeBaseChunk[],
     embeddings: number[][],
+    enrichments: Array<string | null>,
     createdAt: string,
   ): Promise<void> {
     const points = chunks.map((chunk, index) => {
@@ -279,6 +302,7 @@ export class KnowledgeBaseIngestionService {
           end_offset: chunk.endOffset,
           source_type: input.sourceType,
           _createdAt_: createdAt,
+          ...(enrichments[index] !== null ? { enrichment: enrichments[index] } : {}),
         } satisfies KnowledgeBasePointPayload,
       };
     });

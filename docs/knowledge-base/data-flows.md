@@ -2,7 +2,7 @@
 
 Visual reference for every request flow in the Knowledge Base feature.
 
-**Current state**: Phases 1–5 + Phase 6 (benchmark) + Phase 7a (update + delete + naming alignment).
+**Current state**: Phases 1–5 + Phase 6 (benchmark) + Phase 7a (update + delete + naming alignment) + Phase 7b (Claude enrichment at ingestion).
 
 **Forward changes will be added here**: Phase 7b (Claude enrichment at ingestion) modifies Flow 1 and Flow 3. Phase 7c (Redis + Bull async queue) refactors Flow 1 and Flow 3 to async with status tracking.
 
@@ -34,27 +34,37 @@ Upstream control-panel API extracts text from PDF
 │        ↓                                                        │
 │  5. Chunker (pure local) — text → array of chunks               │
 │        ↓                                                        │
-│  6. Voyage.embedTexts(chunk texts) ───────► Voyage API          │
+│  6. Claude enrichment (one call per chunk, 5-way cap)           │
+│       Per-chunk: SUMMARY + QUESTIONS + KEY TERMS ───────► Anthropic API
+│       ←──── enrichment text (or null on failure)                │
+│       Combined text = chunk_text + "\n\n" + enrichment          │
+│       On failure: embed chunk_text only (graceful degradation)  │
+│        ↓                                                        │
+│  7. Voyage.embedTexts(combined texts) ────────► Voyage API      │
 │        ←──── vectors[] (1024 dims each)                         │
 │        ↓                                                        │
-│  7. Ensure Qdrant collection exists ──────► Qdrant              │
+│  8. Ensure Qdrant collection exists ──────────► Qdrant          │
 │        ↓                                                        │
-│  8. Ensure account_id payload index ──────► Qdrant              │
+│  9. Ensure account_id payload index ──────────► Qdrant          │
 │        ↓                                                        │
-│  9. Upsert points (one per chunk)  ───────► Qdrant              │
+│ 10. Upsert points (one per chunk)  ────────────► Qdrant         │
+│       payload includes chunk_text + enrichment (if present)     │
 │        ↓                                                        │
-│ 10. PutItem (DDB record) ─────────────────► DynamoDB            │
+│ 11. PutItem (DDB record) ──────────────────────► DynamoDB       │
 │        ↓                                                        │
-│ 11. Return { document_id, chunk_count, status,                  │
+│ 12. Return { document_id, chunk_count, status,                  │
 │              _createdAt_, _lastUpdated_ }                       │
 └─────────────────────────────────────────────────────────────────┘
                                                   201 Created
 ```
 
 **Cost (per ingestion, one-time):**
-- Voyage embeddings: ~$0.04 per 300-page document
+- Claude enrichment: ~$0.005 per chunk (~700 input + ~200 output tokens at Sonnet pricing)
+  - 15-chunk document: ~$0.07
+  - 25-chunk document: ~$0.13
+  - 150-chunk document: ~$0.75
+- Voyage embeddings: ~$0.04 per 300-page document (input text is now slightly longer but cost change is negligible)
 - Qdrant + DynamoDB writes: negligible
-- Claude calls: zero (Phase 7b will add per-chunk enrichment calls here)
 
 ---
 
@@ -146,19 +156,23 @@ Upstream sends updated text for an existing external_id
 │        ↓                                                        │
 │  4. Chunker → new chunks                                        │
 │        ↓                                                        │
-│  5. Voyage.embedTexts → new vectors                             │
+│  5. Claude enrichment (one call per chunk, 5-way cap) ──► Anthropic API
+│       Combined text = chunk_text + "\n\n" + enrichment          │
+│       On failure: embed chunk_text only                         │
 │        ↓                                                        │
-│  6. Ensure collection + index (idempotent, no-op)               │
+│  6. Voyage.embedTexts → new vectors  ─────────► Voyage API     │
 │        ↓                                                        │
-│  7. Qdrant DELETE points where                                  │
+│  7. Ensure collection + index (idempotent, no-op)               │
+│        ↓                                                        │
+│  8. Qdrant DELETE points where                                  │
 │       account_id = X AND document_id = Y                        │
 │       wait: true  ← critical for ordering                       │
 │        ↓                                                        │
-│  8. Qdrant UPSERT new points                                    │
+│  9. Qdrant UPSERT new points                                    │
 │        ↓                                                        │
-│  9. DDB PutItem (replaces existing record at same PK+SK)        │
+│ 10. DDB PutItem (replaces existing record at same PK+SK)        │
 │        ↓                                                        │
-│ 10. Return { document_id, chunk_count, status,                  │
+│ 11. Return { document_id, chunk_count, status,                  │
 │              _createdAt_ (preserved),                           │
 │              _lastUpdated_ (now) }                              │
 └─────────────────────────────────────────────────────────────────┘
