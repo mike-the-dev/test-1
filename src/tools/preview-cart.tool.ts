@@ -511,6 +511,7 @@ export class PreviewCartTool implements ChatTool {
     };
 
     // Step 12 — fire Slack alert if cart has items
+    // cartTotal is already integer cents per the GuestCart contract; do NOT multiply by 100.
     if (itemCount > 0) {
       this.slackAlertService.notifyCartCreated({
         accountId: accountUlid,
