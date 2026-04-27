@@ -1,17 +1,24 @@
 import { Injectable, Logger } from "@nestjs/common";
 
+import {
+  SlackAlertBlock,
+  SlackAlertCartCreatedInput,
+  SlackAlertCheckoutLinkGeneratedInput,
+  SlackAlertConversationStartedInput,
+  SlackAlertPayload,
+} from "../types/Slack";
 import { SlackAlertConfigService } from "./slack-alert-config.service";
 import { SentryService } from "./sentry.service";
 
-interface SlackBlock {
-  type: string;
-  [key: string]: unknown;
-}
+const SLACK_REQUEST_TIMEOUT_MS = 5000;
 
-interface SlackPayload {
-  text: string;
-  blocks: SlackBlock[];
-}
+const SLACK_ALERT_TYPE_CONVERSATION_STARTED = "conversation_started";
+const SLACK_ALERT_TYPE_CART_CREATED = "cart_created";
+const SLACK_ALERT_TYPE_CHECKOUT_LINK = "checkout_link";
+
+const SLACK_HEADING_CONVERSATION_STARTED = "🟢 New conversation started";
+const SLACK_HEADING_CART_CREATED = "🛒 Cart created by AI agent";
+const SLACK_HEADING_CHECKOUT_LINK_GENERATED = "🔗 Checkout link generated";
 
 @Injectable()
 export class SlackAlertService {
@@ -29,11 +36,7 @@ export class SlackAlertService {
     }
   }
 
-  async notifyConversationStarted(input: {
-    accountId: string;
-    sessionUlid: string;
-    startedAt: Date;
-  }): Promise<void> {
+  async notifyConversationStarted(input: SlackAlertConversationStartedInput): Promise<void> {
     if (!this.webhookUrl) {
       return;
     }
@@ -42,29 +45,26 @@ export class SlackAlertService {
 
     try {
       await this.sendRequest(
+        this.webhookUrl,
         {
-          text: "🟢 New conversation started",
+          text: SLACK_HEADING_CONVERSATION_STARTED,
           blocks: this.buildConversationStartedBlocks(accountId, sessionUlid),
         },
-        "conversation_started",
+        SLACK_ALERT_TYPE_CONVERSATION_STARTED,
       );
     } catch (error) {
       const errorType = error instanceof Error ? error.name : "UnknownError";
+
       this.logger.error(
-        `[errorType=${errorType} category=slack alertType=conversation_started action=notify_failed]`,
+        `[errorType=${errorType} category=slack alertType=${SLACK_ALERT_TYPE_CONVERSATION_STARTED} action=notify_failed]`,
       );
       this.sentryService.captureException(error, {
-        tags: { category: "slack", alert_type: "conversation_started" },
+        tags: { category: "slack", alert_type: SLACK_ALERT_TYPE_CONVERSATION_STARTED },
       });
     }
   }
 
-  async notifyCartCreated(input: {
-    accountId: string;
-    sessionUlid: string;
-    cartTotalCents: number;
-    itemCount: number;
-  }): Promise<void> {
+  async notifyCartCreated(input: SlackAlertCartCreatedInput): Promise<void> {
     if (!this.webhookUrl) {
       return;
     }
@@ -73,28 +73,26 @@ export class SlackAlertService {
 
     try {
       await this.sendRequest(
+        this.webhookUrl,
         {
-          text: "🛒 Cart created by AI agent",
+          text: SLACK_HEADING_CART_CREATED,
           blocks: this.buildCartCreatedBlocks(accountId, sessionUlid, cartTotalCents, itemCount),
         },
-        "cart_created",
+        SLACK_ALERT_TYPE_CART_CREATED,
       );
     } catch (error) {
       const errorType = error instanceof Error ? error.name : "UnknownError";
+
       this.logger.error(
-        `[errorType=${errorType} category=slack alertType=cart_created action=notify_failed]`,
+        `[errorType=${errorType} category=slack alertType=${SLACK_ALERT_TYPE_CART_CREATED} action=notify_failed]`,
       );
       this.sentryService.captureException(error, {
-        tags: { category: "slack", alert_type: "cart_created" },
+        tags: { category: "slack", alert_type: SLACK_ALERT_TYPE_CART_CREATED },
       });
     }
   }
 
-  async notifyCheckoutLinkGenerated(input: {
-    accountId: string;
-    sessionUlid: string;
-    checkoutUrl: string;
-  }): Promise<void> {
+  async notifyCheckoutLinkGenerated(input: SlackAlertCheckoutLinkGeneratedInput): Promise<void> {
     if (!this.webhookUrl) {
       return;
     }
@@ -103,27 +101,29 @@ export class SlackAlertService {
 
     try {
       await this.sendRequest(
+        this.webhookUrl,
         {
-          text: "🔗 Checkout link generated",
+          text: SLACK_HEADING_CHECKOUT_LINK_GENERATED,
           blocks: this.buildCheckoutLinkBlocks(accountId, sessionUlid, checkoutUrl),
         },
-        "checkout_link",
+        SLACK_ALERT_TYPE_CHECKOUT_LINK,
       );
     } catch (error) {
       const errorType = error instanceof Error ? error.name : "UnknownError";
+
       this.logger.error(
-        `[errorType=${errorType} category=slack alertType=checkout_link action=notify_failed]`,
+        `[errorType=${errorType} category=slack alertType=${SLACK_ALERT_TYPE_CHECKOUT_LINK} action=notify_failed]`,
       );
       this.sentryService.captureException(error, {
-        tags: { category: "slack", alert_type: "checkout_link" },
+        tags: { category: "slack", alert_type: SLACK_ALERT_TYPE_CHECKOUT_LINK },
       });
     }
   }
 
-  private async sendRequest(payload: SlackPayload, alertType: string): Promise<void> {
-    const signal = AbortSignal.timeout(5000);
+  private async sendRequest(webhookUrl: string, payload: SlackAlertPayload, alertType: string): Promise<void> {
+    const signal = AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS);
 
-    const response = await fetch(this.webhookUrl!, {
+    const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -138,13 +138,13 @@ export class SlackAlertService {
     this.logger.debug(`[action=slack_alert_sent alertType=${alertType}]`);
   }
 
-  private buildConversationStartedBlocks(accountId: string, sessionUlid: string): SlackBlock[] {
+  private buildConversationStartedBlocks(accountId: string, sessionUlid: string): SlackAlertBlock[] {
     return [
       {
         type: "header",
         text: {
           type: "plain_text",
-          text: "🟢 New conversation started",
+          text: SLACK_HEADING_CONVERSATION_STARTED,
         },
       },
       {
@@ -167,7 +167,7 @@ export class SlackAlertService {
     sessionUlid: string,
     cartTotalCents: number,
     itemCount: number,
-  ): SlackBlock[] {
+  ): SlackAlertBlock[] {
     const formattedTotal = `$${(cartTotalCents / 100).toFixed(2)}`;
 
     return [
@@ -175,7 +175,7 @@ export class SlackAlertService {
         type: "header",
         text: {
           type: "plain_text",
-          text: "🛒 Cart created by AI agent",
+          text: SLACK_HEADING_CART_CREATED,
         },
       },
       {
@@ -197,13 +197,13 @@ export class SlackAlertService {
     ];
   }
 
-  private buildCheckoutLinkBlocks(accountId: string, sessionUlid: string, checkoutUrl: string): SlackBlock[] {
+  private buildCheckoutLinkBlocks(accountId: string, sessionUlid: string, checkoutUrl: string): SlackAlertBlock[] {
     return [
       {
         type: "header",
         text: {
           type: "plain_text",
-          text: "🔗 Checkout link generated",
+          text: SLACK_HEADING_CHECKOUT_LINK_GENERATED,
         },
       },
       {

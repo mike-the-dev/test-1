@@ -87,17 +87,17 @@ describe("SlackAlertService", () => {
       await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
-      const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+      const init = fetchSpy.mock.calls[0][1];
       expect(init.method).toBe("POST");
-      expect((init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+      expect(init.headers["Content-Type"]).toBe("application/json");
     });
 
     it("body contains text fallback and blocks with header '🟢 New conversation started'", async () => {
       await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { text: string; blocks: unknown[] };
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       expect(body.text).toBe("🟢 New conversation started");
-      const headerBlock = body.blocks[0] as { type: string; text: { text: string } };
+      const headerBlock = body.blocks[0];
       expect(headerBlock.type).toBe("header");
       expect(headerBlock.text.text).toBe("🟢 New conversation started");
     });
@@ -105,7 +105,7 @@ describe("SlackAlertService", () => {
     it("body blocks contain accountId and sessionUlid", async () => {
       await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { blocks: unknown[] };
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       const bodyStr = JSON.stringify(body.blocks);
       expect(bodyStr).toContain(ACCOUNT_ID);
       expect(bodyStr).toContain(SESSION_ULID);
@@ -155,14 +155,14 @@ describe("SlackAlertService", () => {
     it("body contains '🛒 Cart created by AI agent'", async () => {
       await service.notifyCartCreated({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, cartTotalCents: 4999, itemCount: 3 });
 
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { text: string };
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       expect(body.text).toBe("🛒 Cart created by AI agent");
     });
 
     it("body blocks contain itemCount and formatted cart total", async () => {
       await service.notifyCartCreated({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, cartTotalCents: 4999, itemCount: 3 });
 
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { blocks: unknown[] };
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       const bodyStr = JSON.stringify(body.blocks);
       expect(bodyStr).toContain("3");
       expect(bodyStr).toContain("$49.99");
@@ -181,14 +181,14 @@ describe("SlackAlertService", () => {
     it("body contains '🔗 Checkout link generated'", async () => {
       await service.notifyCheckoutLinkGenerated({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, checkoutUrl: CHECKOUT_URL });
 
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { text: string };
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       expect(body.text).toBe("🔗 Checkout link generated");
     });
 
     it("body blocks contain checkoutUrl as an mrkdwn link", async () => {
       await service.notifyCheckoutLinkGenerated({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, checkoutUrl: CHECKOUT_URL });
 
-      const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { blocks: unknown[] };
+      const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       const bodyStr = JSON.stringify(body.blocks);
       expect(bodyStr).toContain(CHECKOUT_URL);
       expect(bodyStr).toContain("Open checkout");
@@ -231,7 +231,7 @@ describe("SlackAlertService", () => {
       await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       expect(mockSentryService.captureException).toHaveBeenCalledTimes(1);
-      const [, context] = mockSentryService.captureException.mock.calls[0] as [unknown, { tags: Record<string, string> }];
+      const context = mockSentryService.captureException.mock.calls[0][1];
       expect(context.tags.category).toBe("slack");
       expect(context.tags.alert_type).toBe("conversation_started");
     });
@@ -242,7 +242,7 @@ describe("SlackAlertService", () => {
       await service.notifyCartCreated({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, cartTotalCents: 1000, itemCount: 1 });
 
       expect(mockSentryService.captureException).toHaveBeenCalledTimes(1);
-      const [, context] = mockSentryService.captureException.mock.calls[0] as [unknown, { tags: Record<string, string> }];
+      const context = mockSentryService.captureException.mock.calls[0][1];
       expect(context.tags.category).toBe("slack");
       expect(context.tags.alert_type).toBe("cart_created");
     });
@@ -281,7 +281,7 @@ describe("SlackAlertService", () => {
       ).resolves.toBeUndefined();
 
       expect(mockSentryService.captureException).toHaveBeenCalledTimes(1);
-      const [, context] = mockSentryService.captureException.mock.calls[0] as [unknown, { tags: Record<string, string> }];
+      const context = mockSentryService.captureException.mock.calls[0][1];
       expect(context.tags.alert_type).toBe("checkout_link");
     });
   });

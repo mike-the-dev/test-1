@@ -101,7 +101,7 @@ describe("GenerateCheckoutLinkTool", () => {
 
       expect(result.isError).toBeUndefined();
 
-      const parsed = JSON.parse(result.result) as { checkout_url: string; cart_id: string };
+      const parsed = JSON.parse(result.result);
       expect(parsed.cart_id).toBe(CART_ULID);
 
       const url = new URL(parsed.checkout_url);
@@ -134,8 +134,8 @@ describe("GenerateCheckoutLinkTool", () => {
       expect(resultA.isError).toBeUndefined();
       expect(resultB.isError).toBeUndefined();
 
-      const urlA = new URL((JSON.parse(resultA.result) as { checkout_url: string }).checkout_url);
-      const urlB = new URL((JSON.parse(resultB.result) as { checkout_url: string }).checkout_url);
+      const urlA = new URL(JSON.parse(resultA.result).checkout_url);
+      const urlB = new URL(JSON.parse(resultB.result).checkout_url);
 
       // Each URL's aiSessionId must track its own context.sessionUlid.
       expect(urlA.searchParams.get("aiSessionId")).toBe(SESSION_ULID_A);
@@ -150,8 +150,8 @@ describe("GenerateCheckoutLinkTool", () => {
       const result1 = await tool.execute({}, context);
       const result2 = await tool.execute({}, context);
 
-      const parsed1 = JSON.parse(result1.result) as { checkout_url: string };
-      const parsed2 = JSON.parse(result2.result) as { checkout_url: string };
+      const parsed1 = JSON.parse(result1.result);
+      const parsed2 = JSON.parse(result2.result);
 
       expect(parsed1.checkout_url).toBe(parsed2.checkout_url);
     });
@@ -264,7 +264,7 @@ describe("GenerateCheckoutLinkTool", () => {
       const result = await toolNoOverride.execute({}, context);
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      const parsed = JSON.parse(result.result);
       expect(parsed.checkout_url).toContain("https://shop.example.instapaytient.com/checkout");
     });
   });
@@ -332,7 +332,7 @@ describe("GenerateCheckoutLinkTool", () => {
       const result = await tool.execute({}, context);
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.result) as { checkout_url: string };
+      const parsed = JSON.parse(result.result);
       expect(parsed.checkout_url).toContain("email=user%2Btag%40example.com");
     });
   });
@@ -370,7 +370,7 @@ describe("GenerateCheckoutLinkTool", () => {
       const result = await tool.execute({}, context);
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.result) as { checkout_url: string; cart_id: string };
+      const parsed = JSON.parse(result.result);
       expect(typeof parsed.checkout_url).toBe("string");
     });
   });
