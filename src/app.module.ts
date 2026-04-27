@@ -33,6 +33,7 @@ import { LookupKnowledgeBaseTool } from "./tools/lookup-knowledge-base.tool";
 import { PreviewCartTool } from "./tools/preview-cart.tool";
 import { GenerateCheckoutLinkTool } from "./tools/generate-checkout-link.tool";
 import { EmailReplyService } from "./services/email-reply.service";
+import { KB_INGESTION_QUEUE_NAME } from "./utils/knowledge-base/constants";
 import { KnowledgeBaseController } from "./controllers/knowledge-base.controller";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
 import { WebChatController } from "./controllers/web-chat.controller";
@@ -53,15 +54,17 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     DiscoveryModule,
     BullModule.forRootAsync({
       inject: [KnowledgeBaseConfigService],
-      useFactory: (config: KnowledgeBaseConfigService) => ({
-        connection: {
-          host: config.redisHost,
-          port: config.redisPort,
-        },
-      }),
+      useFactory: (config: KnowledgeBaseConfigService) => {
+        return {
+          connection: {
+            host: config.redisHost,
+            port: config.redisPort,
+          },
+        };
+      },
     }),
     BullModule.registerQueue({
-      name: "knowledge-base-ingestion",
+      name: KB_INGESTION_QUEUE_NAME,
     }),
   ],
   controllers: [AppController, SendgridWebhookController, WebChatController, KnowledgeBaseController],

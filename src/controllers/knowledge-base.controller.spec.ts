@@ -10,6 +10,7 @@ import { getQueueToken } from "@nestjs/bullmq";
 
 import { KnowledgeBaseController } from "./knowledge-base.controller";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
+import { KB_INGESTION_QUEUE_NAME } from "../utils/knowledge-base/constants";
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { ingestDocumentSchema, deleteDocumentSchema, getDocumentSchema } from "../validation/knowledge-base.schema";
 import type { IngestDocumentBody, DeleteDocumentBody, GetDocumentQuery } from "../validation/knowledge-base.schema";
@@ -99,7 +100,7 @@ describe("KnowledgeBaseController", () => {
           useValue: mockIngestionService,
         },
         {
-          provide: getQueueToken("knowledge-base-ingestion"),
+          provide: getQueueToken(KB_INGESTION_QUEUE_NAME),
           useValue: mockQueue,
         },
       ],

@@ -6,10 +6,14 @@ export class KnowledgeBaseConfigService {
   constructor(private readonly configService: ConfigService) {}
 
   get redisHost(): string {
-    return this.configService.get<string>("redis.host", { infer: true }) ?? "localhost";
+    return this.configService.getOrThrow<string>("redis.host", {
+      infer: true,
+    });
   }
 
   get redisPort(): number {
-    return this.configService.get<number>("redis.port", { infer: true }) ?? 6379;
+    return this.configService.getOrThrow<number>("redis.port", {
+      infer: true,
+    });
   }
 }

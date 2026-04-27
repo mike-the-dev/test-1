@@ -4,7 +4,6 @@ import {
   Delete,
   Get,
   HttpCode,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
   Post,
@@ -17,6 +16,7 @@ import { ulid } from "ulid";
 
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
+import { KB_INGESTION_QUEUE_NAME } from "../utils/knowledge-base/constants";
 import {
   KnowledgeBaseGetDocumentResult,
   KnowledgeBaseIngestAcceptedResult,
@@ -25,7 +25,6 @@ import {
 import { ingestDocumentSchema, deleteDocumentSchema, getDocumentSchema } from "../validation/knowledge-base.schema";
 import type { IngestDocumentBody, DeleteDocumentBody, GetDocumentQuery } from "../validation/knowledge-base.schema";
 
-const KB_INGESTION_QUEUE = "knowledge-base-ingestion";
 const KB_INGEST_JOB = "ingest";
 const KB_RETRY_ATTEMPTS = 4;
 const KB_BACKOFF_DELAY_MS = 1000;
@@ -36,7 +35,7 @@ export class KnowledgeBaseController {
 
   constructor(
     private readonly ingestionService: KnowledgeBaseIngestionService,
-    @InjectQueue(KB_INGESTION_QUEUE) private readonly queue: Queue,
+    @InjectQueue(KB_INGESTION_QUEUE_NAME) private readonly queue: Queue,
   ) {}
 
   @Post("documents")
@@ -44,14 +43,10 @@ export class KnowledgeBaseController {
   async ingestDocument(
     @Body(new ZodValidationPipe(ingestDocumentSchema)) body: IngestDocumentBody,
   ): Promise<KnowledgeBaseIngestAcceptedResult> {
-    // Schema validates the A#-prefixed form; strip the prefix so the service
-    // and all downstream writes operate on the raw 26-character ULID only.
     const rawAccountId = body.account_id.slice(2);
 
-    // Step 1 — look up existing record to determine create vs. update path.
     const existing = await this.ingestionService.lookupExistingDocument(rawAccountId, body.external_id);
 
-    // Step 2 — generate or reuse document_id and createdAt.
     const isUpdate = existing !== null;
     const documentId = isUpdate ? existing.document_id : ulid();
     const createdAt = isUpdate ? existing._createdAt_ : new Date().toISOString();
@@ -60,8 +55,6 @@ export class KnowledgeBaseController {
       `[documentId=${documentId} accountId=${rawAccountId} externalId=${body.external_id} isUpdate=${isUpdate}] Writing pending record`,
     );
 
-    // Step 3 — write pending DDB record BEFORE enqueueing so the record exists
-    // immediately and the upstream can poll on it from the moment 202 returns.
     await this.ingestionService.writePendingRecord(
       documentId,
       rawAccountId,
@@ -74,8 +67,7 @@ export class KnowledgeBaseController {
       createdAt,
     );
 
-    // Step 4 — enqueue the BullMQ job.
-    const jobPayload: KnowledgeBaseJobPayload = {
+    const jobPayload = {
       accountId: rawAccountId,
       externalId: body.external_id,
       title: body.title,
@@ -84,7 +76,7 @@ export class KnowledgeBaseController {
       mimeType: body.mime_type,
       documentId,
       createdAt,
-    };
+    } satisfies KnowledgeBaseJobPayload;
 
     try {
       await this.queue.add(KB_INGEST_JOB, jobPayload, {
@@ -99,19 +91,13 @@ export class KnowledgeBaseController {
       this.logger.error(
         `[errorType=${errorName} documentId=${documentId} accountId=${rawAccountId}] Failed to enqueue ingestion job — pending record left in place`,
       );
-      // The DDB pending record is left as an orphan. The upstream can re-POST
-      // to retry — the update path will overwrite the pending record and
-      // attempt enqueue again. See Phase 8 for stuck-pending cleanup.
-      throw new ServiceUnavailableException(
-        "Ingestion queue is temporarily unavailable. Please retry.",
-      );
+      throw new ServiceUnavailableException("Ingestion queue is temporarily unavailable. Please retry.");
     }
 
     this.logger.log(
       `[documentId=${documentId} accountId=${rawAccountId} externalId=${body.external_id}] Job enqueued, returning 202`,
     );
 
-    // Step 5 — return 202 immediately.
     return { document_id: documentId, status: "pending", _createdAt_: createdAt };
   }
 

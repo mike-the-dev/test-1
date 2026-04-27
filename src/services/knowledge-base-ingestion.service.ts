@@ -136,7 +136,7 @@ export class KnowledgeBaseIngestionService {
     payload: Pick<KnowledgeBaseJobPayload, "externalId" | "title" | "sourceType" | "mimeType">,
     createdAt: string,
   ): Promise<void> {
-    const item: Omit<KnowledgeBaseDocumentRecord, "chunk_count" | "error_summary"> & { chunk_count?: number } = {
+    const item = {
       PK: `${KB_PK_PREFIX}${accountId}`,
       SK: `${KB_SK_PREFIX}${documentId}`,
       entity: KB_DOCUMENT_ENTITY,
@@ -149,7 +149,7 @@ export class KnowledgeBaseIngestionService {
       status: "pending",
       _createdAt_: createdAt,
       _lastUpdated_: createdAt,
-    };
+    } satisfies KnowledgeBaseDocumentRecord;
 
     try {
       await this.dynamoDb.send(
