@@ -246,3 +246,67 @@ None of those are blockers for a first customer. They're quality-of-life improve
 - **Ship to a pilot customer.** Everything above is production-grade for a single-tenant rollout.
 - **Circle back to Phase 7 + 8** when a second or third customer is onboarding, or sooner if the first pilot exposes a specific weakness.
 - **Monitor retrieval quality over time.** If/when client KBs grow, revisit the top-K default (currently 5) and consider adding the Approach 3 reranker if recall misses become frequent.
+
+---
+
+# Phase 7b validation re-run — 2026-04-26
+
+After Phase 7b shipped (Claude enrichment at ingestion), the same 10 benchmark questions were re-run against a freshly re-ingested KB. Goal: measure the score lift attributable to enrichment, on the same corpus, with no other changes.
+
+## Setup
+
+- Same 3 dog-walking PDFs, same 20 chunks total, same `account_id`.
+- Re-ingested via the Phase 4 endpoint after the Phase 7b enrichment step landed.
+- Each chunk's combined `chunk_text + "\n\n" + enrichment` was embedded by Voyage-3-large.
+- All 20 Qdrant payloads now carry the `enrichment` field (verified via the Qdrant scroll API).
+- Ingestion latency observed: 6 sec for the 2-chunk and 3-chunk docs, 16 sec for the 15-chunk Employee Manual. Well within HTTP timeout territory.
+- Anthropic cost for the full re-ingestion: roughly **$0.11** in Sonnet enrichment calls (20 chunks × ~$0.005 each). One-time, lifetime cost for this KB.
+
+## Top-1 cosine similarity scores: Phase 6 baseline vs Phase 7b
+
+| # | Question | Phase 6 (no enrichment) | Phase 7b (enriched) | Δ | Phase 7b avg top-3 |
+|---|---|---:|---:|---:|---:|
+| 1 | dog gets hurt | 0.689 | 0.700 | +0.011 | 0.677 |
+| 2 | 90-degree weather | 0.685 | 0.682 | −0.003 | 0.618 |
+| 3 | overnight photos | 0.558 | 0.597 | **+0.039** | 0.564 |
+| 4 | cat escape | 0.653 | 0.659 | +0.006 | 0.630 |
+| 5 | operating hours | 0.567 | 0.552 | −0.015 | 0.530 |
+| 7 | overnight cost | 0.580 | 0.572 | −0.008 | 0.523 |
+
+(Q6, Q8, Q10 used `list_services` exclusively — unchanged. Q9 triggered the lead-capture flow with no tool — unchanged.)
+
+## Honest assessment: modest lift, not dramatic
+
+The score impact on this specific 20-chunk corpus is mixed and modest. Some questions improved (Q3 by +0.039, the largest single delta), some changed marginally (Q1, Q4), some slightly regressed within statistical noise (Q2, Q5, Q7). **All answers remained accurate, grounded, and on-topic.** No quality regressions; no hallucinations introduced; tool routing identical to Phase 6.
+
+This is a more measured outcome than the deep-dive predicted ("0.69 might jump to 0.85+"). The prediction was wrong about magnitude on this specific corpus. The reasons are educational:
+
+### Why the lift was modest here
+
+1. **Small corpus.** Only 20 chunks total. With so few competing chunks, retrieval ordering rarely changes — even when scores shift, the same chunks largely come back at the top because there's nothing else available.
+2. **Already-clear source language.** The SNOUT/DCLA documents are well-written employee-facing prose. The paraphrase distance between manual language ("medical emergencies," "seeking veterinary care") and customer language ("my dog is hurt") was smaller than predicted. The corpus has unusually low "language mismatch friction" to begin with.
+3. **Voyage-3-large is already strong.** Modern embedding models handle paraphrase mismatch reasonably well without enrichment. The marginal lift from enrichment is necessarily smaller for already-strong embeddings — there's less headroom to gain.
+
+## Where enrichment WILL pay off (and didn't show up here)
+
+Phase 7b is still the right architectural move because:
+
+1. **Larger KBs (100+ chunks per account)** — when many competing chunks have similar scores, enrichment shifts the *right* one to the top. With 20 chunks, the field is too narrow for that selection effect to matter much.
+2. **Technical documents with jargon** — legal contracts, medical records, manufacturing specs, where the source language is far from how customers actually ask. The dog-walking corpus is unusually well-aligned to natural queries; most production KBs won't be.
+3. **Edge-case queries** — questions the manual never explicitly addresses. Anticipated-question enrichment can bridge gaps the source text doesn't even attempt to fill.
+4. **As the platform scales to 200+ stores with diverse verticals** (medical, dental, aesthetics, plastic surgery, etc.) — those documents are exactly the technical-jargon-heavy content where enrichment will produce visible lift. The pet-sitting corpus was always going to be on the easier end of the difficulty spectrum.
+
+## What this benchmark proves
+
+- ✅ The Phase 7b code is functioning correctly: enrichment fires on every chunk, payload field is present, embeddings include the combined text.
+- ✅ Ingestion latency is acceptable for current document sizes (sync, no Phase 7c queue needed yet).
+- ✅ Tool routing is identical and answer quality is preserved.
+- ✅ The cost to enrich an entire KB is trivially small ($0.11 for this account, one-time).
+- ⚠ The score lift magnitude is corpus-dependent and was modest here. **Re-evaluate at first richer client onboarding.**
+
+## Recommendation
+
+- **Phase 7b stays in production.** The architecture is right for the scaling story. Marginal cost is tiny; marginal quality win on the edge-case queries that matter most in production is worth it.
+- **Do NOT chase score improvements by tweaking the prompt against this dataset.** The modest lift here reflects genuine corpus characteristics, not prompt deficiency. Prompt-tuning against 20 chunks would risk overfitting.
+- **Re-benchmark when a real production client onboards** with a richer KB. Capture before/after on their data. That's where the dramatic numbers will show up if they're going to.
+- **Phase 7c (Redis + Bull async queue)** remains optional until ingestion latency becomes a real problem. Today it isn't — 16 sec for the largest doc is well within tolerance.
