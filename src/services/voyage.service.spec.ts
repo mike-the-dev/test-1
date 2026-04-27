@@ -4,6 +4,7 @@ import { VoyageAIClient, VoyageAIError } from "voyageai";
 
 import { VoyageService } from "./voyage.service";
 import { VoyageConfigService } from "./voyage-config.service";
+import { SentryService } from "./sentry.service";
 
 jest.mock("voyageai", () => {
   class MockVoyageAIError extends Error {
@@ -34,6 +35,12 @@ function buildMockVoyageConfigService(apiKey?: string, model = "voyage-3"): Part
   };
 }
 
+const mockSentryService = {
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  addBreadcrumb: jest.fn(),
+};
+
 async function buildModule(configService: Partial<VoyageConfigService>): Promise<TestingModule> {
   return Test.createTestingModule({
     providers: [
@@ -41,6 +48,10 @@ async function buildModule(configService: Partial<VoyageConfigService>): Promise
       {
         provide: VoyageConfigService,
         useValue: configService,
+      },
+      {
+        provide: SentryService,
+        useValue: mockSentryService,
       },
     ],
   }).compile();

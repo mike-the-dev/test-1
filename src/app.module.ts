@@ -1,7 +1,8 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
-import { DiscoveryModule } from "@nestjs/core";
+import { APP_FILTER, DiscoveryModule } from "@nestjs/core";
 import { BullModule } from "@nestjs/bullmq";
+import { SentryModule, SentryGlobalFilter } from "@sentry/nestjs/setup";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -42,9 +43,12 @@ import { KnowledgeBaseIngestionService } from "./services/knowledge-base-ingesti
 import { KnowledgeBaseConfigService } from "./services/knowledge-base-config.service";
 import { KnowledgeBaseIngestionProcessor } from "./processors/knowledge-base-ingestion.processor";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
+import { SentryConfigService } from "./services/sentry-config.service";
+import { SentryService } from "./services/sentry.service";
 
 @Module({
   imports: [
+    SentryModule.forRoot(),
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: [`.env.${process.env.APP_ENV || "local"}`, ".env"],
@@ -69,6 +73,12 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
   ],
   controllers: [AppController, SendgridWebhookController, WebChatController, KnowledgeBaseController],
   providers: [
+    {
+      provide: APP_FILTER,
+      useClass: SentryGlobalFilter,
+    },
+    SentryConfigService,
+    SentryService,
     AppService,
     DatabaseConfigService,
     QdrantConfigService,

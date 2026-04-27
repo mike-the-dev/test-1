@@ -8,6 +8,7 @@ import {
   ENRICHMENT_CONCURRENCY_CAP,
 } from "./knowledge-base-enrichment.service";
 import { AnthropicConfigService } from "./anthropic-config.service";
+import { SentryService } from "./sentry.service";
 
 // ---------------------------------------------------------------------------
 // Module-level mock for the Anthropic SDK
@@ -81,6 +82,10 @@ describe("KnowledgeBaseEnrichmentService", () => {
             apiKey: "test-api-key",
             model: STUB_MODEL,
           },
+        },
+        {
+          provide: SentryService,
+          useValue: { captureException: jest.fn(), captureMessage: jest.fn(), addBreadcrumb: jest.fn() },
         },
       ],
     }).compile();

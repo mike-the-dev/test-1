@@ -9,6 +9,7 @@ import { QDRANT_CLIENT } from "../providers/qdrant.provider";
 import { DatabaseConfigService } from "./database-config.service";
 import { VoyageService } from "./voyage.service";
 import { KnowledgeBaseEnrichmentService } from "./knowledge-base-enrichment.service";
+import { SentryService } from "./sentry.service";
 import { chunkText } from "../utils/chunker/chunker";
 import { KB_COLLECTION_NAME } from "../utils/knowledge-base/constants";
 import {
@@ -42,6 +43,7 @@ export class KnowledgeBaseIngestionService {
     private readonly voyageService: VoyageService,
     private readonly enrichmentService: KnowledgeBaseEnrichmentService,
     private readonly databaseConfig: DatabaseConfigService,
+    private readonly sentryService: SentryService,
   ) {}
 
   async ingestDocument(input: KnowledgeBaseIngestDocumentInput): Promise<KnowledgeBaseIngestDocumentResult> {
@@ -160,6 +162,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} documentId=${documentId} accountId=${accountId}] Failed to write pending DynamoDB record`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "ingestion-service", account_id: accountId, document_id: documentId },
+      });
       throw new InternalServerErrorException("Failed to record document metadata.");
     }
   }
@@ -212,6 +217,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} accountId=${accountId} documentId=${documentId} status=${status}] Failed to update document status`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "ingestion-service", account_id: accountId, document_id: documentId },
+      });
       throw new InternalServerErrorException("Failed to update document status.");
     }
   }
@@ -248,6 +256,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} accountId=${input.accountId} documentId=${documentId}] Failed to delete DynamoDB document record`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "ingestion-service", account_id: input.accountId, document_id: documentId },
+      });
       throw new InternalServerErrorException("Failed to delete document metadata.");
     }
 
@@ -295,6 +306,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} accountId=${accountId} externalId=${externalId}] Failed to query DynamoDB for existing document`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "ingestion-service", account_id: accountId },
+      });
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
   }
@@ -319,6 +333,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} accountId=${accountId} documentId=${documentId}] Failed to delete Qdrant points`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "qdrant", account_id: accountId, document_id: documentId },
+      });
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
   }
@@ -332,6 +349,9 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(`[errorType=${errorName}] Failed to check Qdrant collection existence`);
+      this.sentryService.captureException(error, {
+        tags: { category: "qdrant" },
+      });
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
 
@@ -351,6 +371,9 @@ export class KnowledgeBaseIngestionService {
       }
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(`[errorType=${errorName}] Failed to create Qdrant collection`);
+      this.sentryService.captureException(error, {
+        tags: { category: "qdrant" },
+      });
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
   }
@@ -409,6 +432,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} documentId=${documentId}] Failed to upsert Qdrant points`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "qdrant", document_id: documentId },
+      });
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
   }
@@ -445,6 +471,9 @@ export class KnowledgeBaseIngestionService {
       this.logger.error(
         `[errorType=${errorName} documentId=${documentId}] Failed to write DynamoDB document record`,
       );
+      this.sentryService.captureException(error, {
+        tags: { category: "ingestion-service", document_id: documentId },
+      });
       throw new InternalServerErrorException("Failed to record document metadata.");
     }
   }

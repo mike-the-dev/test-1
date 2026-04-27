@@ -3,6 +3,7 @@ import { Processor, WorkerHost, OnWorkerEvent } from "@nestjs/bullmq";
 import { Job, UnrecoverableError } from "bullmq";
 
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
+import { SentryService } from "../services/sentry.service";
 import { KB_INGESTION_QUEUE_NAME, KB_INGESTION_RETRY_ATTEMPTS } from "../utils/knowledge-base/constants";
 import { KnowledgeBaseJobPayload } from "../types/KnowledgeBase";
 
@@ -13,7 +14,10 @@ const ERROR_SUMMARY_VALIDATION = "Document validation failed. Please check the s
 export class KnowledgeBaseIngestionProcessor extends WorkerHost {
   private readonly logger = new Logger(KnowledgeBaseIngestionProcessor.name);
 
-  constructor(private readonly ingestionService: KnowledgeBaseIngestionService) {
+  constructor(
+    private readonly ingestionService: KnowledgeBaseIngestionService,
+    private readonly sentryService: SentryService,
+  ) {
     super();
   }
 
@@ -59,6 +63,11 @@ export class KnowledgeBaseIngestionProcessor extends WorkerHost {
       }
 
       if (isFinalAttempt) {
+        // Capture to Sentry only on final attempt to avoid duplicate events across retry attempts.
+        this.sentryService.captureException(error, {
+          tags: { category: "ingestion-processor", account_id: accountId, document_id: documentId },
+          extras: { attempt, jobId: job.id },
+        });
         await this.ingestionService.updateDocumentStatus(accountId, documentId, "failed", ERROR_SUMMARY_GENERIC);
       }
 

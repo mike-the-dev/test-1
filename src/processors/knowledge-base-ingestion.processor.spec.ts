@@ -4,6 +4,7 @@ import { UnrecoverableError } from "bullmq";
 
 import { KnowledgeBaseIngestionProcessor } from "./knowledge-base-ingestion.processor";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
+import { SentryService } from "../services/sentry.service";
 import { KnowledgeBaseJobPayload } from "../types/KnowledgeBase";
 
 // ---------------------------------------------------------------------------
@@ -63,6 +64,10 @@ describe("KnowledgeBaseIngestionProcessor", () => {
         {
           provide: KnowledgeBaseIngestionService,
           useValue: mockIngestionService,
+        },
+        {
+          provide: SentryService,
+          useValue: { captureException: jest.fn(), captureMessage: jest.fn(), addBreadcrumb: jest.fn() },
         },
       ],
     }).compile();

@@ -3,6 +3,7 @@ import { QdrantClient } from "@qdrant/js-client-rest";
 
 import { QdrantProvider } from "./qdrant.provider";
 import { QdrantConfigService } from "../services/qdrant-config.service";
+import { SentryService } from "../services/sentry.service";
 
 jest.mock("@qdrant/js-client-rest");
 
@@ -11,6 +12,12 @@ const MockQdrantClient = jest.mocked(QdrantClient);
 const mockConfig: Pick<QdrantConfigService, "url" | "apiKey"> = {
   url: "http://localhost:6333",
   apiKey: undefined,
+};
+
+const mockSentryService: Pick<SentryService, "captureException" | "captureMessage" | "addBreadcrumb"> = {
+  captureException: jest.fn(),
+  captureMessage: jest.fn(),
+  addBreadcrumb: jest.fn(),
 };
 
 describe("QdrantProvider", () => {
@@ -38,13 +45,13 @@ describe("QdrantProvider", () => {
     });
 
     it("returns the QdrantClient instance", async () => {
-      const result = await QdrantProvider.useFactory(mockConfig);
+      const result = await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(result).toBeInstanceOf(MockQdrantClient);
     });
 
     it("logs a connected message with url and collectionCount", async () => {
-      await QdrantProvider.useFactory(mockConfig);
+      await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(logSpy).toHaveBeenCalledWith(
         expect.stringContaining("Qdrant connected"),
@@ -61,7 +68,7 @@ describe("QdrantProvider", () => {
     });
 
     it("does not log a warning on success", async () => {
-      await QdrantProvider.useFactory(mockConfig);
+      await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(warnSpy).not.toHaveBeenCalled();
     });
@@ -74,18 +81,18 @@ describe("QdrantProvider", () => {
 
     it("resolves without throwing", async () => {
       await expect(
-        QdrantProvider.useFactory(mockConfig),
+        QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService),
       ).resolves.toBeDefined();
     });
 
     it("returns the QdrantClient instance even on failure", async () => {
-      const result = await QdrantProvider.useFactory(mockConfig);
+      const result = await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(result).toBeInstanceOf(MockQdrantClient);
     });
 
     it("logs an unreachable warning with url and error message", async () => {
-      await QdrantProvider.useFactory(mockConfig);
+      await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining("Qdrant unreachable"),
@@ -102,9 +109,18 @@ describe("QdrantProvider", () => {
     });
 
     it("does not log a connected message on failure", async () => {
-      await QdrantProvider.useFactory(mockConfig);
+      await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(logSpy).not.toHaveBeenCalled();
+    });
+
+    it("calls sentryService.captureException with category=qdrant-startup on failure", async () => {
+      await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
+
+      expect(mockSentryService.captureException).toHaveBeenCalledWith(
+        expect.any(Error),
+        { tags: { category: "qdrant-startup" } },
+      );
     });
   });
 
@@ -114,7 +130,7 @@ describe("QdrantProvider", () => {
     });
 
     it("constructs client with url only when apiKey is undefined", async () => {
-      await QdrantProvider.useFactory(mockConfig);
+      await QdrantProvider.useFactory(mockConfig, mockSentryService as SentryService);
 
       expect(MockQdrantClient).toHaveBeenCalledWith({ url: mockConfig.url });
     });
@@ -125,7 +141,7 @@ describe("QdrantProvider", () => {
         apiKey: "test-api-key",
       };
 
-      await QdrantProvider.useFactory(configWithKey);
+      await QdrantProvider.useFactory(configWithKey, mockSentryService as SentryService);
 
       expect(MockQdrantClient).toHaveBeenCalledWith({
         url: configWithKey.url,

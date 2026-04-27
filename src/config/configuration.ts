@@ -46,6 +46,12 @@ const configuration = () => ({
     host: process.env.REDIS_HOST || "localhost",
     port: Number(process.env.REDIS_PORT || 6379),
   },
+  sentry: {
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.SENTRY_ENVIRONMENT ?? process.env.APP_ENV ?? "local",
+    release: process.env.SENTRY_RELEASE,
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
+  },
 });
 
 export default configuration;

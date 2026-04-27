@@ -8,6 +8,7 @@ import { KnowledgeBaseIngestionService } from "./knowledge-base-ingestion.servic
 import { VoyageService } from "./voyage.service";
 import { KnowledgeBaseEnrichmentService } from "./knowledge-base-enrichment.service";
 import { DatabaseConfigService } from "./database-config.service";
+import { SentryService } from "./sentry.service";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { QDRANT_CLIENT } from "../providers/qdrant.provider";
 import { KnowledgeBaseIngestDocumentInput } from "../types/KnowledgeBase";
@@ -158,6 +159,10 @@ describe("KnowledgeBaseIngestionService", () => {
         {
           provide: DatabaseConfigService,
           useValue: { conversationsTable: TABLE_NAME },
+        },
+        {
+          provide: SentryService,
+          useValue: { captureException: jest.fn(), captureMessage: jest.fn(), addBreadcrumb: jest.fn() },
         },
       ],
     }).compile();

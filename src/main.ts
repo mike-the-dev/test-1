@@ -1,3 +1,6 @@
+// MUST be first — Sentry requires initialization before any other module loads.
+import "./instrument";
+
 import { NestFactory } from "@nestjs/core";
 import { Logger, LogLevel } from "@nestjs/common";
 

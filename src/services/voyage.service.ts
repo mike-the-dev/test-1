@@ -4,6 +4,7 @@ import { VoyageAIClient, VoyageAIError } from "voyageai";
 type EmbedResponse = Awaited<ReturnType<VoyageAIClient["embed"]>>;
 
 import { VoyageConfigService } from "./voyage-config.service";
+import { SentryService } from "./sentry.service";
 
 const VOYAGE_MAX_BATCH = 1000;
 
@@ -12,7 +13,10 @@ export class VoyageService {
   private readonly logger = new Logger(VoyageService.name);
   private readonly client: VoyageAIClient;
 
-  constructor(private readonly voyageConfig: VoyageConfigService) {
+  constructor(
+    private readonly voyageConfig: VoyageConfigService,
+    private readonly sentryService: SentryService,
+  ) {
     this.client = new VoyageAIClient({ apiKey: this.voyageConfig.apiKey, maxRetries: 0 });
   }
 
@@ -44,6 +48,10 @@ export class VoyageService {
         if (error instanceof VoyageAIError) {
           const statusCode = error.statusCode ?? "unknown";
           this.logger.error(`Voyage API error [statusCode=${statusCode}]`);
+          this.sentryService.captureException(error, {
+            tags: { category: "voyage" },
+            extras: { statusCode: String(statusCode) },
+          });
           if (error.statusCode === 401) {
             throw new Error("Voyage API authentication failed — check VOYAGE_API_KEY");
           }
@@ -54,6 +62,9 @@ export class VoyageService {
         }
         const errorName = error instanceof Error ? error.name : "UnknownError";
         this.logger.error(`Voyage call failed [errorType=${errorName}]`);
+        this.sentryService.captureException(error, {
+          tags: { category: "voyage" },
+        });
         throw new Error("Voyage API call failed due to a network or unknown error");
       }
 

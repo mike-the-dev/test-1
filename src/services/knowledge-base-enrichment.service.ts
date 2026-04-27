@@ -2,6 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import Anthropic from "@anthropic-ai/sdk";
 
 import { AnthropicConfigService } from "./anthropic-config.service";
+import { SentryService } from "./sentry.service";
 import { KnowledgeBaseChunk } from "../types/KnowledgeBase";
 
 export const ENRICHMENT_CONCURRENCY_CAP = 5;
@@ -62,7 +63,10 @@ export class KnowledgeBaseEnrichmentService {
   private readonly logger = new Logger(KnowledgeBaseEnrichmentService.name);
   private readonly client: Anthropic;
 
-  constructor(private readonly anthropicConfig: AnthropicConfigService) {
+  constructor(
+    private readonly anthropicConfig: AnthropicConfigService,
+    private readonly sentryService: SentryService,
+  ) {
     this.client = new Anthropic({ apiKey: this.anthropicConfig.apiKey });
   }
 
@@ -80,6 +84,11 @@ export class KnowledgeBaseEnrichmentService {
         this.logger.warn(
           `Enrichment parse failure — unexpected content block type [chunkIndex=${chunkIndex} errorType=UnexpectedBlockType]`,
         );
+        this.sentryService.captureMessage(
+          `Enrichment parse failure — unexpected content block type`,
+          "warning",
+          { tags: { category: "enrichment", chunk_failure_kind: "empty_response" } },
+        );
         return null;
       }
 
@@ -88,6 +97,11 @@ export class KnowledgeBaseEnrichmentService {
       if (!rawText.includes("SUMMARY:") || !rawText.includes("QUESTIONS:") || !rawText.includes("KEY TERMS:")) {
         this.logger.warn(
           `Enrichment parse failure — missing required sections [chunkIndex=${chunkIndex} errorType=ParseFailure]`,
+        );
+        this.sentryService.captureMessage(
+          `Enrichment parse failure — missing required sections`,
+          "warning",
+          { tags: { category: "enrichment", chunk_failure_kind: "parse_failure" } },
         );
         return null;
       }
@@ -103,6 +117,11 @@ export class KnowledgeBaseEnrichmentService {
       this.logger.warn(
         `Enrichment API call failed [chunkIndex=${chunkIndex} errorType=${errorType}]`,
       );
+
+      this.sentryService.captureException(error, {
+        tags: { category: "enrichment", chunk_failure_kind: "anthropic_error" },
+        extras: { chunkIndex },
+      });
 
       return null;
     }
