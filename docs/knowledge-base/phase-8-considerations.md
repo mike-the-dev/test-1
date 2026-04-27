@@ -1,63 +1,139 @@
-# Phase 8 — Operational Hardening Considerations
+# Phase 8 — Operational Hardening Roadmap
 
-Running scratchpad of items deferred to Phase 8 from earlier phases. Not a brief — this is the input that the Phase 8 brief will be written from when we get there.
+Phase 8 is broken into **six independently shippable sub-phases**, each scoped tightly enough to run through the standard 5-step PROMPT_DISCOVERY_SERVICE flow. Sub-phases are largely independent — you can pause between any two.
 
-The unifying theme: everything that was acceptable for an MVP / pilot but needs a real answer before serving 200+ ecommerce stores in production.
-
----
-
-## Deferred items, grouped by origin phase
-
-### From Phase 4 (ingestion endpoint)
-
-- **Voyage model/dimension runtime guard.** Vector size is hardcoded to 1024 (matching `voyage-3-large`). If the `VOYAGE_MODEL` env var ever changes to a model with different output dims, ingestion silently breaks at the Qdrant upsert step. Add a startup assertion that calls Voyage with a probe, asserts the returned vector length, and refuses to boot if it doesn't match the collection's configured dimension.
-- **Internal-API auth on `POST /knowledge-base/documents` and `DELETE /knowledge-base/documents`.** Currently these endpoints accept the upstream control-panel API's calls with no authentication beyond the `account_id` in the body. For production, lock these down with either a shared secret header or mTLS so unauthorized callers can't ingest or delete on behalf of arbitrary accounts.
-- **Deterministic point IDs for chunk-level idempotency.** Currently each chunk gets a fresh `randomUUID`. If a partial failure during an update leaves some new chunks written and some not, retry creates additional new points instead of overwriting. Switch to deterministic IDs derived from `(account_id, document_id, chunk_index)` so re-ingest cleanly upserts.
-
-### From Phase 5 (retrieval tool)
-
-- **Score threshold filter.** Tool currently returns top-K unconditionally. Add an optional minimum-cosine-similarity threshold so unrelated chunks don't get returned for queries that genuinely have no relevant content (so the agent can confidently say "I don't have that").
-- **Reranker (Approach 3).** Voyage `rerank-2` model re-scores the top-N retrieved chunks against the query for higher precision. Worth measuring after Phase 7b lands — if enrichment lifts top-K relevance to where reranking is unnecessary, skip; if it doesn't, add.
-
-### From Phase 6 (benchmark + observability)
-
-- **Per-account retrieval quality dashboard.** Today there's no way to see "what is the average top-K cosine similarity for Account X over the last week?" Build a small ops view (or push to existing analytics) so operators can detect quality regressions per client.
-
-### From Phase 7a (document lifecycle)
-
-- **GSI on `(account_id, external_id)`.** Lookup currently uses a partition Query + FilterExpression. Fine at small per-account doc counts; becomes a bottleneck at hundreds of docs per account. Add a GSI for direct lookup when needed.
-- **Compensation logic for partial-failure during update.** If an update's "delete old chunks → write new chunks → write DDB" sequence fails partway, today we accept temporary inconsistency and rely on upstream retry. Build a more deliberate compensation pattern (or a marker that indicates "this document is in flux, retry me") for production.
-- **Bulk delete for an entire account.** When a client cancels their subscription, we need to wipe all of their KB content. Today there's no endpoint for this. Add `DELETE /knowledge-base/accounts/:account_id` with appropriate auth.
-- **List / admin endpoints.** No `GET` endpoint exists for "what documents does this account have?" Useful for a CMS view, debugging, and verifying ingest state. Add `GET /knowledge-base/documents?account_id=...` (paginated).
-
-### From Phase 7b (Claude enrichment)
-
-- **Sentry/Slack alerting on enrichment failures.** Today: a `WARN` log fires when chunks fail enrichment. Operators only see this if they're reading logs. Production needs active alerts: per-chunk warning at high failure rate, page-worthy alert when an entire document's chunks all fail (likely Anthropic outage).
-- **Retry-with-backoff on Anthropic rate limits.** Today: a 429 response from Anthropic falls back to "embed without enrichment for that chunk." For a high-traffic ingestion period this can degrade quality silently. Add exponential backoff with a jitter for 429s.
-- **Per-account ingestion concurrency cap.** Today: the 5-way concurrency limit is global within a single ingestion. One client uploading a 300-chunk doc can monopolize Anthropic's rate budget for all other concurrent ingestions. Add a per-account limit so heavy uploaders don't starve other accounts.
-- **Per-account / per-plan ingestion limits.** Discussed with user on 2026-04-25: starter plans cap at e.g. 50 docs, pro plans at 500, enterprise unlimited. Implementation likely lives at the account record level. Need a small enum + check at ingestion time.
-- **Document-level enrichment status field.** Today: DDB record has `status: "ready"` regardless of whether Anthropic was up during ingestion. Add an `enrichment_status: "complete" | "partial" | "failed"` field so operators can identify documents that need re-enrichment after an outage.
-- **Cost-lever switch to Claude Haiku.** Documented in Phase 7b's enrichment service constants but not implemented. Switching cuts enrichment cost by ~6×; trade-off is some quality drop. Worth measuring on real client data and offering as a per-plan setting.
-
-### From Phase 7c (async queue, when designed)
-
-- (Items to be added once Phase 7c brief is drafted.)
+The recommended ordering reflects risk reduction first (visibility before security, security before complexity, defenses before tools, quality knobs last).
 
 ---
 
-## Cross-cutting Phase 8 themes
+## Sub-phase summary
 
-When we write the Phase 8 brief, these are the natural groupings to organize the work around:
-
-1. **Observability** — Sentry integration, Slack alerts, per-account quality dashboards, enrichment-status tracking.
-2. **Rate-limit defenses** — Retries with backoff, per-account budgets, Anthropic outage detection.
-3. **Idempotency hardening** — Deterministic point IDs, compensation logic for partial failures, deduplication of orphaned vectors.
-4. **Operational endpoints** — List, bulk delete, admin debug views, manual re-enrichment trigger.
-5. **Tenancy hardening** — Internal-API auth on KB endpoints, per-account quotas, per-plan limits.
-6. **Cost controls** — Haiku option for enrichment, per-plan tiering, budget alerts when an account exceeds expected ingestion volume.
+| Sub-phase | Theme | Recommended order |
+|---|---|---|
+| **8a** | Sentry error tracking | First |
+| **8b** | Slack alerts on page-worthy events | Second |
+| **8c** | Internal-API authentication | Third |
+| **8d** | Idempotency, integrity, & resilience hardening | Fourth |
+| **8e** | Operational endpoints (list, bulk delete, admin) | Fifth |
+| **8f** | Quality & cost levers | Last (defer until production data) |
 
 ---
 
-## Living document
+## 8a — Sentry error tracking
 
-This file is appended to (not edited in place) as new items get deferred from later phases. Each item should preserve enough context to re-establish "why this matters" when Phase 8 is finally written.
+**Goal:** Catch unhandled exceptions and structured error events automatically. Operators and developers should never need to be reading logs to discover problems.
+
+**Items:**
+- Add `@sentry/nestjs` integration. Initialize on boot.
+- Wrap the SDK in a project-controlled `SentryService` so call sites use a stable interface (testable, swappable later).
+- Manual `captureException` calls in known hot-spot catch blocks: VoyageService, Qdrant provider smoke check, ingestion service DDB failures, enrichment service per-chunk failures, processor job failures.
+- Tag every captured event with `category` (e.g., `voyage`, `qdrant`, `enrichment`, `ingestion-job`) and `account_id` where available.
+- Suppress `BadRequestException` and other validation-class errors — those are user errors, not bugs.
+- Strip PII via `beforeSend`: never let chat messages, document text, or contact info into Sentry.
+- Local dev: `SENTRY_DSN` unset → SDK becomes a no-op so dev errors don't pollute the org's Sentry.
+
+**Why first:** Cheapest visibility win. Once landed, every other sub-phase is observable when it ships, so regressions get caught fast.
+
+---
+
+## 8b — Slack alerts on page-worthy events
+
+**Goal:** Real-time team notifications for events that need a human to act NOW (not just "filed in Sentry for next-day review").
+
+**Items:**
+- Small `SlackAlertService` that posts to a configured webhook.
+- Tight whitelist of page-worthy events:
+  - All-chunks-fail enrichment for a document (likely Anthropic outage)
+  - Voyage outage detected (multiple consecutive failures)
+  - Qdrant outage detected (multiple consecutive failures)
+  - Stuck-job detector firing (document stuck in `processing` for > N minutes — enabled in 8d)
+  - Job-failed-after-retries beyond a threshold rate
+- Suppression / rate-limiting so a sustained outage doesn't spam the channel.
+- Channel ID configurable per-environment; staging Slack vs. prod Slack should be separate.
+
+**Why second:** Builds on 8a's event categorization. Sentry catches everything; Slack escalates the subset that's page-worthy.
+
+---
+
+## 8c — Internal-API authentication
+
+**Goal:** Lock down the KB endpoints so only the upstream control-panel API can call them. Today they're open.
+
+**Items:**
+- Choose between shared-secret header (simplest) or mTLS (more secure, more setup).
+- Recommendation: shared-secret header (`X-Internal-API-Key`) for v1; mTLS as a future upgrade.
+- Apply auth to: `POST`, `GET`, `DELETE` on `/knowledge-base/documents` (and the future `/knowledge-base/accounts/:id` from 8e).
+- Implement as a NestJS `Guard` so applying it to endpoints is a one-line decorator.
+- Env var: `KB_INTERNAL_API_KEY`. Required at boot.
+- Rotation strategy documented (env-var swap + deploy = key rotation; no in-app key management needed for v1).
+
+**Why third:** Security is non-negotiable before customer #2. Doing it before 8d (idempotency) and 8e (more endpoints) means new endpoints inherit the guard.
+
+---
+
+## 8d — Idempotency, integrity, & resilience hardening
+
+**Goal:** Defend against the failure modes flagged across earlier phases. None of these are blockers today; all become real at production scale.
+
+**Items:**
+- **Deterministic Qdrant point IDs** derived from `(account_id, document_id, chunk_index)` so re-ingest cleanly upserts instead of leaving orphans on partial failure.
+- **Stuck-job detector** — scheduled job that finds DDB records with `status: "processing"` and `_lastUpdated_` older than N minutes (suggested: 10), re-queues them via BullMQ. Slack-alerts on detection (8b dependency).
+- **Voyage dimension runtime guard** — startup probe that calls Voyage with a known input, asserts the returned vector length matches the Qdrant collection's configured dimension. Refuses to boot if mismatched.
+- **Compensation logic for partial-failure during update** — currently we accept temporary inconsistency on a partial Qdrant write. Add a "document is in flux, retry me" marker the worker can detect on retry.
+- **Orphan-vector cleanup** — scheduled scan that finds Qdrant points with `document_id` values that have no DDB record, deletes them. Catches the artifacts from prior partial failures before deterministic IDs landed.
+- **Anthropic retry-with-backoff** on rate limits during enrichment. Currently a 429 falls through to "embed without enrichment." Better: backoff-and-retry once before falling through.
+- **GSI on `(account_id, external_id)`** for direct lookup at high doc-count per account. Add when an account hits ~100 docs and lookup latency becomes measurable.
+
+**Why fourth:** These defend against bugs we've explicitly identified. Doing them before 8e means the operational endpoints are built on a more-correct foundation.
+
+---
+
+## 8e — Operational endpoints (admin tooling)
+
+**Goal:** Tools an operator (or a future CMS view) needs to support customers.
+
+**Items:**
+- `GET /knowledge-base/documents?account_id=...` — paginated list of an account's documents (status, chunk count, timestamps). Currently no way to see "what's in there."
+- `DELETE /knowledge-base/accounts/:account_id` — bulk wipe when a client cancels their subscription. Tied to 8c's auth.
+- Manual re-enrichment trigger endpoint — lets an operator request "re-run enrichment for documents that failed during the last Anthropic outage" without requiring the upstream API to re-POST.
+- BullMQ dashboard / dead-letter queue inspection (decide between embedding `bull-board` or just a small custom diagnostics endpoint).
+
+**Why fifth:** Needed when there are real customers to support. Built on top of 8c's auth.
+
+---
+
+## 8f — Quality & cost levers
+
+**Goal:** Knobs to tune retrieval quality and cost based on real production data. **Defer until you have that data** — premature tuning here would be optimizing against the dog-walking benchmark.
+
+**Items:**
+- **Score threshold filter** on retrieval so genuinely irrelevant chunks don't get returned (lets the agent confidently say "I don't have that").
+- **Reranker (Approach 3)** — Voyage `rerank-2` re-scores top-N retrieved chunks for higher precision. Worth measuring after 7b's enrichment lift to see if it's still needed.
+- **Per-account ingestion concurrency cap** — today the 5-way enrichment concurrency is global; one heavy client can starve others' rate budget. Add a per-account ceiling.
+- **Per-account / per-plan ingestion limits** — starter / pro / enterprise tiers with document count caps. Lives at the account record level. Discussed with user 2026-04-25.
+- **Cost-lever switch to Claude Haiku** for enrichment. Documented in code as a future option; not yet implemented. ~6× cost reduction with some quality tradeoff.
+- **Document-level enrichment status field** — `enrichment_status: "complete" | "partial" | "failed"` on the DDB record so operators can identify which documents need re-enrichment after an outage.
+- **Per-account retrieval quality dashboard** — small ops view showing average top-K cosine similarity per account over time, so quality regressions per client are detectable.
+- **Multi-worker scaling** — today: 1 worker per process. Scaling out is a deployment-config concern + minor code adjustments to ensure thread-safety.
+- **De-dup by `(account_id, external_id)` job-key** — prevents two concurrent updates for the same document from racing.
+
+**Why last:** Most of these are tuning knobs whose right value depends on real production traffic. Implementing them speculatively against the dog-walking benchmark would be premature optimization.
+
+---
+
+## Items expected to land later as new sub-phases emerge
+
+This is a living document. As Phase 7c-and-beyond surfaces additional considerations during operation, append them here under the appropriate sub-phase. If new themes emerge that don't fit any existing sub-phase, propose a new sub-phase letter.
+
+---
+
+## Origin trace (for historical context)
+
+Each item above was originally surfaced and deferred during a specific phase. The mapping (preserved for traceability):
+
+- **Phase 4** → 8c (internal-API auth), 8d (Voyage dimension guard, deterministic point IDs)
+- **Phase 5** → 8f (score threshold, reranker)
+- **Phase 6** → 8f (per-account quality dashboard)
+- **Phase 7a** → 8d (compensation logic, GSI), 8e (bulk delete, list endpoints)
+- **Phase 7b** → 8a/8b (Sentry+Slack on enrichment failures), 8d (Anthropic retry-with-backoff, document enrichment_status), 8f (per-account concurrency cap, per-plan limits, Haiku lever)
+- **Phase 7c** → 8b (Slack alerts via stuck-job detector), 8d (stuck-job detector, dead-letter inspection), 8e (manual retry endpoint), 8f (multi-worker, de-dup by external_id)
