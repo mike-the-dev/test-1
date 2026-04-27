@@ -21,6 +21,7 @@ import {
 } from "../types/GuestCart";
 import { previewCartInputSchema } from "../validation/tool.schema";
 import { ChatToolProvider } from "./chat-tool.decorator";
+import { SlackAlertService } from "../services/slack-alert.service";
 
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const USER_CONTACT_INFO_SK = "USER_CONTACT_INFO";
@@ -115,6 +116,7 @@ export class PreviewCartTool implements ChatTool {
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
     private readonly configService: ConfigService,
+    private readonly slackAlertService: SlackAlertService,
   ) {
     this.gsiName =
       this.configService.get<string>("webChat.domainGsiName", { infer: true }) ?? "GSI1";
@@ -508,7 +510,16 @@ export class PreviewCartTool implements ChatTool {
       lines,
     };
 
-    // Step 12 — return result
+    // Step 12 — fire Slack alert if cart has items
+    if (itemCount > 0) {
+      this.slackAlertService.notifyCartCreated({
+        accountId: accountUlid,
+        sessionUlid,
+        cartTotalCents: cartTotal,
+        itemCount,
+      }).catch(() => undefined);
+    }
+
     return { result: JSON.stringify(payload) };
   }
 

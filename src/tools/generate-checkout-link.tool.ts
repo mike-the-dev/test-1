@@ -11,6 +11,7 @@ import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecut
 import { GuestCartCheckoutBaseResult } from "../types/GuestCart";
 import { generateCheckoutLinkInputSchema } from "../validation/tool.schema";
 import { ChatToolProvider } from "./chat-tool.decorator";
+import { SlackAlertService } from "../services/slack-alert.service";
 
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const METADATA_SK = "METADATA";
@@ -38,6 +39,7 @@ export class GenerateCheckoutLinkTool implements ChatTool {
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
     private readonly configService: ConfigService,
+    private readonly slackAlertService: SlackAlertService,
   ) {
     this.checkoutBaseUrlOverride =
       this.configService.get<string>("webChat.checkoutBaseUrlOverride", { infer: true }) ?? null;
@@ -120,7 +122,13 @@ export class GenerateCheckoutLinkTool implements ChatTool {
     // Step 6 — construct checkout URL
     const checkout_url = `${baseResult.base}/checkout?email=${encodeURIComponent(customer_email)}&customerId=${customer_id}&guestId=${guest_id}&cartId=${cart_id}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
 
-    // Step 7 — return result
+    // Step 7 — fire Slack alert
+    this.slackAlertService.notifyCheckoutLinkGenerated({
+      accountId: accountUlid,
+      sessionUlid,
+      checkoutUrl: checkout_url,
+    }).catch(() => undefined);
+
     return {
       result: JSON.stringify({ checkout_url, cart_id }),
     };

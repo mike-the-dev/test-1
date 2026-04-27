@@ -1,5 +1,14 @@
 import { ChatContentBlock } from "./ChatContent";
 
+/** Return type for IdentityService.lookupOrCreateSession(). */
+export interface LookupOrCreateSessionResult {
+  sessionUlid: string;
+  onboardingCompletedAt: string | null;
+  kickoffCompletedAt: string | null;
+  budgetCents: number | null;
+  wasCreated: boolean;
+}
+
 export type ChatSessionRole = "user" | "assistant";
 
 /**

@@ -5,6 +5,7 @@ import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ChatSessionService } from "../services/chat-session.service";
 import { IdentityService } from "../services/identity.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
+import { SlackAlertService } from "../services/slack-alert.service";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import {
   createSessionSchema,
@@ -41,6 +42,12 @@ const mockOriginAllowlistService = {
   isOriginAuthorizedForAccount: jest.fn(),
 };
 
+const mockSlackAlertService = {
+  notifyConversationStarted: jest.fn().mockResolvedValue(undefined),
+  notifyCartCreated: jest.fn().mockResolvedValue(undefined),
+  notifyCheckoutLinkGenerated: jest.fn().mockResolvedValue(undefined),
+};
+
 describe("WebChatController", () => {
   let controller: WebChatController;
 
@@ -53,6 +60,7 @@ describe("WebChatController", () => {
       onboardingCompletedAt: null,
       kickoffCompletedAt: null,
       budgetCents: null,
+      wasCreated: false,
     });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -62,6 +70,7 @@ describe("WebChatController", () => {
         { provide: ChatSessionService, useValue: mockChatSessionService },
         { provide: AgentRegistryService, useValue: mockAgentRegistry },
         { provide: OriginAllowlistService, useValue: mockOriginAllowlistService },
+        { provide: SlackAlertService, useValue: mockSlackAlertService },
       ],
     }).compile();
 
@@ -114,6 +123,7 @@ describe("WebChatController", () => {
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
         kickoffCompletedAt: null,
         budgetCents: 100_000,
+        wasCreated: false,
       });
 
       const result = await controller.createSession({
@@ -133,6 +143,7 @@ describe("WebChatController", () => {
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
         kickoffCompletedAt: "2026-04-20T22:00:00.000Z",
         budgetCents: 100_000,
+        wasCreated: false,
       });
 
       const result = await controller.createSession({
@@ -182,6 +193,61 @@ describe("WebChatController", () => {
       ).rejects.toThrow(InternalServerErrorException);
 
       expect(mockIdentityService.lookupOrCreateSession).not.toHaveBeenCalled();
+    });
+
+    it("fires notifyConversationStarted when wasCreated is true", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockIdentityService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: VALID_SESSION_ULID,
+        onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
+        budgetCents: null,
+        wasCreated: true,
+      });
+
+      await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(mockSlackAlertService.notifyConversationStarted).toHaveBeenCalledTimes(1);
+      const [callArgs] = mockSlackAlertService.notifyConversationStarted.mock.calls[0];
+      expect(callArgs.accountId).toBe(VALID_ACCOUNT_ULID);
+      expect(callArgs.sessionUlid).toBe(VALID_SESSION_ULID);
+      expect(callArgs.startedAt).toBeInstanceOf(Date);
+    });
+
+    it("does NOT fire notifyConversationStarted when wasCreated is false (resumed session)", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+
+      await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(mockSlackAlertService.notifyConversationStarted).not.toHaveBeenCalled();
+    });
+
+    it("returns the session response even when notifyConversationStarted rejects", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockIdentityService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: VALID_SESSION_ULID,
+        onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
+        budgetCents: null,
+        wasCreated: true,
+      });
+      mockSlackAlertService.notifyConversationStarted.mockRejectedValue(new Error("Slack down"));
+
+      const result = await controller.createSession({
+        agentName: AGENT_NAME,
+        guestUlid: VALID_GUEST_ULID,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(result.sessionUlid).toBe(VALID_SESSION_ULID);
     });
 
     it("pipe rejects body missing accountUlid", () => {

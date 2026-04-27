@@ -52,6 +52,9 @@ const configuration = () => ({
     release: process.env.SENTRY_RELEASE,
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE ?? 0),
   },
+  slack: {
+    webhookUrl: process.env.SLACK_WEBHOOK_URL,
+  },
 });
 
 export default configuration;

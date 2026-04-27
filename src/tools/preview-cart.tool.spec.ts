@@ -14,6 +14,7 @@ import { mockClient } from "aws-sdk-client-mock";
 import { PreviewCartTool } from "./preview-cart.tool";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
+import { SlackAlertService } from "../services/slack-alert.service";
 
 jest.mock("ulid", () => ({
   ulid: jest.fn(),
@@ -36,6 +37,12 @@ const OPTION_ID = "01OPTIONID0000000000000000";
 const CHECKOUT_OVERRIDE = "http://localhost:3000";
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
+
+const mockSlackAlertService = {
+  notifyConversationStarted: jest.fn().mockResolvedValue(undefined),
+  notifyCartCreated: jest.fn().mockResolvedValue(undefined),
+  notifyCheckoutLinkGenerated: jest.fn().mockResolvedValue(undefined),
+};
 
 function makeContactInfoItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -134,6 +141,10 @@ async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
         provide: ConfigService,
         useValue: mockConfigService,
       },
+      {
+        provide: SlackAlertService,
+        useValue: mockSlackAlertService,
+      },
     ],
   }).compile();
 }
@@ -146,6 +157,7 @@ describe("PreviewCartTool", () => {
   const context = { sessionUlid: SESSION_ULID, accountUlid: ACCOUNT_ULID };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     ddbMock.reset();
     mockedUlid.mockReset();
 
@@ -584,6 +596,56 @@ describe("PreviewCartTool", () => {
       expect(expr).toContain("if_not_exists(#guest_id");
       expect(expr).toContain("if_not_exists(#customer_id");
       expect(expr).toContain("if_not_exists(#customer_email");
+    });
+  });
+
+  describe("12. Slack alert — notifyCartCreated", () => {
+    function setupHappyPath(): void {
+      mockedUlid
+        .mockReturnValueOnce(CUSTOMER_ULID)
+        .mockReturnValueOnce(GUEST_ULID)
+        .mockReturnValueOnce(CART_ULID)
+        .mockReturnValue(LINE_ULID_1);
+
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({ Item: makeContactInfoItem() });
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({ Item: makeMetadataItem() });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(BatchGetCommand).resolves({
+        Responses: { [TABLE_NAME]: [makeServiceItem()] },
+        UnprocessedKeys: {},
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+    }
+
+    it("calls notifyCartCreated with accountId, sessionUlid, itemCount, and cartTotalCents when itemCount > 0", async () => {
+      setupHappyPath();
+
+      await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 2 }] }, context);
+
+      expect(mockSlackAlertService.notifyCartCreated).toHaveBeenCalledTimes(1);
+      const [callArgs] = mockSlackAlertService.notifyCartCreated.mock.calls[0];
+      expect(callArgs.accountId).toBe(ACCOUNT_ULID);
+      expect(callArgs.sessionUlid).toBe(SESSION_ULID);
+      expect(callArgs.itemCount).toBe(2);
+      expect(typeof callArgs.cartTotalCents).toBe("number");
+    });
+
+    it("does NOT call notifyCartCreated when the tool returns an error", async () => {
+      // Missing accountUlid triggers early return before any Slack call
+      await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 1 }] }, { sessionUlid: SESSION_ULID, accountUlid: undefined });
+
+      expect(mockSlackAlertService.notifyCartCreated).not.toHaveBeenCalled();
+    });
+
+    it("returns the cart payload regardless of slackAlertService behavior", async () => {
+      setupHappyPath();
+      mockSlackAlertService.notifyCartCreated.mockRejectedValue(new Error("Slack down"));
+
+      const result = await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 1 }] }, context);
+
+      expect(result.isError).toBeUndefined();
+      expect(JSON.parse(result.result)).toHaveProperty("cart_id");
     });
   });
 });

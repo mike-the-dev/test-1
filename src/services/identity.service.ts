@@ -4,7 +4,7 @@ import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
-import { ChatSessionIdentityRecord, ChatSessionMetadataRecord, ChatSessionPointerRecord } from "../types/ChatSession";
+import { ChatSessionIdentityRecord, ChatSessionMetadataRecord, ChatSessionPointerRecord, LookupOrCreateSessionResult } from "../types/ChatSession";
 
 const ACCOUNT_PK_PREFIX = "A#";
 
@@ -37,7 +37,7 @@ export class IdentityService {
     externalId: string,
     defaultAgentName: string,
     accountUlid?: string,
-  ): Promise<{ sessionUlid: string; onboardingCompletedAt: string | null; kickoffCompletedAt: string | null; budgetCents: number | null }> {
+  ): Promise<LookupOrCreateSessionResult> {
     const table = this.databaseConfig.conversationsTable;
     const pk = `${IDENTITY_PK_PREFIX}${source}#${externalId}`;
 
@@ -66,7 +66,7 @@ export class IdentityService {
       const kickoffCompletedAt = metadataResult.Item?.kickoff_completed_at ?? null;
       const budgetCents = metadataResult.Item?.budget_cents ?? null;
 
-      return { sessionUlid, onboardingCompletedAt, kickoffCompletedAt, budgetCents };
+      return { sessionUlid, onboardingCompletedAt, kickoffCompletedAt, budgetCents, wasCreated: false };
     }
 
     const sessionUlid = ulid();
@@ -107,7 +107,7 @@ export class IdentityService {
 
         this.logger.warn(`Race condition recovered on identity creation [source=${source} externalId=${externalId} sessionUlid=${winnerSessionUlid}]`);
 
-        return { sessionUlid: winnerSessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null };
+        return { sessionUlid: winnerSessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: false };
       }
 
       throw error;
@@ -188,7 +188,7 @@ export class IdentityService {
       }
     }
 
-    return { sessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null };
+    return { sessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true };
   }
 
   async updateOnboarding(

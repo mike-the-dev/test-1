@@ -45,6 +45,8 @@ import { KnowledgeBaseIngestionProcessor } from "./processors/knowledge-base-ing
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
 import { SentryConfigService } from "./services/sentry-config.service";
 import { SentryService } from "./services/sentry.service";
+import { SlackAlertConfigService } from "./services/slack-alert-config.service";
+import { SlackAlertService } from "./services/slack-alert.service";
 
 @Module({
   imports: [
@@ -79,6 +81,8 @@ import { SentryService } from "./services/sentry.service";
     },
     SentryConfigService,
     SentryService,
+    SlackAlertConfigService,
+    SlackAlertService,
     AppService,
     DatabaseConfigService,
     QdrantConfigService,

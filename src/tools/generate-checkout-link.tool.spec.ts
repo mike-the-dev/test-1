@@ -10,6 +10,7 @@ import { mockClient } from "aws-sdk-client-mock";
 import { GenerateCheckoutLinkTool } from "./generate-checkout-link.tool";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
+import { SlackAlertService } from "../services/slack-alert.service";
 
 const TABLE_NAME = "test-conversations-table";
 const ACCOUNT_ULID = "01ACCOUNTULID00000000000000";
@@ -22,6 +23,12 @@ const CUSTOMER_EMAIL = "test@example.com";
 const CHECKOUT_OVERRIDE = "http://localhost:3000";
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
+
+const mockSlackAlertService = {
+  notifyConversationStarted: jest.fn().mockResolvedValue(undefined),
+  notifyCartCreated: jest.fn().mockResolvedValue(undefined),
+  notifyCheckoutLinkGenerated: jest.fn().mockResolvedValue(undefined),
+};
 
 function makeMetadataItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -62,6 +69,10 @@ async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
         provide: ConfigService,
         useValue: mockConfigService,
       },
+      {
+        provide: SlackAlertService,
+        useValue: mockSlackAlertService,
+      },
     ],
   }).compile();
 }
@@ -73,6 +84,7 @@ describe("GenerateCheckoutLinkTool", () => {
   const context = { sessionUlid: SESSION_ULID, accountUlid: ACCOUNT_ULID };
 
   beforeEach(async () => {
+    jest.clearAllMocks();
     ddbMock.reset();
 
     const module = await buildModule();
@@ -226,6 +238,7 @@ describe("GenerateCheckoutLinkTool", () => {
           { provide: DYNAMO_DB_CLIENT, useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })) },
           { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
           { provide: ConfigService, useValue: mockConfigNoOverride },
+          { provide: SlackAlertService, useValue: mockSlackAlertService },
         ],
       }).compile();
 
@@ -272,6 +285,7 @@ describe("GenerateCheckoutLinkTool", () => {
           { provide: DYNAMO_DB_CLIENT, useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })) },
           { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
           { provide: ConfigService, useValue: mockConfigNoOverride },
+          { provide: SlackAlertService, useValue: mockSlackAlertService },
         ],
       }).compile();
 
@@ -320,6 +334,44 @@ describe("GenerateCheckoutLinkTool", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.result) as { checkout_url: string };
       expect(parsed.checkout_url).toContain("email=user%2Btag%40example.com");
+    });
+  });
+
+  describe("13. Slack alert — notifyCheckoutLinkGenerated", () => {
+    it("calls notifyCheckoutLinkGenerated with accountId, sessionUlid, and checkoutUrl on success", async () => {
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
+        Item: makeMetadataItem(),
+      });
+
+      await tool.execute({}, context);
+
+      expect(mockSlackAlertService.notifyCheckoutLinkGenerated).toHaveBeenCalledTimes(1);
+      const [callArgs] = mockSlackAlertService.notifyCheckoutLinkGenerated.mock.calls[0];
+      expect(callArgs.accountId).toBe(ACCOUNT_ULID);
+      expect(callArgs.sessionUlid).toBe(SESSION_ULID);
+      expect(typeof callArgs.checkoutUrl).toBe("string");
+      expect(callArgs.checkoutUrl).toContain("checkout");
+    });
+
+    it("does NOT call notifyCheckoutLinkGenerated when the tool returns an error (missing METADATA)", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+      await tool.execute({}, context);
+
+      expect(mockSlackAlertService.notifyCheckoutLinkGenerated).not.toHaveBeenCalled();
+    });
+
+    it("returns the checkout result regardless of slackAlertService behavior", async () => {
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
+        Item: makeMetadataItem(),
+      });
+      mockSlackAlertService.notifyCheckoutLinkGenerated.mockRejectedValue(new Error("Slack down"));
+
+      const result = await tool.execute({}, context);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result) as { checkout_url: string; cart_id: string };
+      expect(typeof parsed.checkout_url).toBe("string");
     });
   });
 });

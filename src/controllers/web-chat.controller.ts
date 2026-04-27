@@ -15,6 +15,7 @@ import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import { ChatSessionService } from "../services/chat-session.service";
 import { IdentityService } from "../services/identity.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
+import { SlackAlertService } from "../services/slack-alert.service";
 import {
   WebChatCreateSessionResponse,
   WebChatEmbedAuthorizeResponse,
@@ -40,6 +41,7 @@ export class WebChatController {
     private readonly chatSessionService: ChatSessionService,
     private readonly agentRegistry: AgentRegistryService,
     private readonly originAllowlistService: OriginAllowlistService,
+    private readonly slackAlertService: SlackAlertService,
   ) {}
 
   @Post("sessions")
@@ -69,6 +71,14 @@ export class WebChatController {
       body.agentName,
       accountUlid,
     );
+
+    if (sessionResult.wasCreated) {
+      this.slackAlertService.notifyConversationStarted({
+        accountId: accountUlid,
+        sessionUlid: sessionResult.sessionUlid,
+        startedAt: new Date(),
+      }).catch(() => undefined);
+    }
 
     const displayName = agent.displayName ?? agent.name;
 

@@ -67,6 +67,7 @@ describe("IdentityService", () => {
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
         kickoffCompletedAt: null,
         budgetCents: 100_000,
+        wasCreated: false,
       });
     });
 
@@ -97,6 +98,7 @@ describe("IdentityService", () => {
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
         budgetCents: null,
+        wasCreated: false,
       });
     });
 
@@ -153,6 +155,7 @@ describe("IdentityService", () => {
       expect(result.onboardingCompletedAt).toBeNull();
       expect(result.kickoffCompletedAt).toBeNull();
       expect(result.budgetCents).toBeNull();
+      expect(result.wasCreated).toBe(true);
 
       const putCalls = ddbMock.commandCalls(PutCommand);
 
@@ -205,6 +208,7 @@ describe("IdentityService", () => {
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
         budgetCents: null,
+        wasCreated: false,
       });
     });
 
@@ -374,6 +378,61 @@ describe("IdentityService", () => {
       );
 
       expect(result.sessionUlid).toMatch(/^[0-9A-Z]{26}$/);
+    });
+
+    it("returns wasCreated: true when a new session is created", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const result = await service.lookupOrCreateSession("web", "new-guest-111", "shopping_assistant", "01ACCOUNTULID00000000000000");
+
+      expect(result.wasCreated).toBe(true);
+    });
+
+    it("returns wasCreated: false when an existing session is resumed", async () => {
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({
+          Item: {
+            PK: "IDENTITY#web#existing-guest-222",
+            SK: "IDENTITY#web#existing-guest-222",
+            session_id: "01EXISTING00000000000000000",
+            _createdAt_: "2026-01-01T00:00:00.000Z",
+          },
+        })
+        .resolvesOnce({ Item: { PK: "CHAT_SESSION#01EXISTING00000000000000000", SK: "METADATA" } });
+
+      const result = await service.lookupOrCreateSession("web", "existing-guest-222", "shopping_assistant", "01ACCOUNTULID00000000000000");
+
+      expect(result.wasCreated).toBe(false);
+    });
+
+    it("returns wasCreated: false on the race-condition recovery path", async () => {
+      const winnerSessionUlid = "01WINNER0000000000000000001";
+
+      const conditionalError = Object.assign(new Error("Conditional check failed"), {
+        name: "ConditionalCheckFailedException",
+      });
+
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({ Item: undefined })
+        .resolvesOnce({
+          Item: {
+            PK: "IDENTITY#web#race-guest-333",
+            SK: "IDENTITY#web#race-guest-333",
+            session_id: winnerSessionUlid,
+            _createdAt_: "2026-01-01T00:00:00.000Z",
+          },
+        });
+
+      ddbMock.on(PutCommand).rejects(conditionalError);
+
+      const result = await service.lookupOrCreateSession("web", "race-guest-333", "shopping_assistant", "01ACCOUNTULID00000000000000");
+
+      expect(result.wasCreated).toBe(false);
+      expect(result.sessionUlid).toBe(winnerSessionUlid);
     });
 
     it("existing session lookup with accountUlid passed — no UpdateCommand call at all", async () => {
