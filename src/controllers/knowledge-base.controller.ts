@@ -16,7 +16,7 @@ import { ulid } from "ulid";
 
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
-import { KB_INGESTION_QUEUE_NAME } from "../utils/knowledge-base/constants";
+import { KB_INGESTION_QUEUE_NAME, KB_INGESTION_RETRY_ATTEMPTS } from "../utils/knowledge-base/constants";
 import {
   KnowledgeBaseGetDocumentResult,
   KnowledgeBaseIngestAcceptedResult,
@@ -26,7 +26,6 @@ import { ingestDocumentSchema, deleteDocumentSchema, getDocumentSchema } from ".
 import type { IngestDocumentBody, DeleteDocumentBody, GetDocumentQuery } from "../validation/knowledge-base.schema";
 
 const KB_INGEST_JOB = "ingest";
-const KB_RETRY_ATTEMPTS = 4;
 const KB_BACKOFF_DELAY_MS = 1000;
 
 @Controller("knowledge-base")
@@ -80,7 +79,7 @@ export class KnowledgeBaseController {
 
     try {
       await this.queue.add(KB_INGEST_JOB, jobPayload, {
-        attempts: KB_RETRY_ATTEMPTS,
+        attempts: KB_INGESTION_RETRY_ATTEMPTS,
         backoff: {
           type: "exponential",
           delay: KB_BACKOFF_DELAY_MS,

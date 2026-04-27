@@ -3,12 +3,11 @@ import { Processor, WorkerHost, OnWorkerEvent } from "@nestjs/bullmq";
 import { Job, UnrecoverableError } from "bullmq";
 
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
-import { KB_INGESTION_QUEUE_NAME } from "../utils/knowledge-base/constants";
+import { KB_INGESTION_QUEUE_NAME, KB_INGESTION_RETRY_ATTEMPTS } from "../utils/knowledge-base/constants";
 import { KnowledgeBaseJobPayload } from "../types/KnowledgeBase";
 
-const KB_RETRY_ATTEMPTS = 4;
-
 const ERROR_SUMMARY_GENERIC = "Processing failed after multiple retries. Please re-submit the document.";
+const ERROR_SUMMARY_VALIDATION = "Document validation failed. Please check the submitted content and resubmit.";
 
 @Processor(KB_INGESTION_QUEUE_NAME)
 export class KnowledgeBaseIngestionProcessor extends WorkerHost {
@@ -44,18 +43,19 @@ export class KnowledgeBaseIngestionProcessor extends WorkerHost {
     } catch (error) {
       const isValidationFailure = error instanceof BadRequestException;
       const errorName = error instanceof Error ? error.name : "UnknownError";
-      const isFinalAttempt = attempt >= KB_RETRY_ATTEMPTS;
+      const isFinalAttempt = attempt >= KB_INGESTION_RETRY_ATTEMPTS;
 
       this.logger.error(
         `[documentId=${documentId} accountId=${accountId} errorType=${errorName} attempt=${attempt} isFinalAttempt=${isFinalAttempt}] Job failed`,
       );
 
       if (isValidationFailure) {
-        const safeMessage = error.message ?? "Document validation failed.";
+        // Defense in depth: never echo error.message into a persisted field. The current
+        // BadRequestException messages are hardcoded and safe, but a future contributor
+        // throwing with user-supplied or external-API content would otherwise leak it.
+        await this.ingestionService.updateDocumentStatus(accountId, documentId, "failed", ERROR_SUMMARY_VALIDATION);
 
-        await this.ingestionService.updateDocumentStatus(accountId, documentId, "failed", safeMessage);
-
-        throw new UnrecoverableError(safeMessage);
+        throw new UnrecoverableError(ERROR_SUMMARY_VALIDATION);
       }
 
       if (isFinalAttempt) {
