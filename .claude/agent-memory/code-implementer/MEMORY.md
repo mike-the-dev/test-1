@@ -1,3 +1,4 @@
 - [Core Service Foundation](project_core_foundation.md) — What was built in the initial foundation: config, DynamoDB, Anthropic, Discord layers
 - [DynamoDB test client construction](feedback_dynamodb_test_client.md) — Use `DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" }))` in test modules; `from({} as never)` crashes at runtime
 - [NestJS 11 multi-provider pattern](feedback_nestjs_multi_provider.md) — NestJS 11 does not support `multi: true` on custom token providers — use `useFactory` to collect instances into an array instead
+- [KB Phase 7c BullMQ pattern](project_kb_phase7c_bullmq.md) — How BullMQ processor, queue injection, and test mocking are wired into the KB ingestion pipeline

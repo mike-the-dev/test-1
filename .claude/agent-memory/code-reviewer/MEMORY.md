@@ -1,2 +1,3 @@
 - [Core Service Foundation Architecture](project_architecture.md) — Three-layer config pattern, DynamoDB/Anthropic/Discord service design, and orchestration flow decisions
 - [Structured Logging Conventions](project_logging_conventions.md) — Logger field placement, log level gating, privacy rules, key=value format, and try/catch re-throw pattern
+- [Knowledge Base Phase 4 ingestion decisions](project_kb_phase4_notes.md) — User-approved overrides: A#-prefix handling, createPayloadIndex placement, type renames, no startup dimension guard

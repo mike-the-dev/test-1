@@ -49,6 +49,25 @@ The channel-agnostic refactor decouples Discord from session identity so other f
 camelCase names: `firstName`, `lastName`, `email`, `phone`, `company`, `updatedAt`, `createdAt`.
 The two-letter aliases (`fn`, `em`, etc.) are DynamoDB expression aliases only — not stored names.
 
+**Phase 2 addition — Voyage AI embedding service:** `VoyageConfigService` + `VoyageService`
+follow the exact `AnthropicConfigService` / `AnthropicService` pattern. SDK: `voyageai@0.2.1`
+(official TS SDK, `VoyageAIClient` constructor). Max batch: 1000 (NOT 128 as originally assumed).
+`voyage-3-large` default model, 1024-dim output. `maxRetries: 0` must be passed to constructor
+to disable SDK's built-in retry. Batch splitting: chunk at 1000, sequential calls, sort by
+`.index` before extracting. The `VOYAGE_API_KEY` env var is optional in schema (local dev w/o key
+is acceptable).
+
+**Phase 8a — Sentry error tracking (planned):** Uses `@sentry/nestjs@10.50.0`. Init via
+`src/instrument.ts` imported as first line of `main.ts` (before NestFactory). Conditional on
+`SENTRY_DSN` being set — no-op in local dev. `SentryService` wrapper exposes
+`captureException/captureMessage/addBreadcrumb`; all no-op when `Sentry.isInitialized()` is
+false. `SentryModule.forRoot()` + `SentryGlobalFilter` (as APP_FILTER) registered in AppModule.
+`BadRequestException` suppressed in `beforeSend` (not per-call-site). PII scrubbed recursively
+in `beforeSend` via a named `buildBeforeSend()` helper (exported for unit testing).
+`useFactory` providers (like QdrantProvider) receive SentryService via the `inject` array.
+Ingestion processor captures only on `isFinalAttempt && !isValidationFailure` to avoid
+duplicate events per retry.
+
 **How to apply:** When planning new features, check which transport they arrive on and model
 the controller/service after the Discord or email transport-layer pattern. All session DB access
 goes through `ChatSessionService` (history) and `IdentityService` (external ID → ULID). The
