@@ -11,6 +11,7 @@ export interface SlackAlertPayload {
 export interface SlackAlertConversationStartedInput {
   accountId: string;
   sessionUlid: string;
+  startedAt: Date;
 }
 
 export interface SlackAlertCartCreatedInput {

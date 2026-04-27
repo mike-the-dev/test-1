@@ -57,7 +57,7 @@ describe("SlackAlertService", () => {
     });
 
     it("notifyConversationStarted does not call fetch when webhookUrl is undefined", async () => {
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       expect(fetchSpy).not.toHaveBeenCalled();
     });
@@ -84,7 +84,7 @@ describe("SlackAlertService", () => {
     });
 
     it("calls fetch with POST and application/json content-type", async () => {
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       const init = fetchSpy.mock.calls[0][1];
@@ -93,7 +93,7 @@ describe("SlackAlertService", () => {
     });
 
     it("body contains text fallback and blocks with header '🟢 New conversation started'", async () => {
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       expect(body.text).toBe("🟢 New conversation started");
@@ -103,7 +103,7 @@ describe("SlackAlertService", () => {
     });
 
     it("body blocks contain accountId and sessionUlid", async () => {
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       const body = JSON.parse(String(fetchSpy.mock.calls[0][1].body));
       const bodyStr = JSON.stringify(body.blocks);
@@ -121,7 +121,7 @@ describe("SlackAlertService", () => {
         text: jest.fn().mockResolvedValue("too_many_requests"),
       } as unknown as Response);
 
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       const allLogMessages = [
         ...logSpy.mock.calls.map((c) => String(c[0])),
@@ -139,7 +139,7 @@ describe("SlackAlertService", () => {
 
     it("resolves without error when fetch returns 200 ok", async () => {
       await expect(
-        service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID }),
+        service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() }),
       ).resolves.toBeUndefined();
     });
   });
@@ -228,7 +228,7 @@ describe("SlackAlertService", () => {
         text: jest.fn().mockResolvedValue("too_many_requests"),
       } as unknown as Response);
 
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       expect(mockSentryService.captureException).toHaveBeenCalledTimes(1);
       const context = mockSentryService.captureException.mock.calls[0][1];
@@ -251,7 +251,7 @@ describe("SlackAlertService", () => {
       fetchSpy.mockRejectedValueOnce(new TypeError("network down"));
 
       await expect(
-        service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID }),
+        service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() }),
       ).resolves.toBeUndefined();
     });
 
@@ -260,7 +260,7 @@ describe("SlackAlertService", () => {
 
       fetchSpy.mockRejectedValueOnce(new TypeError("network error"));
 
-      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID });
+      await service.notifyConversationStarted({ accountId: ACCOUNT_ID, sessionUlid: SESSION_ULID, startedAt: new Date() });
 
       expect(errorSpy).toHaveBeenCalledTimes(1);
       const logMsg = String(errorSpy.mock.calls[0][0]);

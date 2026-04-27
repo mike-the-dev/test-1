@@ -76,6 +76,7 @@ export class WebChatController {
       this.slackAlertService.notifyConversationStarted({
         accountId: accountUlid,
         sessionUlid: sessionResult.sessionUlid,
+        startedAt: new Date(),
       }).catch(() => undefined);
     }
 

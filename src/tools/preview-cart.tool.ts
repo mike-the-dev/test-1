@@ -510,9 +510,7 @@ export class PreviewCartTool implements ChatTool {
       lines,
     };
 
-    // Step 12 — fire Slack alert if cart has items.
-    // cartTotal is summed from cartItem.total values, which are stored as integer cents
-    // per the GuestCart contract (see services-import.json). Do not multiply by 100 here.
+    // Step 12 — fire Slack alert if cart has items
     if (itemCount > 0) {
       this.slackAlertService.notifyCartCreated({
         accountId: accountUlid,
