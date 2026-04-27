@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { DiscoveryModule } from "@nestjs/core";
+import { BullModule } from "@nestjs/bullmq";
 
 import { AppController } from "./app.controller";
 import { AppService } from "./app.service";
@@ -37,6 +38,8 @@ import { SendgridWebhookController } from "./controllers/sendgrid-webhook.contro
 import { WebChatController } from "./controllers/web-chat.controller";
 import { KnowledgeBaseEnrichmentService } from "./services/knowledge-base-enrichment.service";
 import { KnowledgeBaseIngestionService } from "./services/knowledge-base-ingestion.service";
+import { KnowledgeBaseConfigService } from "./services/knowledge-base-config.service";
+import { KnowledgeBaseIngestionProcessor } from "./processors/knowledge-base-ingestion.processor";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
 
 @Module({
@@ -48,6 +51,18 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
       validate,
     }),
     DiscoveryModule,
+    BullModule.forRootAsync({
+      inject: [KnowledgeBaseConfigService],
+      useFactory: (config: KnowledgeBaseConfigService) => ({
+        connection: {
+          host: config.redisHost,
+          port: config.redisPort,
+        },
+      }),
+    }),
+    BullModule.registerQueue({
+      name: "knowledge-base-ingestion",
+    }),
   ],
   controllers: [AppController, SendgridWebhookController, WebChatController, KnowledgeBaseController],
   providers: [
@@ -81,6 +96,8 @@ import { OriginAllowlistService } from "./services/origin-allowlist.service";
     OriginAllowlistService,
     KnowledgeBaseEnrichmentService,
     KnowledgeBaseIngestionService,
+    KnowledgeBaseConfigService,
+    KnowledgeBaseIngestionProcessor,
   ],
 })
 export class AppModule {}

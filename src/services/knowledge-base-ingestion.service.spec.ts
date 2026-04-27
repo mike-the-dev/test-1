@@ -1,7 +1,7 @@
 import { BadRequestException, InternalServerErrorException, Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { mockClient } from "aws-sdk-client-mock";
 
 import { KnowledgeBaseIngestionService } from "./knowledge-base-ingestion.service";
@@ -697,6 +697,177 @@ describe("KnowledgeBaseIngestionService", () => {
       await expect(service.deleteDocument({ accountId: ACCOUNT_ID, externalId: "ext-001" })).rejects.toThrow(InternalServerErrorException);
 
       expect(mockQdrantClient.delete).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // lookupExistingDocument (public — Phase 7c)
+  // -------------------------------------------------------------------------
+
+  describe("lookupExistingDocument — returns full record when found", () => {
+    it("returns full KnowledgeBaseDocumentRecord when document exists", async () => {
+      const fullRecord = {
+        PK: `A#${ACCOUNT_ID}`,
+        SK: `KB#DOC#${DOCUMENT_ID}`,
+        entity: "KNOWLEDGE_BASE_DOCUMENT",
+        document_id: DOCUMENT_ID,
+        account_id: ACCOUNT_ID,
+        external_id: "ext-001",
+        title: "Test Document",
+        source_type: "pdf",
+        status: "ready",
+        chunk_count: 3,
+        _createdAt_: "2026-01-01T00:00:00.000Z",
+        _lastUpdated_: "2026-01-02T00:00:00.000Z",
+      };
+
+      ddbMock.on(QueryCommand).resolves({ Items: [fullRecord] });
+
+      const result = await service.lookupExistingDocument(ACCOUNT_ID, "ext-001");
+
+      expect(result).not.toBeNull();
+      expect(result?.document_id).toBe(DOCUMENT_ID);
+      expect(result?.account_id).toBe(ACCOUNT_ID);
+      expect(result?.status).toBe("ready");
+      expect(result?.chunk_count).toBe(3);
+      expect(result?._createdAt_).toBe("2026-01-01T00:00:00.000Z");
+    });
+
+    it("returns null when document does not exist", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const result = await service.lookupExistingDocument(ACCOUNT_ID, "no-such-doc");
+
+      expect(result).toBeNull();
+    });
+
+    it("throws InternalServerErrorException on DDB query failure", async () => {
+      ddbMock.on(QueryCommand).rejects(new Error("DDB connection refused"));
+
+      await expect(service.lookupExistingDocument(ACCOUNT_ID, "ext-001")).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // writePendingRecord (Phase 7c)
+  // -------------------------------------------------------------------------
+
+  describe("writePendingRecord — creates a pending DDB record", () => {
+    it("calls PutCommand with status: pending, correct PK/SK, and no chunk_count", async () => {
+      await service.writePendingRecord(
+        DOCUMENT_ID,
+        ACCOUNT_ID,
+        { externalId: "ext-001", title: "Test Document", sourceType: "pdf" },
+        "2026-01-01T00:00:00.000Z",
+      );
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      expect(putCalls).toHaveLength(1);
+
+      const item: Record<string, unknown> = putCalls[0].args[0].input.Item ?? {};
+      expect(item.PK).toBe(`A#${ACCOUNT_ID}`);
+      expect(item.SK).toBe(`KB#DOC#${DOCUMENT_ID}`);
+      expect(item.status).toBe("pending");
+      expect(item.document_id).toBe(DOCUMENT_ID);
+      expect(item.account_id).toBe(ACCOUNT_ID);
+      expect(item.entity).toBe("KNOWLEDGE_BASE_DOCUMENT");
+      expect(item.title).toBe("Test Document");
+      expect(item.source_type).toBe("pdf");
+      expect(item._createdAt_).toBe("2026-01-01T00:00:00.000Z");
+      expect(item._lastUpdated_).toBe("2026-01-01T00:00:00.000Z");
+      expect(item).not.toHaveProperty("chunk_count");
+    });
+
+    it("includes mime_type in the pending record when provided", async () => {
+      await service.writePendingRecord(
+        DOCUMENT_ID,
+        ACCOUNT_ID,
+        { externalId: "ext-001", title: "Test Document", sourceType: "pdf", mimeType: "application/pdf" },
+        "2026-01-01T00:00:00.000Z",
+      );
+
+      const item: Record<string, unknown> = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item ?? {};
+      expect(item.mime_type).toBe("application/pdf");
+    });
+
+    it("omits mime_type from the pending record when not provided", async () => {
+      await service.writePendingRecord(
+        DOCUMENT_ID,
+        ACCOUNT_ID,
+        { externalId: "ext-001", title: "Test Document", sourceType: "pdf" },
+        "2026-01-01T00:00:00.000Z",
+      );
+
+      const item: Record<string, unknown> = ddbMock.commandCalls(PutCommand)[0].args[0].input.Item ?? {};
+      expect(item).not.toHaveProperty("mime_type");
+    });
+
+    it("throws InternalServerErrorException when PutCommand fails", async () => {
+      ddbMock.on(PutCommand).rejects(new Error("DDB throughput exceeded"));
+
+      await expect(
+        service.writePendingRecord(
+          DOCUMENT_ID,
+          ACCOUNT_ID,
+          { externalId: "ext-001", title: "Test Document", sourceType: "pdf" },
+          "2026-01-01T00:00:00.000Z",
+        ),
+      ).rejects.toThrow(InternalServerErrorException);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // updateDocumentStatus (Phase 7c)
+  // -------------------------------------------------------------------------
+
+  describe("updateDocumentStatus — transitions status via UpdateCommand", () => {
+    beforeEach(() => {
+      ddbMock.on(UpdateCommand).resolves({});
+    });
+
+    it("calls UpdateCommand with status=processing and _lastUpdated_ when transitioning to processing", async () => {
+      await service.updateDocumentStatus(ACCOUNT_ID, DOCUMENT_ID, "processing");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const input = updateCalls[0].args[0].input;
+      expect(input.Key).toEqual({ PK: `A#${ACCOUNT_ID}`, SK: `KB#DOC#${DOCUMENT_ID}` });
+      expect(input.UpdateExpression).toBe("SET #status = :status, #lastUpdated = :now");
+      expect(input.ExpressionAttributeValues![":status"]).toBe("processing");
+      expect(typeof input.ExpressionAttributeValues![":now"]).toBe("string");
+      expect(input.ExpressionAttributeValues).not.toHaveProperty(":errorSummary");
+    });
+
+    it("calls UpdateCommand with status=failed and error_summary when transitioning to failed", async () => {
+      await service.updateDocumentStatus(ACCOUNT_ID, DOCUMENT_ID, "failed", "Voyage API call failed");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const input = updateCalls[0].args[0].input;
+      expect(input.UpdateExpression).toBe(
+        "SET #status = :status, #lastUpdated = :now, error_summary = :errorSummary",
+      );
+      expect(input.ExpressionAttributeValues![":status"]).toBe("failed");
+      expect(input.ExpressionAttributeValues![":errorSummary"]).toBe("Voyage API call failed");
+    });
+
+    it("calls UpdateCommand without error_summary when transitioning to ready", async () => {
+      await service.updateDocumentStatus(ACCOUNT_ID, DOCUMENT_ID, "ready");
+
+      const input = ddbMock.commandCalls(UpdateCommand)[0].args[0].input;
+      expect(input.UpdateExpression).toBe("SET #status = :status, #lastUpdated = :now");
+      expect(input.ExpressionAttributeValues![":status"]).toBe("ready");
+      expect(input.ExpressionAttributeValues).not.toHaveProperty(":errorSummary");
+    });
+
+    it("throws InternalServerErrorException when UpdateCommand fails", async () => {
+      ddbMock.on(UpdateCommand).rejects(new Error("DDB error"));
+
+      await expect(service.updateDocumentStatus(ACCOUNT_ID, DOCUMENT_ID, "processing")).rejects.toThrow(
+        InternalServerErrorException,
+      );
     });
   });
 });

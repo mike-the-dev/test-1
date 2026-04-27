@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
-import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import { randomUUID } from "crypto";
 import { ulid } from "ulid";
@@ -17,7 +17,9 @@ import {
   KnowledgeBaseDocumentRecord,
   KnowledgeBaseIngestDocumentInput,
   KnowledgeBaseIngestDocumentResult,
+  KnowledgeBaseJobPayload,
   KnowledgeBasePointPayload,
+  KnowledgeBaseStatus,
 } from "../types/KnowledgeBase";
 
 const KB_DOCUMENT_ENTITY = "KNOWLEDGE_BASE_DOCUMENT";
@@ -47,7 +49,7 @@ export class KnowledgeBaseIngestionService {
     const lastUpdated = new Date().toISOString();
 
     this.logger.log(
-      `Ingesting document [accountId=${input.accountId} externalId=${input.externalId} textLength=${input.text.length}]`,
+      `[accountId=${input.accountId} externalId=${input.externalId} textLength=${input.text.length}] Ingesting document`,
     );
 
     // Generate a candidate documentId — used only if the lookup below finds no existing record.
@@ -58,8 +60,8 @@ export class KnowledgeBaseIngestionService {
 
     // Step 4 — branch: update vs. create.
     const isUpdate = existing !== null;
-    const documentId = isUpdate ? existing.documentId : documentIdCandidate;
-    const createdAt = isUpdate ? existing.createdAt : lastUpdated;
+    const documentId = isUpdate ? existing.document_id : documentIdCandidate;
+    const createdAt = isUpdate ? existing._createdAt_ : lastUpdated;
 
     // Step 5 — chunk → embed → ensure collection + index.
     const chunks = chunkText(input.text);
@@ -68,7 +70,7 @@ export class KnowledgeBaseIngestionService {
       throw new BadRequestException("Document text produced no content after chunking. Ensure the text field is not empty or whitespace-only.");
     }
 
-    this.logger.debug(`Chunked document [documentId=${documentId} chunkCount=${chunks.length}]`);
+    this.logger.debug(`[documentId=${documentId} chunkCount=${chunks.length}] Chunked document`);
 
     // Step 5b — enrich each chunk with Claude (SUMMARY + QUESTIONS + KEY TERMS).
     // Per-chunk failures are isolated: enrichChunk returns null on failure.
@@ -78,13 +80,13 @@ export class KnowledgeBaseIngestionService {
 
     if (failedCount === chunks.length) {
       this.logger.warn(
-        `All chunk enrichments failed — embedding without enrichment [documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}]`,
+        `[documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}] All chunk enrichments failed — embedding without enrichment`,
       );
     }
 
     if (failedCount > chunks.length / 2 && failedCount < chunks.length) {
       this.logger.warn(
-        `Majority of chunk enrichments failed [documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}]`,
+        `[documentId=${documentId} chunkCount=${chunks.length} failedCount=${failedCount}] Majority of chunk enrichments failed`,
       );
     }
 
@@ -116,25 +118,116 @@ export class KnowledgeBaseIngestionService {
 
     const durationMs = Date.now() - startedAt;
     this.logger.log(
-      `Ingestion complete [documentId=${documentId} chunkCount=${chunks.length} durationMs=${durationMs} isUpdate=${isUpdate}]`,
+      `[documentId=${documentId} chunkCount=${chunks.length} durationMs=${durationMs} isUpdate=${isUpdate}] Ingestion complete`,
     );
 
     // Step 9 — return result.
     return { document_id: documentId, chunk_count: chunks.length, status: "ready", _createdAt_: createdAt, _lastUpdated_: lastUpdated };
   }
 
+  /**
+   * Writes a "pending" DynamoDB record for a newly enqueued ingestion job.
+   * Called at POST time before the job is enqueued. Uses PutCommand — safe to
+   * overwrite an existing record (update path reuses the same PK+SK).
+   */
+  async writePendingRecord(
+    documentId: string,
+    accountId: string,
+    payload: Pick<KnowledgeBaseJobPayload, "externalId" | "title" | "sourceType" | "mimeType">,
+    createdAt: string,
+  ): Promise<void> {
+    const item: Omit<KnowledgeBaseDocumentRecord, "chunk_count" | "error_summary"> & { chunk_count?: number } = {
+      PK: `${KB_PK_PREFIX}${accountId}`,
+      SK: `${KB_SK_PREFIX}${documentId}`,
+      entity: KB_DOCUMENT_ENTITY,
+      document_id: documentId,
+      account_id: accountId,
+      external_id: payload.externalId,
+      title: payload.title,
+      source_type: payload.sourceType,
+      ...(payload.mimeType ? { mime_type: payload.mimeType } : {}),
+      status: "pending",
+      _createdAt_: createdAt,
+      _lastUpdated_: createdAt,
+    };
+
+    try {
+      await this.dynamoDb.send(
+        new PutCommand({ TableName: this.databaseConfig.conversationsTable, Item: item }),
+      );
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(
+        `[errorType=${errorName} documentId=${documentId} accountId=${accountId}] Failed to write pending DynamoDB record`,
+      );
+      throw new InternalServerErrorException("Failed to record document metadata.");
+    }
+  }
+
+  /**
+   * Updates the status (and optionally error_summary) of an existing DDB document record.
+   * Uses UpdateCommand to avoid stomping on other fields (title, text, chunk_count, etc.).
+   */
+  async updateDocumentStatus(
+    accountId: string,
+    documentId: string,
+    status: KnowledgeBaseStatus,
+    errorSummary?: string,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+
+    const hasError = status === "failed" && errorSummary !== undefined;
+
+    const updateExpression = hasError
+      ? "SET #status = :status, #lastUpdated = :now, error_summary = :errorSummary"
+      : "SET #status = :status, #lastUpdated = :now";
+
+    const expressionAttributeValues: Record<string, unknown> = {
+      ":status": status,
+      ":now": now,
+    };
+
+    if (hasError) {
+      expressionAttributeValues[":errorSummary"] = errorSummary;
+    }
+
+    try {
+      await this.dynamoDb.send(
+        new UpdateCommand({
+          TableName: this.databaseConfig.conversationsTable,
+          Key: {
+            PK: `${KB_PK_PREFIX}${accountId}`,
+            SK: `${KB_SK_PREFIX}${documentId}`,
+          },
+          UpdateExpression: updateExpression,
+          ExpressionAttributeNames: {
+            "#status": "status",
+            "#lastUpdated": "_lastUpdated_",
+          },
+          ExpressionAttributeValues: expressionAttributeValues,
+        }),
+      );
+    } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      this.logger.error(
+        `[errorType=${errorName} accountId=${accountId} documentId=${documentId} status=${status}] Failed to update document status`,
+      );
+      throw new InternalServerErrorException("Failed to update document status.");
+    }
+  }
+
   async deleteDocument(input: KnowledgeBaseDeleteDocumentInput): Promise<void> {
-    this.logger.log(`Deleting document [accountId=${input.accountId} externalId=${input.externalId}]`);
+    this.logger.log(`[accountId=${input.accountId} externalId=${input.externalId}] Deleting document`);
 
     // Step 2 — look up the document.
     const existing = await this.lookupExistingDocument(input.accountId, input.externalId);
 
     if (existing === null) {
-      this.logger.log(`Document not found, no-op [accountId=${input.accountId} externalId=${input.externalId} action=noop]`);
+      this.logger.log(`[accountId=${input.accountId} externalId=${input.externalId} action=noop] Document not found, no-op`);
       return;
     }
 
-    const { documentId } = existing;
+    const documentId = existing.document_id;
 
     // Step 3 — delete all Qdrant chunks for this document.
     await this.deleteQdrantPoints(input.accountId, documentId);
@@ -153,17 +246,17 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to delete DynamoDB document record [errorType=${errorName} accountId=${input.accountId} documentId=${documentId}]`,
+        `[errorType=${errorName} accountId=${input.accountId} documentId=${documentId}] Failed to delete DynamoDB document record`,
       );
       throw new InternalServerErrorException("Failed to delete document metadata.");
     }
 
-    this.logger.log(`Document deleted [accountId=${input.accountId} documentId=${documentId} action=deleted]`);
+    this.logger.log(`[accountId=${input.accountId} documentId=${documentId} action=deleted] Document deleted`);
   }
 
   /**
    * Looks up an existing KB document record by (accountId, externalId).
-   * Returns { documentId, createdAt } if found, or null if not found.
+   * Returns the full KnowledgeBaseDocumentRecord if found, or null if not found.
    * Throws InternalServerErrorException on DynamoDB error.
    *
    * Uses a Query on PK = A#<accountId> with begins_with(SK, "KB#DOC#") and a
@@ -171,11 +264,11 @@ export class KnowledgeBaseIngestionService {
    * phase can add one when accounts host > ~500 documents or p99 lookup latency
    * exceeds 10ms in profiling.
    */
-  private async lookupExistingDocument(
+  async lookupExistingDocument(
     accountId: string,
     externalId: string,
-  ): Promise<{ documentId: string; createdAt: string } | null> {
-    this.logger.debug(`Looking up existing document [accountId=${accountId} externalId=${externalId}]`);
+  ): Promise<KnowledgeBaseDocumentRecord | null> {
+    this.logger.debug(`[accountId=${accountId} externalId=${externalId}] Looking up existing document`);
 
     try {
       const result = await this.dynamoDb.send(
@@ -196,12 +289,11 @@ export class KnowledgeBaseIngestionService {
         return null;
       }
 
-      const record = result.Items[0] as unknown as KnowledgeBaseDocumentRecord;
-      return { documentId: record.document_id, createdAt: record._createdAt_ };
+      return result.Items[0] as unknown as KnowledgeBaseDocumentRecord;
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to query DynamoDB for existing document [errorType=${errorName} accountId=${accountId} externalId=${externalId}]`,
+        `[errorType=${errorName} accountId=${accountId} externalId=${externalId}] Failed to query DynamoDB for existing document`,
       );
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
@@ -225,7 +317,7 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to delete Qdrant points [errorType=${errorName} accountId=${accountId} documentId=${documentId}]`,
+        `[errorType=${errorName} accountId=${accountId} documentId=${documentId}] Failed to delete Qdrant points`,
       );
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
@@ -239,7 +331,7 @@ export class KnowledgeBaseIngestionService {
       exists = result.exists;
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
-      this.logger.error(`Failed to check Qdrant collection existence [errorType=${errorName}]`);
+      this.logger.error(`[errorType=${errorName}] Failed to check Qdrant collection existence`);
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
 
@@ -258,7 +350,7 @@ export class KnowledgeBaseIngestionService {
         return;
       }
       const errorName = error instanceof Error ? error.name : "UnknownError";
-      this.logger.error(`Failed to create Qdrant collection [errorType=${errorName}]`);
+      this.logger.error(`[errorType=${errorName}] Failed to create Qdrant collection`);
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
   }
@@ -277,7 +369,7 @@ export class KnowledgeBaseIngestionService {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
       if (!message.includes("already exists")) {
         const errorName = error instanceof Error ? error.name : "UnknownError";
-        this.logger.warn(`Failed to create payload index on account_id [errorType=${errorName}]`);
+        this.logger.warn(`[errorType=${errorName}] Failed to create payload index on account_id`);
       }
     }
   }
@@ -315,7 +407,7 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to upsert Qdrant points [errorType=${errorName} documentId=${documentId}]`,
+        `[errorType=${errorName} documentId=${documentId}] Failed to upsert Qdrant points`,
       );
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
@@ -328,7 +420,7 @@ export class KnowledgeBaseIngestionService {
     createdAt: string,
     lastUpdated: string,
   ): Promise<void> {
-    const item = {
+    const item: KnowledgeBaseDocumentRecord = {
       PK: `${KB_PK_PREFIX}${input.accountId}`,
       SK: `${KB_SK_PREFIX}${documentId}`,
       entity: KB_DOCUMENT_ENTITY,
@@ -342,7 +434,7 @@ export class KnowledgeBaseIngestionService {
       status: "ready",
       _createdAt_: createdAt,
       _lastUpdated_: lastUpdated,
-    } satisfies KnowledgeBaseDocumentRecord;
+    };
 
     try {
       await this.dynamoDb.send(
@@ -351,7 +443,7 @@ export class KnowledgeBaseIngestionService {
     } catch (error) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
-        `Failed to write DynamoDB document record [errorType=${errorName} documentId=${documentId}]`,
+        `[errorType=${errorName} documentId=${documentId}] Failed to write DynamoDB document record`,
       );
       throw new InternalServerErrorException("Failed to record document metadata.");
     }

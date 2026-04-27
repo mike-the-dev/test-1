@@ -38,6 +38,8 @@ export const envSchema = z
     WEB_CHAT_WIDGET_ORIGINS: z.string().optional(),
     QDRANT_URL: z.string().url(),
     QDRANT_API_KEY: z.string().optional(),
+    REDIS_HOST: z.string().default("localhost"),
+    REDIS_PORT: z.coerce.number().default(6379),
   })
   .superRefine((data, ctx) => {
     if (data.WEB_CHAT_CORS_ALLOW_ALL === true && data.APP_ENV === "prod") {

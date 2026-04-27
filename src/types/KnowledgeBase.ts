@@ -36,7 +36,10 @@ export interface KnowledgeBaseIngestDocumentInput {
   mimeType?: string;
 }
 
-/** Response body returned on successful ingestion (201 Created). */
+/** Status state machine for KB documents (Phase 7c). */
+export type KnowledgeBaseStatus = "pending" | "processing" | "ready" | "failed";
+
+/** Response body returned on successful ingestion (201 Created — internal use; service still returns this). */
 export interface KnowledgeBaseIngestDocumentResult {
   document_id: string;
   chunk_count: number;
@@ -45,6 +48,45 @@ export interface KnowledgeBaseIngestDocumentResult {
   _createdAt_: string;
   /** ISO-8601 timestamp set on every create and every update. */
   _lastUpdated_: string;
+}
+
+/** 202 Accepted response from POST /knowledge-base/documents (Phase 7c). */
+export interface KnowledgeBaseIngestAcceptedResult {
+  document_id: string;
+  status: "pending";
+  _createdAt_: string;
+}
+
+/** 200 response from GET /knowledge-base/documents (Phase 7c). */
+export interface KnowledgeBaseGetDocumentResult {
+  document_id: string;
+  account_id: string;
+  external_id: string;
+  title: string;
+  source_type: KnowledgeBaseSourceType;
+  mime_type?: string;
+  /** Absent when status is "pending" or "processing". */
+  chunk_count?: number;
+  status: KnowledgeBaseStatus;
+  _createdAt_: string;
+  _lastUpdated_: string;
+  /** Only present when status === "failed". */
+  error_summary?: string;
+}
+
+/** Job payload enqueued by the POST controller for the BullMQ worker (Phase 7c). */
+export interface KnowledgeBaseJobPayload {
+  /** Raw 26-character ULID; A# prefix already stripped. */
+  accountId: string;
+  externalId: string;
+  title: string;
+  text: string;
+  sourceType: KnowledgeBaseSourceType;
+  mimeType?: string;
+  /** Pre-generated or reused at POST time so the DDB record exists before the job runs. */
+  documentId: string;
+  /** ISO-8601; preserved from existing record on the update path. */
+  createdAt: string;
 }
 
 /** DynamoDB record written for each ingested document. */
@@ -60,12 +102,15 @@ export interface KnowledgeBaseDocumentRecord {
   title: string;
   source_type: KnowledgeBaseSourceType;
   mime_type?: string;
-  chunk_count: number;
-  status: "ready";
+  /** Absent on pending/processing records; set when status transitions to ready. */
+  chunk_count?: number;
+  status: KnowledgeBaseStatus;
   /** ISO-8601; set on create, preserved on update. */
   _createdAt_: string;
   /** ISO-8601; set on every create and update. */
   _lastUpdated_: string;
+  /** Short sanitized message; only present when status === "failed". */
+  error_summary?: string;
 }
 
 /** Payload stored on each Qdrant point (one per chunk). */

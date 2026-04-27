@@ -28,3 +28,12 @@ export const deleteDocumentSchema = z.object({
 });
 
 export type DeleteDocumentBody = z.infer<typeof deleteDocumentSchema>;
+
+export const getDocumentSchema = z.object({
+  account_id: z
+    .string()
+    .regex(accountIdRegex, "account_id must be an A#-prefixed 26-character ULID"),
+  external_id: z.string().min(1, "external_id must not be empty"),
+});
+
+export type GetDocumentQuery = z.infer<typeof getDocumentSchema>;

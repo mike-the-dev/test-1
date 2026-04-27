@@ -42,6 +42,10 @@ const configuration = () => ({
     url: process.env.QDRANT_URL || "",
     apiKey: process.env.QDRANT_API_KEY,
   },
+  redis: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: Number(process.env.REDIS_PORT || 6379),
+  },
 });
 
 export default configuration;
