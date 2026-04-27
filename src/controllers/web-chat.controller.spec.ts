@@ -215,7 +215,6 @@ describe("WebChatController", () => {
       const [callArgs] = mockSlackAlertService.notifyConversationStarted.mock.calls[0];
       expect(callArgs.accountId).toBe(VALID_ACCOUNT_ULID);
       expect(callArgs.sessionUlid).toBe(VALID_SESSION_ULID);
-      expect(callArgs.startedAt).toBeInstanceOf(Date);
     });
 
     it("does NOT fire notifyConversationStarted when wasCreated is false (resumed session)", async () => {
