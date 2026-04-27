@@ -18,6 +18,16 @@ function scrubRecord(record: Record<string, unknown>): void {
   for (const key of Object.keys(record)) {
     if (PII_KEYS.has(key)) {
       record[key] = "[Filtered]";
+      continue;
+    }
+
+    // Defense in depth: recurse into nested plain object literals so a future
+    // contributor passing an extras shape like `{ payload: { message: "..." } }`
+    // still gets the inner `message` scrubbed. Plain-object detection via
+    // Object.getPrototypeOf avoids walking arrays, Maps, class instances, etc.
+    const nested = record[key];
+    if (nested !== null && nested !== undefined && Object.getPrototypeOf(nested) === Object.prototype) {
+      scrubRecord(nested as unknown as Record<string, unknown>);
     }
   }
 }
@@ -40,6 +50,11 @@ function scrubEvent(event: ErrorEvent): void {
   }
 
   if (event.request) {
+    // Intentional deviation from the plan: clear request.data entirely rather than
+    // recursively scrubbing PII keys. Justification: request.data is `unknown`-typed
+    // in the Sentry SDK, so a targeted recursive scrub would require unsafe type
+    // assertions on every read. For our medical/healthcare client verticals, the
+    // small loss of non-PII diagnostic context is worth the defense-in-depth gain.
     event.request.data = undefined;
   }
 

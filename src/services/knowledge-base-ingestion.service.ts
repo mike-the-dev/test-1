@@ -433,7 +433,7 @@ export class KnowledgeBaseIngestionService {
         `[errorType=${errorName} documentId=${documentId}] Failed to upsert Qdrant points`,
       );
       this.sentryService.captureException(error, {
-        tags: { category: "qdrant", document_id: documentId },
+        tags: { category: "qdrant", account_id: input.accountId, document_id: documentId },
       });
       throw new InternalServerErrorException("Knowledge base storage is temporarily unavailable.");
     }
