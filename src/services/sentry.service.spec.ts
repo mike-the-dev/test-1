@@ -1,6 +1,7 @@
 import { Logger } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
 import { BadRequestException, InternalServerErrorException } from "@nestjs/common";
+import type { ErrorEvent, EventHint } from "@sentry/nestjs";
 
 import { SentryService } from "./sentry.service";
 import { buildBeforeSend } from "../instrument";
@@ -212,12 +213,12 @@ describe("SentryService — does not re-throw when SDK itself throws", () => {
 describe("buildBeforeSend — PII scrubbing and event filtering", () => {
   const beforeSend = buildBeforeSend();
 
-  function makeEvent(extra: Record<string, unknown> = {}): Parameters<ReturnType<typeof buildBeforeSend>>[0] {
-    return { extra } as Parameters<ReturnType<typeof buildBeforeSend>>[0];
+  function makeEvent(extra: Record<string, unknown> = {}): ErrorEvent {
+    return { type: undefined, extra };
   }
 
-  function makeHint(originalException: unknown): Parameters<ReturnType<typeof buildBeforeSend>>[1] {
-    return { originalException } as Parameters<ReturnType<typeof buildBeforeSend>>[1];
+  function makeHint(originalException: unknown): EventHint {
+    return { originalException };
   }
 
   it("returns null when hint.originalException is a BadRequestException", () => {
@@ -244,25 +245,25 @@ describe("buildBeforeSend — PII scrubbing and event filtering", () => {
   it("scrubs event.extra.message → [Filtered]", () => {
     const event = makeEvent({ message: "user chat message content" });
     beforeSend(event, makeHint(new Error("err")));
-    expect((event.extra as Record<string, unknown>).message).toBe("[Filtered]");
+    expect(event.extra!.message).toBe("[Filtered]");
   });
 
   it("scrubs event.extra.text → [Filtered]", () => {
     const event = makeEvent({ text: "document text content" });
     beforeSend(event, makeHint(new Error("err")));
-    expect((event.extra as Record<string, unknown>).text).toBe("[Filtered]");
+    expect(event.extra!.text).toBe("[Filtered]");
   });
 
   it("scrubs event.extra.chunk_text → [Filtered]", () => {
     const event = makeEvent({ chunk_text: "chunk content here" });
     beforeSend(event, makeHint(new Error("err")));
-    expect((event.extra as Record<string, unknown>).chunk_text).toBe("[Filtered]");
+    expect(event.extra!.chunk_text).toBe("[Filtered]");
   });
 
   it("scrubs event.extra.enrichment → [Filtered]", () => {
     const event = makeEvent({ enrichment: "enrichment data" });
     beforeSend(event, makeHint(new Error("err")));
-    expect((event.extra as Record<string, unknown>).enrichment).toBe("[Filtered]");
+    expect(event.extra!.enrichment).toBe("[Filtered]");
   });
 
   it("scrubs email, phone, firstName, lastName from extra", () => {
@@ -273,7 +274,7 @@ describe("buildBeforeSend — PII scrubbing and event filtering", () => {
       lastName: "Doe",
     });
     beforeSend(event, makeHint(new Error("err")));
-    const extra = event.extra as Record<string, unknown>;
+    const extra = event.extra!;
     expect(extra.email).toBe("[Filtered]");
     expect(extra.phone).toBe("[Filtered]");
     expect(extra.firstName).toBe("[Filtered]");
@@ -290,7 +291,7 @@ describe("buildBeforeSend — PII scrubbing and event filtering", () => {
       statusCode: "500",
     });
     beforeSend(event, makeHint(new Error("err")));
-    const extra = event.extra as Record<string, unknown>;
+    const extra = event.extra!;
     expect(extra.account_id).toBe("acct-001");
     expect(extra.document_id).toBe("doc-001");
     expect(extra.external_id).toBe("ext-001");
@@ -300,24 +301,26 @@ describe("buildBeforeSend — PII scrubbing and event filtering", () => {
   });
 
   it("scrubs PII keys nested inside event.contexts recursively", () => {
-    const event = {
+    const event: ErrorEvent = {
+      type: undefined,
       contexts: {
         request: {
           email: "secret@example.com",
           account_id: "acct-001",
         },
       },
-    } as Parameters<ReturnType<typeof buildBeforeSend>>[0];
+    };
 
     beforeSend(event, makeHint(new Error("err")));
 
-    expect((event.contexts as Record<string, Record<string, unknown>>).request.email).toBe("[Filtered]");
-    expect((event.contexts as Record<string, Record<string, unknown>>).request.account_id).toBe("acct-001");
+    expect(event.contexts!.request!.email).toBe("[Filtered]");
+    expect(event.contexts!.request!.account_id).toBe("acct-001");
   });
 
   it("returns null and logs a warning when beforeSend logic itself throws", () => {
     // Use a getter that throws to simulate a scrubbing error
-    const trickEvent = Object.defineProperty({} as Parameters<ReturnType<typeof buildBeforeSend>>[0], "extra", {
+    const base: ErrorEvent = { type: undefined };
+    const trickEvent = Object.defineProperty(base, "extra", {
       get() {
         throw new Error("Simulated scrub error");
       },

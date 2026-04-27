@@ -14,41 +14,39 @@ const PII_KEYS = new Set([
   "lastName",
 ]);
 
-function scrubValue(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(scrubValue);
-  }
-  if (value !== null && typeof value === "object") {
-    return scrubObject(value as Record<string, unknown>);
-  }
-  return value;
-}
-
-function scrubObject(obj: Record<string, unknown>): Record<string, unknown> {
-  for (const key of Object.keys(obj)) {
+function scrubRecord(record: Record<string, unknown>): void {
+  for (const key of Object.keys(record)) {
     if (PII_KEYS.has(key)) {
-      obj[key] = "[Filtered]";
-    } else {
-      obj[key] = scrubValue(obj[key]);
+      record[key] = "[Filtered]";
     }
   }
-  return obj;
+}
+
+function scrubContexts(contexts: Record<string, Record<string, unknown> | undefined>): void {
+  for (const context of Object.values(contexts)) {
+    if (context) {
+      scrubRecord(context);
+    }
+  }
 }
 
 function scrubEvent(event: ErrorEvent): void {
   if (event.extra) {
-    scrubObject(event.extra as Record<string, unknown>);
+    scrubRecord(event.extra);
   }
+
   if (event.contexts) {
-    scrubValue(event.contexts);
+    scrubContexts(event.contexts);
   }
-  if (event.request?.data) {
-    scrubValue(event.request.data as Record<string, unknown>);
+
+  if (event.request) {
+    event.request.data = undefined;
   }
+
   if (event.breadcrumbs) {
     for (const breadcrumb of event.breadcrumbs) {
       if (breadcrumb.data) {
-        scrubObject(breadcrumb.data as Record<string, unknown>);
+        scrubRecord(breadcrumb.data);
       }
     }
   }

@@ -1,10 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 import * as Sentry from "@sentry/nestjs";
 
-export interface SentryCaptureContext {
-  tags?: Record<string, string>;
-  extras?: Record<string, unknown>;
-}
+import { SentryCaptureContext } from "../types/Sentry";
 
 @Injectable()
 export class SentryService {
