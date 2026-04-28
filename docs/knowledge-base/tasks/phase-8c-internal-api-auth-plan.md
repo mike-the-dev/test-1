@@ -70,7 +70,7 @@ This matches the brief's locked contract exactly: length mismatch → `Unauthori
 | `src/controllers/knowledge-base.controller.ts` | Add `@UseGuards(InternalApiKeyGuard)` at the class level |
 | `src/controllers/knowledge-base.controller.spec.ts` | Add `InternalApiKeyGuard` mock to testing module; add one test per protected route asserting 401 when header is absent; update any existing request-based tests to include the header |
 | `src/app.module.ts` | Add `InternalApiAuthConfigService` to providers; `InternalApiKeyGuard` is NOT registered as a global provider — it is `@Injectable()` and is instantiated by NestJS's DI when the controller's guard array is resolved, so it needs to be in a module's providers |
-| `.env.local` | Replace the existing `KB_INTERNAL_API_KEY="__SECRET_KEY__"` placeholder with a clearly-fake but min-32-char local dev value |
+| `.env.local` | Set `KB_INTERNAL_API_KEY` to a clearly-fake but min-32-char local dev value (developer-managed file, not committed) |
 
 ### Review Only (no change)
 | File | Reason |
@@ -89,7 +89,7 @@ This matches the brief's locked contract exactly: length mismatch → `Unauthori
 - **`InternalApiKeyGuard` needs to be in a providers array** so NestJS DI can resolve its constructor injection of `InternalApiAuthConfigService`. The correct location is `src/app.module.ts`. This is consistent with how `SentryGlobalFilter` and all other injectable providers are registered.
 - **No middleware logs request headers.** `src/middleware/` does not exist in this codebase. `src/main.ts` has no `app.use()` calls for request logging middleware. No header redaction is needed outside of the Sentry scrubber.
 - **No Swagger/OpenAPI setup exists.** No `@nestjs/swagger` in `package.json`. Swagger additions are out of scope and moot.
-- **`KB_INTERNAL_API_KEY` is already present in `.env.local`** as `"__SECRET_KEY__"` (a placeholder value, 15 characters — does not meet the 32-char minimum). The implementer must replace it with a clearly-fake, min-32-char value. The `.env.schema.ts` change will cause boot failures if this is not updated simultaneously.
+- **`KB_INTERNAL_API_KEY` must be set in `.env.local`** to a clearly-fake, min-32-char local dev value before the schema change is applied — otherwise the app will refuse to boot locally. The `.env.local` file is developer-managed (gitignored) and is the developer's responsibility.
 - **HTTPS-only is an infrastructure assumption.** The guard does not verify TLS — that is enforced at the deployment layer (load balancer / reverse proxy). This assumption is documented in the guard source code comments.
 - **Per-account isolation is unaffected.** The guard answers only "is this caller trusted?" The `account_id` field in request bodies continues to answer "which account?" — both checks are orthogonal and independently enforced.
 - **Backward compatibility.** The only API surface change is that unauthenticated callers of `/knowledge-base/*` now receive 401 instead of being served. The upstream ecommerce API (the sole current caller) must be updated to send the `X-Internal-API-Key` header — this is an operations concern, not in scope for this phase, but must be communicated.
@@ -226,16 +226,9 @@ Full block added after line 56 (`slack: { ... }`), before the closing `});`.
 
 ### `.env.local`
 
-Replace the existing:
-```
-KB_INTERNAL_API_KEY="__SECRET_KEY__"
-```
-with:
-```
-KB_INTERNAL_API_KEY="local-dev-only-replace-in-real-envs-aaaaaaaaa"
-```
+The developer must ensure `KB_INTERNAL_API_KEY` is set to a clearly-fake, min-32-char local dev value (e.g., `local-dev-only-replace-in-real-envs-aaaaaaaaa` — 46 characters, unambiguously not a real secret). This must be in place at the same time as the schema change, because the schema change immediately enforces the `min(32)` constraint at boot.
 
-This value is exactly 46 characters (meets the `min(32)` constraint) and is unambiguously a local-dev placeholder. The implementer must update this at the same time as the schema change, because the schema change immediately makes the old 15-character placeholder fail validation at boot.
+`.env.local` is gitignored and developer-managed; the implementer does not commit changes to it.
 
 ---
 
@@ -394,9 +387,9 @@ This test verifies the decoration is in place without needing HTTP dispatch. It 
      on the schema being consistent with the env var being present
    - Done when: file compiles cleanly; validation error at boot when var is absent or < 32 chars
 
-2. [.env.local] Replace KB_INTERNAL_API_KEY="__SECRET_KEY__" with a clearly-fake 32+ char value
-   - Why immediately after step 1: the schema change makes the current 15-char placeholder fail
-     validation at boot. Must be updated in the same commit to prevent any broken intermediate state
+2. [.env.local] Ensure KB_INTERNAL_API_KEY is set to a clearly-fake 32+ char value
+   - Why immediately after step 1: the schema change enforces min(32) at boot; an unset or
+     short value blocks local startup. Developer-managed file (gitignored) — not part of the commit
    - Done when: value is at least 32 characters, clearly a local-dev placeholder, not a real secret
 
 3. [src/config/configuration.ts] Add internalApiAuth: { key: process.env.KB_INTERNAL_API_KEY } namespace
@@ -520,8 +513,8 @@ Add a new `describe("guard decoration", ...)` block with the `Reflect.getMetadat
 
 ## Risks and Edge Cases
 
-**High — `.env.local` placeholder is 15 characters and will fail the new `min(32)` validation.**
-The current `KB_INTERNAL_API_KEY="__SECRET_KEY__"` in `.env.local` is 15 characters. The implementer MUST update it in the same step as the schema change. If these are done in separate commits (or if the implementer updates the schema but forgets `.env.local`), the app will refuse to boot locally until fixed. Mitigation: steps 1 and 2 in the implementation order are explicitly sequential for this reason.
+**High — local startup fails if `KB_INTERNAL_API_KEY` in `.env.local` is unset or shorter than 32 characters when the schema change applies.**
+The schema change enforces `min(32)` at boot. The developer must ensure `.env.local` has a 32+ char value in place before pulling the schema change locally. `.env.local` is gitignored and developer-managed. Mitigation: steps 1 and 2 in the implementation order are explicitly sequential, and the implementer should communicate the env-var requirement clearly.
 
 **High — Existing tests fail to compile if guard DI is not resolved.**
 After `@UseGuards(InternalApiKeyGuard)` is on the controller, any `Test.createTestingModule` that includes `KnowledgeBaseController` without providing `InternalApiAuthConfigService` and `InternalApiKeyGuard` will throw at test compilation time. Mitigation: step 12 in the implementation order explicitly updates the testing module before tests are run.
