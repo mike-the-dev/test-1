@@ -317,6 +317,25 @@ describe("buildBeforeSend — PII scrubbing and event filtering", () => {
     expect(event.contexts!.request!.account_id).toBe("acct-001");
   });
 
+  it("scrubs x-internal-api-key from event.request.headers → [Filtered]", () => {
+    const event: ErrorEvent = {
+      type: undefined,
+      request: {
+        headers: {
+          "x-internal-api-key": "some-secret-value-here-that-should-not-appear",
+          "content-type": "application/json",
+        },
+      },
+    };
+
+    const result = beforeSend(event, makeHint(new Error("some error")));
+
+    expect(result).not.toBeNull();
+    const headers = result!.request!.headers as Record<string, string>;
+    expect(headers["x-internal-api-key"]).toBe("[Filtered]");
+    expect(headers["content-type"]).toBe("application/json");
+  });
+
   it("returns null and logs a warning when beforeSend logic itself throws", () => {
     // Use a getter that throws to simulate a scrubbing error
     const base: ErrorEvent = { type: undefined };

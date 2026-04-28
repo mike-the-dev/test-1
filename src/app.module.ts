@@ -47,6 +47,8 @@ import { SentryConfigService } from "./services/sentry-config.service";
 import { SentryService } from "./services/sentry.service";
 import { SlackAlertConfigService } from "./services/slack-alert-config.service";
 import { SlackAlertService } from "./services/slack-alert.service";
+import { InternalApiAuthConfigService } from "./services/internal-api-auth-config.service";
+import { InternalApiKeyGuard } from "./guards/internal-api-key.guard";
 
 @Module({
   imports: [
@@ -83,6 +85,8 @@ import { SlackAlertService } from "./services/slack-alert.service";
     SentryService,
     SlackAlertConfigService,
     SlackAlertService,
+    InternalApiAuthConfigService,
+    InternalApiKeyGuard,
     AppService,
     DatabaseConfigService,
     QdrantConfigService,

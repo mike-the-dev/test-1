@@ -56,6 +56,16 @@ function scrubEvent(event: ErrorEvent): void {
     // assertions on every read. For our medical/healthcare client verticals, the
     // small loss of non-PII diagnostic context is worth the defense-in-depth gain.
     event.request.data = undefined;
+
+    // Redact the internal API key header from any captured event's request context.
+    // Never let the shared secret reach Sentry, even if a future capture path
+    // accidentally includes full request context.
+    if (event.request.headers) {
+      const headers = event.request.headers as Record<string, string>;
+      if (headers["x-internal-api-key"]) {
+        headers["x-internal-api-key"] = "[Filtered]";
+      }
+    }
   }
 
   if (event.breadcrumbs) {

@@ -11,6 +11,8 @@ import { getQueueToken } from "@nestjs/bullmq";
 import { KnowledgeBaseController } from "./knowledge-base.controller";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
 import { KB_INGESTION_QUEUE_NAME } from "../utils/knowledge-base/constants";
+import { InternalApiAuthConfigService } from "../services/internal-api-auth-config.service";
+import { InternalApiKeyGuard } from "../guards/internal-api-key.guard";
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { ingestDocumentSchema, deleteDocumentSchema, getDocumentSchema } from "../validation/knowledge-base.schema";
 import type { IngestDocumentBody, DeleteDocumentBody, GetDocumentQuery } from "../validation/knowledge-base.schema";
@@ -102,6 +104,14 @@ describe("KnowledgeBaseController", () => {
         {
           provide: getQueueToken(KB_INGESTION_QUEUE_NAME),
           useValue: mockQueue,
+        },
+        {
+          provide: InternalApiAuthConfigService,
+          useValue: { key: "test-internal-api-key-32chars-aaaaa" },
+        },
+        {
+          provide: InternalApiKeyGuard,
+          useValue: { canActivate: jest.fn().mockReturnValue(true) },
         },
       ],
     }).compile();
@@ -482,6 +492,17 @@ describe("KnowledgeBaseController", () => {
 
     it("accepts a valid get query", () => {
       expect(() => pipe.transform(VALID_GET_QUERY)).not.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Guard decoration — @UseGuards(InternalApiKeyGuard) applied at class level
+  // -------------------------------------------------------------------------
+
+  describe("guard decoration — @UseGuards(InternalApiKeyGuard) is applied at the class level", () => {
+    it("has InternalApiKeyGuard in the controller's guard metadata", () => {
+      const guards: unknown[] = Reflect.getMetadata("__guards__", KnowledgeBaseController);
+      expect(guards).toContain(InternalApiKeyGuard);
     });
   });
 });

@@ -55,6 +55,9 @@ const configuration = () => ({
   slack: {
     webhookUrl: process.env.SLACK_WEBHOOK_URL,
   },
+  internalApiAuth: {
+    key: process.env.KB_INTERNAL_API_KEY,
+  },
 });
 
 export default configuration;

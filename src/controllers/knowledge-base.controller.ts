@@ -9,11 +9,13 @@ import {
   Post,
   Query,
   ServiceUnavailableException,
+  UseGuards,
 } from "@nestjs/common";
 import { InjectQueue } from "@nestjs/bullmq";
 import { Queue } from "bullmq";
 import { ulid } from "ulid";
 
+import { InternalApiKeyGuard } from "../guards/internal-api-key.guard";
 import { ZodValidationPipe } from "../pipes/knowledgeBaseValidation.pipe";
 import { KnowledgeBaseIngestionService } from "../services/knowledge-base-ingestion.service";
 import { KB_INGESTION_QUEUE_NAME, KB_INGESTION_RETRY_ATTEMPTS } from "../utils/knowledge-base/constants";
@@ -28,6 +30,7 @@ import type { IngestDocumentBody, DeleteDocumentBody, GetDocumentQuery } from ".
 const KB_INGEST_JOB = "ingest";
 const KB_BACKOFF_DELAY_MS = 1000;
 
+@UseGuards(InternalApiKeyGuard)
 @Controller("knowledge-base")
 export class KnowledgeBaseController {
   private readonly logger = new Logger(KnowledgeBaseController.name);
