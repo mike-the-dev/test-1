@@ -36,6 +36,28 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-28 — KB v1 verified end-to-end; caught a Phase 7c BullMQ DI bug along the way
+
+**Goal:** Stamp v1 on the knowledge base feature by running a full live verification of the pipeline against real services (Qdrant, Voyage, Anthropic, Redis, DynamoDB) — not more Jest tests, but actual end-to-end smoke. The 482 Jest tests were already green, but tests don't catch what tests don't exercise. Wanted "100% confidence" before declaring done.
+
+**What changed:**
+- All 10 verification scenarios passed live: auth gate (no header / wrong key both 401, byte-identical responses so no enumeration), happy-path ingest with async processing (~6s for a 2-chunk doc), idempotent re-ingest with byte-identical UUIDv5 IDs across re-POSTs, update flow correctly cleaning the chunk_index=1 zombie when doc shrinks 2→1, per-account isolation at both DDB and Qdrant layers, delete flow cleaning both stores, final state sweep clean.
+- Retrieval scenario verified the lead_capture agent calls `lookup_knowledge_base` (twice for a two-part question — proper grounding discipline), Qdrant returns relevant chunks with similarity scores 0.5–0.6, and the agent's reply uses the doc's content verbatim ("Monday through Friday 8am-6pm", "$5 per walk", "48 hours advance notice") with natural attribution and no internal IDs leaked.
+- **Caught a Phase 7c boot bug**: `BullModule.forRootAsync` was injecting `KnowledgeBaseConfigService` from `AppModule.providers`, but BullModule runs in its own DI scope and couldn't see services from the host module's providers without an explicit `imports: [...]`. The 482 Jest tests missed it because BullMQ is mocked everywhere. The app refused to boot with `UnknownDependenciesException`. Bug shipped in commit `52ad724c` (Phase 7c) and survived through every subsequent phase.
+- Fix: extracted `KnowledgeBaseConfigService` into a dedicated `KnowledgeBaseConfigModule` (mirrors the typed-config-service-pattern the rest of the codebase uses) and added `imports: [KnowledgeBaseConfigModule]` to the BullModule async config. App now boots clean. Tests still 482/482.
+
+**Decisions worth remembering:**
+- **Live verification catches what unit tests can't.** Mocked dependencies in Jest mean the real DI graph never runs in CI. Phase 7c shipped a boot bug that survived through every subsequent phase. The smoke test caught it the first time we tried to boot. Worth doing live verification at every major milestone, not just at v1.
+- **Voyage dim guard ran for real**: `[event=boot_ok dim=1024 probeMs=191]` in the boot log. Phase 8d-essential's correctness invariant is now proven live, not just in tests.
+- **Deterministic Qdrant point IDs work end-to-end**: the same `(account_id, document_id, chunk_index)` produces byte-identical UUIDv5s across re-ingest. The update flow correctly upserts in-place AND cleans up chunks that no longer have a counterpart in the new chunk_count. Zombie-chunk problem solved at the live-data layer, not just in unit tests.
+
+**Next:**
+- Operational items still pending the partner integration: the ecommerce API needs to be configured to send `X-Internal-API-Key` header (and a stable `external_id` per document) on ingestion calls. Production deploy needs `KB_INTERNAL_API_KEY` (≥32 chars) set as a secret on every environment.
+- Playwright frontend test session is the only remaining v1 gate beyond what shipped today — covers the iframe widget side, complementary to this backend-side verification. To be run with a different agent.
+- Per-customer billing instrumentation (per-account token meter, plan/quota metadata, monthly usage export) is the next backend workstream — designed but not yet built. Tiered-subscription-with-overage pricing model approach was discussed and locked during this session.
+
+---
+
 ## 2026-04-28 — KB integrity hardening shipped (Phase 8d-essential)
 
 **Goal:** Close the two real correctness gaps in the KB pipeline before stamping v1 — silent vector corruption from a Voyage-vs-Qdrant dimension mismatch, and zombie-chunk accumulation on retry of partial-failure updates. The full Phase 8d roadmap was a bundle of operational hardening items deferred from earlier phases; this sub-phase ships only the two v1-blocking ones and explicitly defers the rest until production data justifies them.
