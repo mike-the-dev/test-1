@@ -36,6 +36,68 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-28 — KB integrity hardening shipped (Phase 8d-essential)
+
+**Goal:** Close the two real correctness gaps in the KB pipeline before stamping v1 — silent vector corruption from a Voyage-vs-Qdrant dimension mismatch, and zombie-chunk accumulation on retry of partial-failure updates. The full Phase 8d roadmap was a bundle of operational hardening items deferred from earlier phases; this sub-phase ships only the two v1-blocking ones and explicitly defers the rest until production data justifies them.
+
+**What changed:**
+- `VoyageDimGuardService` runs at boot (after DI resolution, before `app.listen`), embeds a constant probe input via Voyage, asserts the returned vector length matches the configured Qdrant collection dimension (1024 for `voyage-3-large`). On mismatch or terminal Voyage outage: Sentry capture with `category: "voyage-dim-guard"` + `severity: "fatal"` tags, then `process.exit(1)`. Two retries with linear backoff on transient failures.
+- Deterministic Qdrant point IDs via UUIDv5 from `(accountId, documentId, chunkIndex)` — single namespace constant `KB_POINT_ID_NAMESPACE` hardcoded in `src/utils/knowledge-base/qdrant-point-id.ts` with an explicit immutability comment. The single `crypto.randomUUID()` call site in `writeQdrantPoints` swapped to use the helper.
+- 22 new tests covering dim-guard pass/fail/retry/exhaust paths, deterministic ID generation, and retry idempotency. Suite count 460 → 482.
+
+**Decisions worth remembering:**
+- **In-flux/compensation marker was over-engineered and dropped.** With deterministic IDs alone, every step of the update flow is independently idempotent — `delete-by-document_id` is idempotent, embeds are deterministic, upsert with deterministic IDs cannot duplicate. Retry-from-scratch produces clean state at every crash point. A marker would only matter if the worker tried partial-recovery cleverness, which it does not.
+- **No mass migration of existing random-UUID Qdrant points.** Pre-existing points retrieve fine; documents migrate naturally on their next update via the existing delete-by-document_id flow. Hybrid state is acceptable and self-healing.
+- **Boot-time Voyage outage = failed deployment by design.** A Voyage outage during a rolling deploy will leave new instances stuck while old ones keep serving. Sentry `voyage-dim-guard` events should be wired into deployment health monitoring.
+
+**Next:**
+- Playwright API test suite covering the ingest → chunk → embed → enrich → store → retrieve pipeline plus chat-with-tool-call golden flows. Final v1 gate before stamping the Jest + Playwright suites as the v1 contract.
+- Coordinate with the ecommerce API to send `X-Internal-API-Key` header and a stable `external_id` per document on ingestion calls.
+- Phase 8d non-essential (stuck-job detector, Anthropic retry-with-backoff, orphan cleanup, GSI), 8e (operational endpoints), 8f (quality/cost levers including Haiku swap) all explicitly deferred until production data justifies them.
+
+---
+
+## 2026-04-27 — Observability + internal-API security shipped (Phases 8a, 8b, 8c)
+
+**Goal:** Close the operational visibility and access-control gaps before customer #1. Errors must be auto-surfaced (Sentry) so operators don't read logs to find problems. Page-worthy business events must be loud (Slack) so the team sees activity in real time. The KB endpoints must be locked down to upstream callers only — no public surface, no per-user auth, just a trusted-caller handshake.
+
+**What changed:**
+- **Phase 8a — Sentry error tracking.** `@sentry/nestjs` integrated, wrapped in a project-controlled `SentryService` for swappability. `category` tags on every captured exception (voyage, qdrant, enrichment, ingestion-job, slack, voyage-dim-guard). PII scrubbing via `beforeSend` strips chat messages, document text, contact info, and the `x-internal-api-key` header before any event leaves the process. `SENTRY_DSN` unset → SDK no-ops cleanly for local dev.
+- **Phase 8b — Slack business-signal alerts.** Standalone `SlackAlertService` posts to `#instapaytient-agentic-ai-alerts` on three events: conversation started, cart created (item count > 0), checkout URL generated. Errors stay in Sentry; Slack is celebrations-only — adding error alerts here is a regression. Fire-and-forget pattern with `.catch(() => undefined)`; never blocks user flow.
+- **Phase 8c — Internal-API authentication.** `InternalApiKeyGuard` (NestJS `Guard`, `crypto.timingSafeEqual` constant-time compare with length-check guard) decorates `KnowledgeBaseController`. Header `X-Internal-API-Key` matched against `KB_INTERNAL_API_KEY` env (Zod `min(32)` validation, required at boot). 401 on any rejection without leaking which check failed.
+
+**Decisions worth remembering:**
+- **This API is internal-only forever — strategic commitment.** Two caller classes: iframe-facing chat endpoints (their own per-conversation auth model) and trusted upstream servers via shared secret. There is no third class. No JWT verification, no user identity on this API, no admin UI. New partners get their own deployment with their own secret. This single decision unblocked 8c's design entirely.
+- **Slack scope is celebrations only.** Mixing error alerts and success alerts in one channel turns the channel into noise. Sentry owns errors; Slack owns business positives. Keep the boundary clean.
+- **`x-internal-api-key` is scrubbed at multiple Sentry layers.** Explicit headers check in `scrubEvent` plus addition to `PII_KEYS` covers `event.request.headers` AND breadcrumb data + `event.extra` + `event.contexts`. Defense in depth — one capture path missing redaction would leak the secret.
+
+**Next:**
+- Phase 8d-essential (integrity hardening) immediately after — see entry above.
+- Future evolution: per-partner key registry when partner #2 onboards. Today: single global `KB_INTERNAL_API_KEY`. The guard's internal logic is structured so this is a swap behind the same external interface, no caller changes.
+
+---
+
+## 2026-04-24 — Knowledge base feature reaches feature-complete (Phases 1–7c)
+
+**Goal:** Build a per-account knowledge base the conversational layer retrieves from in real time, so each customer's agent quality is bounded by their own context rather than the base model's training data. Ship as an internal-only async pipeline with per-account isolation as the load-bearing correctness invariant.
+
+**What changed (seven phases):**
+- **Phases 1–3 (foundations):** Qdrant collection with `account_id` payload-filter contract, Voyage `voyage-3-large` 1024-dim embeddings via `VoyageService` + auto-batch splitting, natural-boundary chunker (2000-char target with 200-char overlap, snaps to paragraph/sentence/word breaks).
+- **Phases 4–5 (ingestion + retrieval):** `POST/GET/DELETE /knowledge-base/documents` controller, DynamoDB metadata at `PK = A#<accountUlid>` / `SK = D#<documentId>` with `(account_id, external_id)` keying for caller-side idempotency, Qdrant vector writes with per-chunk payloads, `lookup_knowledge_base` retrieval tool wired into a hybrid LeadCapture agent.
+- **Phases 7a–7c (lifecycle + quality + async):** document update + delete that cleanly removes prior Qdrant chunks before re-ingesting; Claude enrichment per chunk (SUMMARY / QUESTIONS / KEY TERMS embedded combined with the chunk text — modest but real lift on the dog-walking benchmark, documented honestly in `docs/knowledge-base/benchmark-findings.md`); Redis + BullMQ async ingestion queue so the controller responds in milliseconds while embedding + enrichment runs in the background worker.
+
+**Decisions worth remembering:**
+- **Per-account isolation is non-negotiable.** Every Qdrant query carries an `account_id` filter. Every DynamoDB key includes the account. There is no single-tenant fallback path. This isn't just a feature — it's the load-bearing correctness invariant of the whole multi-tenant design.
+- **Cart total units are cents, not dollars.** `preview-cart.tool.ts` sums `cartItem.total` which is integer cents per the `GuestCart` contract. Documented inline at the call site to prevent a future "fix" from multiplying by 100.
+- **DynamoDB PK/SK are uppercase.** Lowercase passes type-checks and fails at runtime with `ValidationException`. Bit us once on Phase 4; the convention is now strict across all KB code.
+- **Approach 2 + Qdrant locked early.** An earlier benchmark phase using real dog-walking-company data validated the approach before scaling; full architecture in `docs/knowledge-base/target-architecture.md`.
+
+**Next:**
+- Operational hardening (Phase 8) — observability, security, integrity guards. See the two entries above.
+- Hybrid LeadCapture agent now uses retrieval; the bare LeadCapture agent stays available for accounts without a KB.
+
+---
+
 ## 2026-04-21 — Server-authoritative kickoff state: full cutover across both repos
 
 **Goal:** Complete the transition to "session state is fully server-authoritative" as a principle. Onboarding and budget were already on the server; kickoff (the auto-greeting trigger) was the last piece still using frontend localStorage as its source of truth. Move it onto the server so a single rule — "server state is ground truth, client is a hint" — applies to every session-lifecycle decision.
