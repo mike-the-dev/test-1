@@ -10,7 +10,7 @@ Test command: `npm test -- --forceExit` (plain `npm test` works too; `--forceExi
 
 **How to apply:** Always pass `--forceExit` when running the full suite to get a clean exit. If the open-handles warning appears without it, note it but don't treat it as a failure.
 
-As of 2026-04-28 (post-Phase-8d-essential: VoyageDimGuardService + deterministic Qdrant point IDs + style-refactor): 31 suites, 482 tests total, 482 passed, 0 failed. Build clean (nest build, no errors, no output). ERROR-level log output in test runs is expected — tests for VoyageDimGuardService (mismatch + unreachable scenarios), SaveUserFactTool, ToolRegistryService, OriginAllowlistService, KnowledgeBaseIngestionService, KnowledgeBaseController, LookupKnowledgeBaseTool, and others intentionally exercise error paths. These are not test failures.
+As of 2026-04-28 (post-BullMQ DI fix: KnowledgeBaseConfigModule extracted, AppModule BullModule.forRootAsync refactored): 31 suites, 482 tests total, 482 passed, 0 failed. Build clean (nest build, no errors, no output). ERROR-level log output in test runs is expected — tests for VoyageDimGuardService (mismatch + unreachable scenarios), SaveUserFactTool, ToolRegistryService, OriginAllowlistService, KnowledgeBaseIngestionService, KnowledgeBaseController, LookupKnowledgeBaseTool, and others intentionally exercise error paths. These are not test failures.
 
 Prior baselines:
 - M1: 11 suites, 114 tests passing.
