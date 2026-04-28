@@ -1,2 +1,3 @@
 - [Project Architecture Overview](project_architecture.md) — Discord-only entry point, DynamoDB single-item-per-session history, Anthropic SDK wrapped in service
 - [Phase 8c KB auth — codebase findings](project_phase8c_findings.md) — single KB controller, direct-call test pattern, Zod (not Joi), no request-logging middleware, no Swagger
+- [Phase 8d KB integrity — codebase findings](project_phase8d_findings.md) — only one randomUUID call site (writeQdrantPoints), uuid not in package.json, EXPECTED_VOYAGE_DIMENSION in ingestion service, VoyageDimGuardService pattern, KB_POINT_ID_NAMESPACE value

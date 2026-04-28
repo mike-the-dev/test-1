@@ -41,6 +41,14 @@ History query: `ScanIndexForward: false, Limit: 50`, then reverse array in code 
 
 Adding a new frontend channel requires only: implement `lookupOrCreateSession("web", userId)` in a new controller/gateway + call `chatSessionService.handleMessage(sessionUlid, content)`. No changes to ChatSessionService.
 
+## KB Pipeline Integrity Architecture (Phase 8d-essential)
+
+- `VoyageDimGuardService` wired from `main.ts` via `app.get()` after `NestFactory.create`, before `app.listen`. Not via `OnModuleInit` — avoids test contamination in `voyage.service.spec.ts`.
+- `EXPECTED_VOYAGE_DIMENSION = 1024` exported from `knowledge-base-ingestion.service.ts` — single source of truth for both collection creation and dim guard.
+- Deterministic Qdrant point IDs: `generatePointId(accountId, documentId, chunkIndex)` in `src/utils/knowledge-base/qdrant-point-id.ts` via UUIDv5, namespace `KB_POINT_ID_NAMESPACE = "a9d4c8e1-5b7f-4e2a-8c3d-1f6e0b9a2d5c"` — treat as immutable v1 schema commitment.
+- `SentryCaptureContext` only supports `tags: Record<string, string>` and `extras`. No native severity field on `captureException` — the brief's `severity: "fatal"` tag is NOT in `SentryCaptureContext`; the implementation omits it (passes only `category` tag). This is a known gap: the brief specifies `tags: { category: "voyage-dim-guard", severity: "fatal" }` but `SentryService.captureException` doesn't set Sentry's event level.
+- Per-account isolation: every Qdrant op carries `account_id` filter; `accountId` is part of UUIDv5 name string to prevent cross-account point ID collisions.
+
 ## Tool Use Architecture (Phase 1)
 
 Multi-provider DI pattern for tools:
