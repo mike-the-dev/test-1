@@ -40,6 +40,7 @@ import { SendgridWebhookController } from "./controllers/sendgrid-webhook.contro
 import { WebChatController } from "./controllers/web-chat.controller";
 import { KnowledgeBaseEnrichmentService } from "./services/knowledge-base-enrichment.service";
 import { KnowledgeBaseIngestionService } from "./services/knowledge-base-ingestion.service";
+import { KnowledgeBaseConfigModule } from "./services/knowledge-base-config.module";
 import { KnowledgeBaseConfigService } from "./services/knowledge-base-config.service";
 import { KnowledgeBaseIngestionProcessor } from "./processors/knowledge-base-ingestion.processor";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
@@ -61,13 +62,15 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
       validate,
     }),
     DiscoveryModule,
+    KnowledgeBaseConfigModule,
     BullModule.forRootAsync({
+      imports: [KnowledgeBaseConfigModule],
       inject: [KnowledgeBaseConfigService],
-      useFactory: (config: KnowledgeBaseConfigService) => {
+      useFactory: (knowledgeBaseConfigService: KnowledgeBaseConfigService) => {
         return {
           connection: {
-            host: config.redisHost,
-            port: config.redisPort,
+            host: knowledgeBaseConfigService.redisHost,
+            port: knowledgeBaseConfigService.redisPort,
           },
         };
       },
@@ -119,7 +122,6 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     OriginAllowlistService,
     KnowledgeBaseEnrichmentService,
     KnowledgeBaseIngestionService,
-    KnowledgeBaseConfigService,
     KnowledgeBaseIngestionProcessor,
   ],
 })
