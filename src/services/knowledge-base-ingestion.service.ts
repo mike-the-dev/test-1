@@ -1,7 +1,6 @@
 import { BadRequestException, Inject, Injectable, InternalServerErrorException, Logger } from "@nestjs/common";
 import { DynamoDBDocumentClient, PutCommand, QueryCommand, DeleteCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { QdrantClient } from "@qdrant/js-client-rest";
-import { randomUUID } from "crypto";
 import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
@@ -12,6 +11,7 @@ import { KnowledgeBaseEnrichmentService } from "./knowledge-base-enrichment.serv
 import { SentryService } from "./sentry.service";
 import { chunkText } from "../utils/chunker/chunker";
 import { KB_COLLECTION_NAME } from "../utils/knowledge-base/constants";
+import { generatePointId } from "../utils/knowledge-base/qdrant-point-id";
 import {
   KnowledgeBaseChunk,
   KnowledgeBaseDeleteDocumentInput,
@@ -25,9 +25,9 @@ import {
 
 const KB_DOCUMENT_ENTITY = "KNOWLEDGE_BASE_DOCUMENT";
 // Qdrant collection vector size matches the voyage-3-large default output dimension.
-// Phase 8: add a startup assertion that the deployed Voyage model produces exactly
-// 1024-dimension vectors to catch a model/collection dimension mismatch at boot time.
-const KB_VECTOR_SIZE = 1024;
+// VoyageDimGuardService reads this constant at boot to assert the live Voyage model
+// returns exactly this many dimensions — both must change together.
+export const EXPECTED_VOYAGE_DIMENSION = 1024;
 const KB_VECTOR_DISTANCE = "Cosine";
 const KB_PK_PREFIX = "A#";
 const KB_SK_PREFIX = "KB#DOC#";
@@ -361,7 +361,7 @@ export class KnowledgeBaseIngestionService {
 
     try {
       await this.qdrantClient.createCollection(KB_COLLECTION_NAME, {
-        vectors: { size: KB_VECTOR_SIZE, distance: KB_VECTOR_DISTANCE },
+        vectors: { size: EXPECTED_VOYAGE_DIMENSION, distance: KB_VECTOR_DISTANCE },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message.toLowerCase() : "";
@@ -407,7 +407,7 @@ export class KnowledgeBaseIngestionService {
   ): Promise<void> {
     const points = chunks.map((chunk, index) => {
       return {
-        id: randomUUID(),
+        id: generatePointId(input.accountId, documentId, index),
         vector: embeddings[index],
         payload: {
           account_id: input.accountId,

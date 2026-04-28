@@ -12,22 +12,15 @@ import { SentryService } from "./sentry.service";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { QDRANT_CLIENT } from "../providers/qdrant.provider";
 import { KnowledgeBaseIngestDocumentInput } from "../types/KnowledgeBase";
+import { generatePointId } from "../utils/knowledge-base/qdrant-point-id";
 
 // ---------------------------------------------------------------------------
 // Module-level mocks
 // ---------------------------------------------------------------------------
 
 jest.mock("ulid", () => ({ ulid: jest.fn(() => "01TESTULID000000000000000A") }));
-jest.mock("crypto", () => ({
-  ...jest.requireActual("crypto"),
-  randomUUID: jest.fn()
-    .mockReturnValueOnce("uuid-0000-0000-0000-000000000001")
-    .mockReturnValueOnce("uuid-0000-0000-0000-000000000002")
-    .mockReturnValueOnce("uuid-0000-0000-0000-000000000003"),
-}));
 
 const { ulid } = jest.requireMock<{ ulid: jest.Mock }>("ulid");
-const { randomUUID } = jest.requireMock<{ randomUUID: jest.Mock }>("crypto");
 
 // ---------------------------------------------------------------------------
 // Chunker mock — controls chunk output precisely in most tests
@@ -113,12 +106,6 @@ describe("KnowledgeBaseIngestionService", () => {
   beforeEach(async () => {
     ddbMock.reset();
     jest.clearAllMocks();
-
-    // Restore stable UUID sequence after clearAllMocks resets the call count
-    randomUUID
-      .mockReturnValueOnce("uuid-0000-0000-0000-000000000001")
-      .mockReturnValueOnce("uuid-0000-0000-0000-000000000002")
-      .mockReturnValueOnce("uuid-0000-0000-0000-000000000003");
 
     ulid.mockReturnValue(DOCUMENT_ID);
 
@@ -824,6 +811,48 @@ describe("KnowledgeBaseIngestionService", () => {
   // -------------------------------------------------------------------------
   // updateDocumentStatus (Phase 7c)
   // -------------------------------------------------------------------------
+
+  // -------------------------------------------------------------------------
+  // Deterministic point ID — retry idempotency and per-account isolation
+  // -------------------------------------------------------------------------
+
+  describe("deterministic point IDs", () => {
+    it("produces identical point IDs on retry (same input → same Qdrant state)", async () => {
+      await service.ingestDocument(STUB_INPUT);
+      const firstUpsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+
+      mockQdrantClient.upsert.mockClear();
+
+      await service.ingestDocument(STUB_INPUT);
+      const secondUpsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+
+      expect(firstUpsertArgs.points).toHaveLength(secondUpsertArgs.points.length);
+      for (let index = 0; index < firstUpsertArgs.points.length; index++) {
+        expect(firstUpsertArgs.points[index].id).toBe(secondUpsertArgs.points[index].id);
+      }
+    });
+
+    it("produces different point IDs for different accountIds at the same chunkIndex", async () => {
+      await service.ingestDocument(STUB_INPUT);
+      const firstUpsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+
+      mockQdrantClient.upsert.mockClear();
+
+      await service.ingestDocument({ ...STUB_INPUT, accountId: "different-account-id" });
+      const secondUpsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+
+      expect(firstUpsertArgs.points[0].id).not.toBe(secondUpsertArgs.points[0].id);
+    });
+
+    it("generates point IDs matching generatePointId helper output directly", async () => {
+      await service.ingestDocument(STUB_INPUT);
+      const upsertArgs = mockQdrantClient.upsert.mock.calls[0][1];
+
+      expect(upsertArgs.points[0].id).toBe(generatePointId(ACCOUNT_ID, DOCUMENT_ID, 0));
+      expect(upsertArgs.points[1].id).toBe(generatePointId(ACCOUNT_ID, DOCUMENT_ID, 1));
+      expect(upsertArgs.points[2].id).toBe(generatePointId(ACCOUNT_ID, DOCUMENT_ID, 2));
+    });
+  });
 
   describe("updateDocumentStatus — transitions status via UpdateCommand", () => {
     beforeEach(() => {

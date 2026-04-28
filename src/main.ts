@@ -6,6 +6,7 @@ import { Logger, LogLevel } from "@nestjs/common";
 
 import { AppModule } from "./app.module";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
+import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
 
 async function bootstrap() {
   const isProd = process.env.APP_ENV === "prod";
@@ -14,6 +15,13 @@ async function bootstrap() {
     : ["log", "warn", "error", "debug", "verbose"];
 
   const app = await NestFactory.create(AppModule, { logger: logLevels });
+
+  const dimGuard = app.get(VoyageDimGuardService);
+  try {
+    await dimGuard.checkDimension();
+  } catch {
+    process.exit(1);
+  }
 
   const originAllowlistService = app.get(OriginAllowlistService);
   const corsAllowAll = process.env.WEB_CHAT_CORS_ALLOW_ALL === "true";

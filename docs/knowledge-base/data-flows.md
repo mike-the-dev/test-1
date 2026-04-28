@@ -81,6 +81,12 @@ On final failure: UpdateItem DDB status → "failed" + error_summary.
 - Voyage embeddings: ~$0.04 per 300-page document (input text is now slightly longer but cost change is negligible)
 - Qdrant + DynamoDB writes: negligible
 
+**Point ID note (Phase 8d-essential):**
+Point IDs are deterministic UUIDs derived from `(accountId, documentId, chunkIndex)` via UUIDv5
+with namespace `KB_POINT_ID_NAMESPACE` (see `src/utils/knowledge-base/qdrant-point-id.ts`).
+DO NOT change this namespace — doing so would orphan all existing deterministic points and break
+the update flow's delete-by-document_id idempotency guarantee. Treat it as a v1 schema commitment.
+
 ---
 
 ## Flow 2 — Customer Query (the read path)
@@ -211,6 +217,12 @@ fresh. On final failure: UpdateItem DDB status → "failed" + error_summary.
 ```
 
 **Why `wait: true` on the delete:** without it, the Qdrant delete is acknowledged but not yet applied. The subsequent upsert would race with the delete, leaving transient duplication. `wait: true` blocks until the delete is fully visible.
+
+**Point ID note (Phase 8d-essential):**
+Point IDs are deterministic UUIDs derived from `(accountId, documentId, chunkIndex)` via UUIDv5
+with namespace `KB_POINT_ID_NAMESPACE` (see `src/utils/knowledge-base/qdrant-point-id.ts`).
+DO NOT change this namespace — doing so would orphan all existing deterministic points and break
+the update flow's delete-by-document_id idempotency guarantee. Treat it as a v1 schema commitment.
 
 ---
 

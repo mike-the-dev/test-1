@@ -49,6 +49,7 @@ import { SlackAlertConfigService } from "./services/slack-alert-config.service";
 import { SlackAlertService } from "./services/slack-alert.service";
 import { InternalApiAuthConfigService } from "./services/internal-api-auth-config.service";
 import { InternalApiKeyGuard } from "./guards/internal-api-key.guard";
+import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { InternalApiKeyGuard } from "./guards/internal-api-key.guard";
     QdrantProvider,
     AnthropicService,
     VoyageService,
+    VoyageDimGuardService,
     ChatSessionService,
     DiscordService,
     EmailService,
