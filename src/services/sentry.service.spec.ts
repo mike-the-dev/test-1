@@ -331,9 +331,31 @@ describe("buildBeforeSend — PII scrubbing and event filtering", () => {
     const result = beforeSend(event, makeHint(new Error("some error")));
 
     expect(result).not.toBeNull();
-    const headers = result!.request!.headers as Record<string, string>;
-    expect(headers["x-internal-api-key"]).toBe("[Filtered]");
-    expect(headers["content-type"]).toBe("application/json");
+    const headers = result!.request!.headers;
+    expect(headers!["x-internal-api-key"]).toBe("[Filtered]");
+    expect(headers!["content-type"]).toBe("application/json");
+  });
+
+  it("scrubs x-internal-api-key from a breadcrumb's data payload → [Filtered]", () => {
+    const event: ErrorEvent = {
+      type: undefined,
+      breadcrumbs: [
+        {
+          message: "outgoing internal request",
+          data: {
+            "x-internal-api-key": "breadcrumb-secret-value",
+            url: "https://internal.example.com/api",
+          },
+        },
+      ],
+    };
+
+    const result = beforeSend(event, makeHint(new Error("some error")));
+
+    expect(result).not.toBeNull();
+    const breadcrumb = result!.breadcrumbs![0];
+    expect(breadcrumb.data!["x-internal-api-key"]).toBe("[Filtered]");
+    expect(breadcrumb.data!["url"]).toBe("https://internal.example.com/api");
   });
 
   it("returns null and logs a warning when beforeSend logic itself throws", () => {

@@ -1,16 +1,16 @@
 import { CanActivate, ExecutionContext, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
-import { Request } from "express";
 import { timingSafeEqual } from "crypto";
+import { Request } from "express";
 
 import { InternalApiAuthConfigService } from "../services/internal-api-auth-config.service";
 
 const HEADER_NAME = "x-internal-api-key";
 
-// This guard protects all server-to-server endpoints (currently: /knowledge-base/*).
-// Apply it at the controller class level with @UseGuards(InternalApiKeyGuard).
-// Adding a future server-to-server controller = one decorator. Replacing the secret
-// model (per-partner registry, mTLS, etc.) = swap this implementation behind the
-// same interface — no caller changes required.
+// Convention: every server-to-server controller must apply this guard via
+// @UseGuards(InternalApiKeyGuard) at the class level. /chat/web/* controllers
+// are explicitly exempt — they have their own iframe-facing auth model.
+// Replacing the secret model later (per-partner key registry, mTLS) is a
+// swap of this implementation behind the same interface — no caller changes.
 //
 // Deployment assumption: HTTPS is enforced at the infrastructure layer (load balancer /
 // reverse proxy). This guard does not verify TLS — that is an infrastructure concern.
@@ -25,8 +25,7 @@ export class InternalApiKeyGuard implements CanActivate {
     const path = request.path;
     const rawHeader = request.headers[HEADER_NAME];
 
-    // HTTP headers can be duplicated (array) — take only the first value if so.
-    const incoming = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+    const incoming = [rawHeader].flat()[0];
 
     if (!incoming) {
       this.logger.warn(

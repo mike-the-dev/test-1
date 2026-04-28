@@ -12,6 +12,7 @@ const PII_KEYS = new Set([
   "phone",
   "firstName",
   "lastName",
+  "x-internal-api-key",
 ]);
 
 function scrubRecord(record: Record<string, unknown>): void {
@@ -61,9 +62,8 @@ function scrubEvent(event: ErrorEvent): void {
     // Never let the shared secret reach Sentry, even if a future capture path
     // accidentally includes full request context.
     if (event.request.headers) {
-      const headers = event.request.headers as Record<string, string>;
-      if (headers["x-internal-api-key"]) {
-        headers["x-internal-api-key"] = "[Filtered]";
+      if (event.request.headers["x-internal-api-key"]) {
+        event.request.headers["x-internal-api-key"] = "[Filtered]";
       }
     }
   }
