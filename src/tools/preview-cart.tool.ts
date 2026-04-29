@@ -516,8 +516,16 @@ export class PreviewCartTool implements ChatTool {
       this.slackAlertService.notifyCartCreated({
         accountId: accountUlid,
         sessionUlid,
+        guestCartId: cartUlid,
         cartTotalCents: cartTotal,
         itemCount,
+        items: cartItems.map((cartItem) => {
+          return {
+            name: cartItem.name,
+            quantity: cartItem.quantity,
+            subtotalCents: cartItem.total,
+          };
+        }),
       }).catch(() => undefined);
     }
 

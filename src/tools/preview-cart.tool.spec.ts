@@ -618,7 +618,7 @@ describe("PreviewCartTool", () => {
       ddbMock.on(UpdateCommand).resolves({});
     }
 
-    it("calls notifyCartCreated with accountId, sessionUlid, itemCount, and cartTotalCents when itemCount > 0", async () => {
+    it("calls notifyCartCreated with accountId, sessionUlid, itemCount, cartTotalCents, guestCartId, and items when itemCount > 0", async () => {
       setupHappyPath();
 
       await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 2 }] }, context);
@@ -629,6 +629,11 @@ describe("PreviewCartTool", () => {
       expect(callArgs.sessionUlid).toBe(SESSION_ULID);
       expect(callArgs.itemCount).toBe(2);
       expect(typeof callArgs.cartTotalCents).toBe("number");
+      expect(callArgs.guestCartId).toBe(CART_ULID);
+      expect(callArgs.items).toHaveLength(1);
+      expect(callArgs.items[0]).toEqual(
+        expect.objectContaining({ name: "Test Service", quantity: 2, subtotalCents: 20000 }),
+      );
     });
 
     it("does NOT call notifyCartCreated when the tool returns an error", async () => {

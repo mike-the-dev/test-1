@@ -1,6 +1,7 @@
 import { Injectable, Logger } from "@nestjs/common";
 
 import {
+  CartItemAlertEntry,
   SlackAlertBlock,
   SlackAlertCartCreatedInput,
   SlackAlertCheckoutLinkGeneratedInput,
@@ -9,6 +10,12 @@ import {
 } from "../types/Slack";
 import { SlackAlertConfigService } from "./slack-alert-config.service";
 import { SentryService } from "./sentry.service";
+
+// Escapes Slack mrkdwn control characters in user-supplied strings.
+// Escapes &, <, > per Slack docs. * and _ are left unescaped (low risk in pet-services catalog data).
+function escapeSlackMrkdwn(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 
 const SLACK_REQUEST_TIMEOUT_MS = 5000;
 
@@ -69,14 +76,14 @@ export class SlackAlertService {
       return;
     }
 
-    const { accountId, sessionUlid, cartTotalCents, itemCount } = input;
+    const { accountId, sessionUlid, guestCartId, cartTotalCents, items } = input;
 
     try {
       await this.sendRequest(
         this.webhookUrl,
         {
           text: SLACK_HEADING_CART_CREATED,
-          blocks: this.buildCartCreatedBlocks(accountId, sessionUlid, cartTotalCents, itemCount),
+          blocks: this.buildCartCreatedBlocks(accountId, sessionUlid, guestCartId, cartTotalCents, items),
         },
         SLACK_ALERT_TYPE_CART_CREATED,
       );
@@ -97,14 +104,14 @@ export class SlackAlertService {
       return;
     }
 
-    const { accountId, sessionUlid, checkoutUrl } = input;
+    const { accountId, sessionUlid, guestCartId, cartTotalCents, items, checkoutUrl } = input;
 
     try {
       await this.sendRequest(
         this.webhookUrl,
         {
           text: SLACK_HEADING_CHECKOUT_LINK_GENERATED,
-          blocks: this.buildCheckoutLinkBlocks(accountId, sessionUlid, checkoutUrl),
+          blocks: this.buildCheckoutLinkBlocks(accountId, sessionUlid, guestCartId, cartTotalCents, items, checkoutUrl),
         },
         SLACK_ALERT_TYPE_CHECKOUT_LINK,
       );
@@ -162,14 +169,32 @@ export class SlackAlertService {
     ];
   }
 
+  private formatCentsAsUsd(cents: number): string {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+
+  private buildItemsText(items: readonly CartItemAlertEntry[], cartTotalCents: number): string {
+    // Max 20 items per cart; worst-case text is ~1520 chars, well under the 3000-char section limit.
+    if (items.length === 0) {
+      return `*Total: ${this.formatCentsAsUsd(cartTotalCents)}*`;
+    }
+
+    const bulletLines = items.map((item) => {
+      return `• ${item.quantity}× ${escapeSlackMrkdwn(item.name)} — ${this.formatCentsAsUsd(item.subtotalCents)}`;
+    });
+
+    const lines = bulletLines.join("\n");
+
+    return `${lines}\n*Total: ${this.formatCentsAsUsd(cartTotalCents)}*`;
+  }
+
   private buildCartCreatedBlocks(
     accountId: string,
     sessionUlid: string,
+    guestCartId: string,
     cartTotalCents: number,
-    itemCount: number,
+    items: readonly CartItemAlertEntry[],
   ): SlackAlertBlock[] {
-    const formattedTotal = `$${(cartTotalCents / 100).toFixed(2)}`;
-
     return [
       {
         type: "header",
@@ -185,11 +210,16 @@ export class SlackAlertService {
           { type: "mrkdwn", text: "*Session ID*" },
           { type: "plain_text", text: accountId },
           { type: "plain_text", text: sessionUlid },
-          { type: "mrkdwn", text: "*Items*" },
-          { type: "mrkdwn", text: "*Cart Total*" },
-          { type: "plain_text", text: String(itemCount) },
-          { type: "plain_text", text: formattedTotal },
+          { type: "mrkdwn", text: "*Cart ID*" },
+          { type: "plain_text", text: guestCartId },
         ],
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: this.buildItemsText(items, cartTotalCents),
+        },
       },
       {
         type: "divider",
@@ -197,7 +227,14 @@ export class SlackAlertService {
     ];
   }
 
-  private buildCheckoutLinkBlocks(accountId: string, sessionUlid: string, checkoutUrl: string): SlackAlertBlock[] {
+  private buildCheckoutLinkBlocks(
+    accountId: string,
+    sessionUlid: string,
+    guestCartId: string,
+    cartTotalCents: number,
+    items: readonly CartItemAlertEntry[],
+    checkoutUrl: string,
+  ): SlackAlertBlock[] {
     return [
       {
         type: "header",
@@ -208,12 +245,17 @@ export class SlackAlertService {
       },
       {
         type: "section",
-        fields: [
-          { type: "mrkdwn", text: "*Account ID*" },
-          { type: "mrkdwn", text: "*Session ID*" },
-          { type: "plain_text", text: accountId },
-          { type: "plain_text", text: sessionUlid },
-        ],
+        text: {
+          type: "mrkdwn",
+          text: `*Account:* ${accountId}\n*Session:* ${sessionUlid}\n*Cart:* ${guestCartId}`,
+        },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: this.buildItemsText(items, cartTotalCents),
+        },
       },
       {
         type: "section",

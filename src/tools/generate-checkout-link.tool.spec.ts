@@ -45,6 +45,28 @@ function makeMetadataItem(overrides: Record<string, unknown> = {}): Record<strin
   };
 }
 
+function makeCartItem(): Record<string, unknown> {
+  return {
+    PK: `A#${ACCOUNT_ULID}`,
+    SK: `G#${GUEST_ULID}C#${CART_ULID}`,
+    cart_items: [
+      {
+        name: "Dog Walking",
+        quantity: 2,
+        total: 8000,
+        price: 4000,
+        category: "walking",
+        image_url: "",
+        service_id: "S#01",
+        variant: null,
+        variant_label: null,
+      },
+    ],
+    _createdAt_: "2024-01-01T00:00:00.000Z",
+    _lastUpdated_: "2024-01-01T00:00:00.000Z",
+  };
+}
+
 async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
   const mockConfigService = {
     get: jest.fn((key: string) => {
@@ -93,9 +115,12 @@ describe("GenerateCheckoutLinkTool", () => {
 
   describe("1. Happy path — METADATA has all 4 IDs, override set, full URL with all 5 query params", () => {
     it("returns checkout URL with all required query params", async () => {
-      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
-      });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
 
       const result = await tool.execute({}, context);
 
@@ -111,6 +136,9 @@ describe("GenerateCheckoutLinkTool", () => {
       expect(url.searchParams.get("cartId")).toBe(CART_ULID);
       expect(url.searchParams.get("aiSessionId")).toBe(SESSION_ULID);
       expect(parsed.checkout_url).toContain(CHECKOUT_OVERRIDE);
+
+      // Tool makes exactly 2 GetCommand calls: METADATA + cart record
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
     });
   });
 
@@ -127,6 +155,11 @@ describe("GenerateCheckoutLinkTool", () => {
       ddbMock
         .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID_B}`, SK: "METADATA" } })
         .resolves({ Item: makeMetadataItem() });
+      // Cart record mock — Step 5b issues a GetCommand for the cart; without this
+      // mock the command would throw and Step 5b's catch would silently absorb it.
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
 
       const resultA = await tool.execute({}, { sessionUlid: SESSION_ULID_A, accountUlid: ACCOUNT_ULID });
       const resultB = await tool.execute({}, { sessionUlid: SESSION_ULID_B, accountUlid: ACCOUNT_ULID });
@@ -145,7 +178,12 @@ describe("GenerateCheckoutLinkTool", () => {
 
   describe("3. URL deterministic — two calls produce identical URL", () => {
     it("returns the same checkout URL on repeated calls", async () => {
-      ddbMock.on(GetCommand).resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
 
       const result1 = await tool.execute({}, context);
       const result2 = await tool.execute({}, context);
@@ -325,9 +363,12 @@ describe("GenerateCheckoutLinkTool", () => {
 
   describe("12. Email URL-encoding — special characters encoded correctly", () => {
     it("encodes + and @ in email query param", async () => {
-      ddbMock.on(GetCommand).resolves({
-        Item: makeMetadataItem({ customer_email: "user+tag@example.com" }),
-      });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem({ customer_email: "user+tag@example.com" }) });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
 
       const result = await tool.execute({}, context);
 
@@ -339,9 +380,12 @@ describe("GenerateCheckoutLinkTool", () => {
 
   describe("13. Slack alert — notifyCheckoutLinkGenerated", () => {
     it("calls notifyCheckoutLinkGenerated with accountId, sessionUlid, and checkoutUrl on success", async () => {
-      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
-      });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
 
       await tool.execute({}, context);
 
@@ -353,6 +397,50 @@ describe("GenerateCheckoutLinkTool", () => {
       expect(callArgs.checkoutUrl).toContain("checkout");
     });
 
+    it("calls notifyCheckoutLinkGenerated with guestCartId and items when cart record is present", async () => {
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
+
+      await tool.execute({}, context);
+
+      expect(mockSlackAlertService.notifyCheckoutLinkGenerated).toHaveBeenCalledTimes(1);
+      const [callArgs] = mockSlackAlertService.notifyCheckoutLinkGenerated.mock.calls[0];
+      expect(callArgs.guestCartId).toBe(CART_ULID);
+      expect(callArgs.items).toHaveLength(1);
+      expect(callArgs.items[0]).toEqual(
+        expect.objectContaining({ name: "Dog Walking", quantity: 2, subtotalCents: 8000 }),
+      );
+      expect(callArgs.cartTotalCents).toBe(8000);
+    });
+
+    it("calls notifyCheckoutLinkGenerated with empty items when cart record GetCommand throws (non-fatal)", async () => {
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .rejects(new Error("DDB error"));
+
+      const result = await tool.execute({}, context);
+
+      // Tool still returns a valid checkout URL
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(typeof parsed.checkout_url).toBe("string");
+      expect(parsed.checkout_url).toContain("checkout");
+
+      // Alert still fires with degraded payload (empty items, $0.00 total)
+      expect(mockSlackAlertService.notifyCheckoutLinkGenerated).toHaveBeenCalledTimes(1);
+      const [callArgs] = mockSlackAlertService.notifyCheckoutLinkGenerated.mock.calls[0];
+      expect(callArgs.items).toEqual([]);
+      expect(callArgs.cartTotalCents).toBe(0);
+      expect(callArgs.guestCartId).toBe(CART_ULID);
+    });
+
     it("does NOT call notifyCheckoutLinkGenerated when the tool returns an error (missing METADATA)", async () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
 
@@ -362,9 +450,12 @@ describe("GenerateCheckoutLinkTool", () => {
     });
 
     it("returns the checkout result regardless of slackAlertService behavior", async () => {
-      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
-      });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
       mockSlackAlertService.notifyCheckoutLinkGenerated.mockRejectedValue(new Error("Slack down"));
 
       const result = await tool.execute({}, context);

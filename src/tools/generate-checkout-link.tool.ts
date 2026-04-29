@@ -3,18 +3,31 @@ import { ConfigService } from "@nestjs/config";
 import {
   DynamoDBDocumentClient,
   GetCommand,
+  NativeAttributeValue,
 } from "@aws-sdk/lib-dynamodb";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
 import { GuestCartCheckoutBaseResult } from "../types/GuestCart";
+import { CartItemAlertEntry } from "../types/Slack";
 import { generateCheckoutLinkInputSchema } from "../validation/tool.schema";
 import { ChatToolProvider } from "./chat-tool.decorator";
 import { SlackAlertService } from "../services/slack-alert.service";
 
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const METADATA_SK = "METADATA";
+
+function toRecordArray(value: NativeAttributeValue | undefined): Record<string, NativeAttributeValue>[] {
+  if (!value) {
+    return [];
+  }
+  const candidate: Record<string, NativeAttributeValue>[] = value as Record<string, NativeAttributeValue>[];
+  if (!Number.isInteger(candidate.length)) {
+    return [];
+  }
+  return candidate;
+}
 
 @ChatToolProvider()
 @Injectable()
@@ -112,6 +125,37 @@ export class GenerateCheckoutLinkTool implements ChatTool {
       };
     }
 
+    // Step 5b — load cart items for Slack alert (non-fatal; failure degrades alert to empty items list)
+    let alertItems: CartItemAlertEntry[] = [];
+
+    try {
+      const cartSk = `G#${guest_id}C#${cart_id}`;
+      const cartResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: {
+            PK: `A#${accountUlid}`,
+            SK: cartSk,
+          },
+        }),
+      );
+
+      const rawItems = toRecordArray(cartResult.Item?.cart_items);
+      alertItems = rawItems.map((item) => {
+        return {
+          name: String(item.name ?? ""),
+          quantity: Number(item.quantity ?? 0),
+          subtotalCents: Number(item.total ?? 0),
+        };
+      });
+    } catch {
+      // Cart items fetch failure is non-fatal — alert fires with empty items list and $0.00 total.
+      // The operator can look up the actual cart in DDB using guestCartId.
+      this.logger.debug(
+        `[action=generate_checkout_link_alert_items_fetch_failed sessionUlid=${sessionUlid}]`,
+      );
+    }
+
     // Step 5 — resolve checkout base URL
     const baseResult = await this.resolveCheckoutBase(tableName, accountUlid, sessionUlid);
 
@@ -123,9 +167,13 @@ export class GenerateCheckoutLinkTool implements ChatTool {
     const checkout_url = `${baseResult.base}/checkout?email=${encodeURIComponent(customer_email)}&customerId=${customer_id}&guestId=${guest_id}&cartId=${cart_id}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
 
     // Step 7 — fire Slack alert
+    const cartTotal = alertItems.reduce((sum, item) => sum + item.subtotalCents, 0);
     this.slackAlertService.notifyCheckoutLinkGenerated({
       accountId: accountUlid,
       sessionUlid,
+      guestCartId: cart_id,
+      cartTotalCents: cartTotal,
+      items: alertItems,
       checkoutUrl: checkout_url,
     }).catch(() => undefined);
 
