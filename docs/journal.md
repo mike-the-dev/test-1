@@ -36,6 +36,29 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-28 — Slack alert enrichment with cart details (Phase 8b-followup)
+
+**Goal:** Address feedback from the frontend Playwright session that the existing Slack alerts (cart_created, checkout_link_generated) felt thin — the team got accountId + sessionUlid but no business context. Enrich both alerts with the cart ID and a per-item breakdown so the team has actionable signal in real time, while holding a hard line that no customer PII enters Slack under any circumstance.
+
+**What changed:**
+- `SlackAlertService.notifyCartCreated` and `notifyCheckoutLinkGenerated` extended with `guestCartId` and a typed `items: readonly CartItemAlertEntry[]` (name, quantity, subtotalCents). Conversation_started alert byte-for-byte unchanged — pre-onboarding there is nothing meaningful to add.
+- Two new Slack-specific helpers landed: `formatCentsAsUsd` (private method on the service — single source of truth for cents → `$X.XX` rendering) and `escapeSlackMrkdwn` (module-scope, escapes `&`/`<`/`>` per Slack's spec; applied to every interpolated item name).
+- `PreviewCartTool.execute()` threads guestCartId + items from the cart preview response that's already in scope at Step 12 — no new DDB read.
+- `GenerateCheckoutLinkTool.execute()` adds Step 5b: a non-fatal cart-record fetch wrapped in try/catch. On success the alert fires with full items + total. On failure (network blip, transient DDB error) the alert still fires with empty items + $0.00 total, and the checkout URL generation in Steps 5–6 is entirely unaffected. The user-facing tool result never breaks.
+- Spec coverage: 16 new tests across the service spec (items rendering, currency formatting, mrkdwn escaping, edge cases) and the two tool specs (guestCartId + items assertions, non-fatal failure path test, DDB call-count audit). 482 → 498. Build clean.
+
+**Decisions worth remembering:**
+- **Slack is not a PII-safe destination.** Hard rule going forward: no first name, no last name, no email, no phone in any Slack alert, ever. Slack has no equivalent of Sentry's `beforeSend` scrubber; whatever we send sits in message history forever, is reachable by Slack workspace integrations, and could become a B2B compliance issue when partners ask "where does our shoppers' email go?" Cart items, system IDs, and totals are explicitly fine — they're business signal, not customer identity. If an authorized human needs the actual customer, they take the IDs and look them up in DDB where access is properly controlled.
+- **Non-fatal enrichment reads are a viable pattern when fire-and-forget is the calling convention.** The original brief constraint was "no new DDB reads" because of an incorrect assumption that GenerateCheckoutLinkTool already had cart data in memory. arch-planner caught the assumption error during planning. The graceful-degradation try/catch (alert fires either way, never blocks user) gave us the locked contract without compromising the safety guarantee.
+- **arch-planner caught a wrong premise in the brief during planning.** This is the second time the sub-agent workflow has surfaced something a less-rigorous inline edit would have papered over (Phase 8d-essential close-out caught a similar class of issue). Worth the workflow overhead, especially for cross-module changes touching new external surface (Slack payloads).
+
+**Next:**
+- Frontend will run a third Playwright round to confirm the enriched alerts render correctly in `#instapaytient-agentic-ai-alerts`.
+- Cosmetic case normalization on cart preview line items ("Med Administration" vs "Med administration") is the only remaining open finding from the original Playwright report — small backend renderer fix, deferred until convenient.
+- Journal at 530+ lines now (over the 500-line archive threshold for the second time) — archive operation deferred per user preference; whenever the file growth becomes uncomfortable, cut the oldest third into `docs/journal-archive-2026.md`.
+
+---
+
 ## 2026-04-28 — Frontend Playwright validation; wired KB into shopping_assistant
 
 **Goal:** Run the cross-stack v1 validation by having a separate Claude session drive Playwright against the iframe widget on the frontend, talking to the shopping_assistant agent like a real visitor. The backend was already verified end-to-end (see entry below). This was the user-facing layer.
