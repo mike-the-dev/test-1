@@ -36,6 +36,27 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-28 — Frontend Playwright validation; wired KB into shopping_assistant
+
+**Goal:** Run the cross-stack v1 validation by having a separate Claude session drive Playwright against the iframe widget on the frontend, talking to the shopping_assistant agent like a real visitor. The backend was already verified end-to-end (see entry below). This was the user-facing layer.
+
+**What changed:**
+- Frontend Playwright session ran a full happy-path conversation through the iframe: kickoff, onboarding, multi-item cart, checkout link generation. All 4 jailbreak/social-engineering probes refused cleanly. No crashes. Cart math correct. Checkout URL well-formed. Server-authoritative kickoff held — only 1 sentinel POST across 11 turns — verifying the 2026-04-21 cutover live.
+- Highest-value finding: when asked descriptive questions about specific services ("What's included in the Meet and Greet Party?"), shopping_assistant deflected to "ask a team member" instead of grounding in the KB. Diagnosis: shopping_assistant.agent.ts had no lookup_knowledge_base in its allowedToolNames — the agent literally couldn't see the KB tool. lead_capture had it; shopping_assistant did not. Cross-stack issue invisible to backend tests.
+- Fix: added lookup_knowledge_base to shopping_assistant's allowlist; added KNOWLEDGE-BASED QUESTIONS + GROUNDING DISCIPLINE sections to its system prompt, copying the prioritization rule that was already designed into lead_capture's prompt; relaxed the SCOPE-NOT exclusion so the agent can answer hours/locations/policies when documented in the KB. Spec test fixture updated for 5 tools instead of 4. Build clean, 482/482 tests pass.
+
+**Decisions worth remembering:**
+- **The catalog-vs-KB prioritization rule is now consistent across both agents.** list_services is the source of truth for pricing and what's offered; lookup_knowledge_base is the source of truth for descriptive/procedural/policy content. On collision the catalog wins for pricing, the KB wins for policies. If a customer puts prices in a KB PDF, the agent ignores them — list_services is always authoritative for price.
+- **The lookup_knowledge_base contact gate is intentionally relaxed for general info questions.** Areas served, hours, cancellation policy, etc., can be answered before contact capture. The hard gate (collect first/last/email before pricing, cart, or specific service references) still applies.
+- **This fix bypassed the 5-step sub-agent workflow.** User explicitly authorized inline edits for this class of change — configuration and prompt content, no logic. The standing "all code touches via sub-agents" discipline rule remains in place for actual logic touches; one-off bypass for this case only.
+
+**Next:**
+- Frontend agent will run a second Playwright round to confirm the fix resolves the deflection (visitor asks "what's included in X?" → agent grounds in KB instead of deflecting).
+- Cosmetic case normalization on cart preview ("Med Administration" vs "Med administration") is the only other open finding — small backend renderer fix, not blocking.
+- Double-confirmation flow (prose recap → confirm → cart card) and minor naming redundancy ("Sam"/"Sam" in one turn) are cosmetic and explicitly deferred.
+
+---
+
 ## 2026-04-28 — KB v1 verified end-to-end; caught a Phase 7c BullMQ DI bug along the way
 
 **Goal:** Stamp v1 on the knowledge base feature by running a full live verification of the pipeline against real services (Qdrant, Voyage, Anthropic, Redis, DynamoDB) — not more Jest tests, but actual end-to-end smoke. The 482 Jest tests were already green, but tests don't catch what tests don't exercise. Wanted "100% confidence" before declaring done.
