@@ -60,7 +60,7 @@ describe("ChatSessionService", () => {
     mockToolRegistry.getAll.mockReturnValue([]);
     mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
 
-    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000" } });
+    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -804,7 +804,7 @@ describe("ChatSessionService", () => {
     });
 
     it("stamps kickoff_completed_at on first successful kickoff turn", async () => {
-      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000" } });
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
@@ -1037,6 +1037,403 @@ describe("ChatSessionService", () => {
       const result = await service.handleMessage("01TESTSESSION0000000000000", "Hello");
 
       expect(result.reply).toBe("Hello from assistant");
+    });
+  });
+
+  describe("handleMessage — prior-history loader", () => {
+    const SESSION_ULID = "01TESTSESSION0000000000000";
+    const PRIOR_SESSION_ULID = "01PRIORSESSION000000000000";
+    const CUSTOMER_ID = "C#01CUSTOMERULID0000000000000";
+
+    const GATE_OPEN_METADATA = {
+      agent_name: "lead_capture",
+      account_id: "01ACCOUNTULID00000000000000",
+      customer_id: CUSTOMER_ID,
+      continuation_from_session_id: PRIOR_SESSION_ULID,
+      continuation_loaded_at: null,
+    };
+
+    const CUSTOMER_ITEM = {
+      PK: CUSTOMER_ID,
+      SK: CUSTOMER_ID,
+      entity: "CUSTOMER",
+      first_name: "Jane",
+      last_name: "Doe",
+      email: "jane@example.com",
+      phone: "555-0100",
+      latest_session_id: null,
+    };
+
+    function makePriorMessage(sk: string, role: string, text: string) {
+      return {
+        PK: `CHAT_SESSION#${PRIOR_SESSION_ULID}`,
+        SK: sk,
+        role,
+        content: JSON.stringify([{ type: "text", text }]),
+        _createdAt_: "2026-01-01T00:00:00.000Z",
+      };
+    }
+
+    it("1 — loader does NOT fire when continuation_from_session_id is null", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      // Only ONE QueryCommand (current-session history); no second QueryCommand for prior session
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      expect(queryCalls).toHaveLength(1);
+      // Only ONE GetCommand (METADATA); no second GetCommand for Customer
+      const getCalls = ddbMock.commandCalls(GetCommand);
+      expect(getCalls).toHaveLength(1);
+    });
+
+    it("2 — loader does NOT fire when continuation_loaded_at is non-null (already loaded)", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          customer_id: CUSTOMER_ID,
+          continuation_from_session_id: PRIOR_SESSION_ULID,
+          continuation_loaded_at: "2026-01-01T00:00:00.000Z",
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      expect(queryCalls).toHaveLength(1);
+      const getCalls = ddbMock.commandCalls(GetCommand);
+      expect(getCalls).toHaveLength(1);
+    });
+
+    it("3 — loader fires when both gate conditions hold", async () => {
+      ddbMock.on(GetCommand)
+        .resolvesOnce({ Item: GATE_OPEN_METADATA })
+        .resolvesOnce({ Item: { PK: CUSTOMER_ID, SK: CUSTOMER_ID, first_name: "Test", last_name: "User", email: "test@example.com", phone: null } });
+
+      // First QueryCommand (current-session history) → empty; second (prior session) → empty
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      // Two QueryCommands: current-session history + prior-session query
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      expect(queryCalls).toHaveLength(2);
+
+      // Two GetCommands: METADATA + Customer
+      const getCalls = ddbMock.commandCalls(GetCommand);
+      expect(getCalls).toHaveLength(2);
+    });
+
+    it("Customer GetCommand resolves with no Item — continuation_loaded_at NOT set, loader retries on next turn", async () => {
+      // Gate is open but the Customer record is missing (Item: undefined)
+      ddbMock.on(GetCommand)
+        .resolvesOnce({ Item: GATE_OPEN_METADATA })
+        .resolvesOnce({ Item: undefined });
+
+      // current-session history → empty; prior-session query → has a message (but must NOT reach messages)
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [makePriorMessage("MESSAGE#01", "user", "A prior message")] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      // continuation_loaded_at UpdateCommand must NOT have fired
+      const loaderFlagUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.UpdateExpression?.includes("continuation_loaded_at"),
+      );
+      expect(loaderFlagUpdate).toBeUndefined();
+
+      // dynamicSystemContext must NOT be augmented with continuation context
+      const dynamicCtx: string | undefined = mockAnthropicService.sendMessage.mock.calls[0][3];
+      expect(dynamicCtx).toBeUndefined();
+
+      // messages array must NOT include any prior-session turns (only the current user message)
+      const [calledMessages] = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(calledMessages).toHaveLength(1);
+      expect(calledMessages[0]).toEqual({ role: "user", content: [{ type: "text", text: "Hello" }] });
+    });
+
+    it("4 — prior messages are prepended in chronological order", async () => {
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      // Prior session QueryCommand returns items in DESCENDING order (newest first)
+      const priorItemsDescending = [
+        makePriorMessage("MESSAGE#03", "assistant", "Prior assistant turn 3"),
+        makePriorMessage("MESSAGE#02", "user", "Prior user turn 2"),
+        makePriorMessage("MESSAGE#01", "assistant", "Prior assistant turn 1"),
+      ];
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })                        // current-session history
+        .resolvesOnce({ Items: priorItemsDescending });     // prior-session query
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hi today");
+
+      const [calledMessages] = mockAnthropicService.sendMessage.mock.calls[0];
+
+      // First 3 messages should be prior session turns in chronological order (oldest first)
+      expect(calledMessages[0]).toEqual({ role: "assistant", content: [{ type: "text", text: "Prior assistant turn 1" }] });
+      expect(calledMessages[1]).toEqual({ role: "user", content: [{ type: "text", text: "Prior user turn 2" }] });
+      expect(calledMessages[2]).toEqual({ role: "assistant", content: [{ type: "text", text: "Prior assistant turn 3" }] });
+      // Last message is the current user turn
+      expect(calledMessages[calledMessages.length - 1]).toEqual({ role: "user", content: [{ type: "text", text: "Hi today" }] });
+    });
+
+    it("5 — messages array contains NO synthetic profile or framing role:user entries", async () => {
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      const priorItems = [makePriorMessage("MESSAGE#01", "user", "Prior user message")];
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: priorItems });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const [calledMessages] = mockAnthropicService.sendMessage.mock.calls[0];
+
+      // No message should contain profile template text or framing text
+      for (const msg of calledMessages) {
+        for (const block of msg.content) {
+          if (block.type === "text") {
+            expect(block.text).not.toContain("returning customer");
+            expect(block.text).not.toContain("They were just verified");
+          }
+        }
+      }
+    });
+
+    it("6 — visitor profile and framing appear in dynamicSystemContext, not in messages", async () => {
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [] });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const call = mockAnthropicService.sendMessage.mock.calls[0];
+      const dynamicCtx: string | undefined = call[3];
+
+      expect(dynamicCtx).toBeDefined();
+      expect(dynamicCtx).toContain("Name: Jane Doe");
+      expect(dynamicCtx).toContain("Email: jane@example.com");
+      expect(dynamicCtx).toContain("Phone: 555-0100");
+      expect(dynamicCtx).toContain("They were just verified");
+    });
+
+    it("7 — profile uses 'not provided' for null phone", async () => {
+      const customerNoPhone = { ...CUSTOMER_ITEM, phone: null };
+
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: customerNoPhone });
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [] });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const dynamicCtx: string | undefined = mockAnthropicService.sendMessage.mock.calls[0][3];
+
+      expect(dynamicCtx).toContain("Phone: not provided");
+    });
+
+    it("8 — continuation_loaded_at UpdateCommand uses if_not_exists", async () => {
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [] });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const loaderFlagUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.UpdateExpression?.includes("continuation_loaded_at"),
+      );
+
+      expect(loaderFlagUpdate).toBeDefined();
+      expect(loaderFlagUpdate!.args[0].input.UpdateExpression).toContain("if_not_exists(continuation_loaded_at");
+    });
+
+    it("9 — continuation_loaded_at UpdateCommand fires before sendMessage call", async () => {
+      const callOrder: string[] = [];
+
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [] });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).callsFake((input: { UpdateExpression?: string }) => {
+        if (input.UpdateExpression?.includes("continuation_loaded_at")) {
+          callOrder.push("continuation_loaded_at_write");
+        }
+        return Promise.resolve({});
+      });
+
+      mockAnthropicService.sendMessage.mockImplementation(async () => {
+        callOrder.push("sendMessage");
+        return END_TURN_RESPONSE;
+      });
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const loadedAtIdx = callOrder.indexOf("continuation_loaded_at_write");
+      const sendMessageIdx = callOrder.indexOf("sendMessage");
+
+      expect(loadedAtIdx).toBeGreaterThanOrEqual(0);
+      expect(sendMessageIdx).toBeGreaterThanOrEqual(0);
+      expect(loadedAtIdx).toBeLessThan(sendMessageIdx);
+    });
+
+    it("10 — loader failure is non-fatal: Customer GetCommand throws → handleMessage resolves normally", async () => {
+      ddbMock.on(GetCommand)
+        .resolvesOnce({ Item: GATE_OPEN_METADATA })
+        .rejects(new Error("Customer not accessible"));
+
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      const result = await service.handleMessage(SESSION_ULID, "Hello");
+
+      // handleMessage resolves normally despite loader failure
+      expect(result.reply).toBe("Hello from assistant");
+
+      // dynamicSystemContext is undefined (budgetCents not set, loader failed)
+      const dynamicCtx: string | undefined = mockAnthropicService.sendMessage.mock.calls[0][3];
+      expect(dynamicCtx).toBeUndefined();
+
+      // No continuation_loaded_at UpdateCommand since loader failed
+      const loaderFlagUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.UpdateExpression?.includes("continuation_loaded_at"),
+      );
+      expect(loaderFlagUpdate).toBeUndefined();
+    });
+
+    it("11 — loader with empty prior session (zero messages): dynamicSystemContext has profile, no prior turns", async () => {
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      // Prior-session query returns empty
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [] });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const [calledMessages] = mockAnthropicService.sendMessage.mock.calls[0];
+
+      // No prior-session turns prepended; only the current user message
+      expect(calledMessages).toHaveLength(1);
+      expect(calledMessages[0]).toEqual({ role: "user", content: [{ type: "text", text: "Hello" }] });
+
+      // dynamicSystemContext still contains profile + framing
+      const dynamicCtx: string | undefined = mockAnthropicService.sendMessage.mock.calls[0][3];
+      expect(dynamicCtx).toContain("Name: Jane Doe");
+
+      // continuation_loaded_at still set
+      const loaderFlagUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.UpdateExpression?.includes("continuation_loaded_at"),
+      );
+      expect(loaderFlagUpdate).toBeDefined();
+    });
+
+    it("12 — loader injects exactly 20 messages when prior session returns Limit results", async () => {
+      ddbMock.on(GetCommand).resolvesOnce({ Item: GATE_OPEN_METADATA }).resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      // Simulate DDB returning exactly 20 items (Limit applied by DDB)
+      const twentyPriorItems = Array.from({ length: 20 }, (_, i) =>
+        makePriorMessage(`MESSAGE#${String(i).padStart(2, "0")}`, i % 2 === 0 ? "user" : "assistant", `Prior message ${i}`),
+      );
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })           // current-session history
+        .resolvesOnce({ Items: twentyPriorItems });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      const [calledMessages] = mockAnthropicService.sendMessage.mock.calls[0];
+
+      // 20 prior messages + 1 current user message
+      expect(calledMessages).toHaveLength(21);
+    });
+
+    it("13 — no-op for unverified sessions: messages and dynamicSystemContext unchanged", async () => {
+      // Default beforeEach mock has continuation_from_session_id: null → loader never fires
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello from unverified visitor");
+
+      const [calledMessages] = mockAnthropicService.sendMessage.mock.calls[0];
+
+      // Only the current user message — no prior turns
+      expect(calledMessages).toHaveLength(1);
+      expect(calledMessages[0]).toEqual({ role: "user", content: [{ type: "text", text: "Hello from unverified visitor" }] });
+
+      // dynamicSystemContext is undefined (no budget, no continuation)
+      const dynamicCtx: string | undefined = mockAnthropicService.sendMessage.mock.calls[0][3];
+      expect(dynamicCtx).toBeUndefined();
     });
   });
 

@@ -26,13 +26,15 @@ export class CustomerService {
 
   /**
    * Looks up a customer by email within a given account using the GSI.
-   * Returns the bare customerUlid (no C# prefix), or null if not found.
+   * Returns { customerUlid, latestSessionId } on success, or null if not found.
+   * customerUlid is the bare ULID (no C# prefix).
+   * latestSessionId is the bare session ULID from customer.latest_session_id, or null if absent.
    */
   async queryCustomerIdByEmail(
     tableName: string,
     accountUlid: string,
     email: string,
-  ): Promise<string | null> {
+  ): Promise<{ customerUlid: string; latestSessionId: string | null } | null> {
     const result = await this.dynamoDb.send(
       new QueryCommand({
         TableName: tableName,
@@ -64,7 +66,10 @@ export class CustomerService {
       return null;
     }
 
-    return pk.slice(CUSTOMER_PK_PREFIX.length);
+    const latestSessionId =
+      items[0].latest_session_id != null ? String(items[0].latest_session_id) : null;
+
+    return { customerUlid: pk.slice(CUSTOMER_PK_PREFIX.length), latestSessionId };
   }
 
   /**
@@ -84,7 +89,8 @@ export class CustomerService {
     let existingUlid: string | null;
 
     try {
-      existingUlid = await this.queryCustomerIdByEmail(input.tableName, input.accountUlid, input.email);
+      const lookupResult = await this.queryCustomerIdByEmail(input.tableName, input.accountUlid, input.email);
+      existingUlid = lookupResult ? lookupResult.customerUlid : null;
     } catch (queryError: unknown) {
       const errorName = queryError instanceof Error ? queryError.name : "UnknownError";
       this.logger.error(
@@ -152,7 +158,8 @@ export class CustomerService {
       let recoveredUlid: string | null;
 
       try {
-        recoveredUlid = await this.queryCustomerIdByEmail(input.tableName, input.accountUlid, input.email);
+        const recoveredResult = await this.queryCustomerIdByEmail(input.tableName, input.accountUlid, input.email);
+        recoveredUlid = recoveredResult ? recoveredResult.customerUlid : null;
       } catch (reQueryError: unknown) {
         const errorName = reQueryError instanceof Error ? reQueryError.name : "UnknownError";
         this.logger.error(

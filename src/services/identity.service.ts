@@ -120,6 +120,8 @@ export class IdentityService {
       SK: METADATA_SK,
       source,
       customer_id: null,
+      continuation_from_session_id: null,
+      continuation_loaded_at: null,
       _createdAt_: now,
       _lastUpdated_: now,
     } satisfies ChatSessionMetadataRecord;
@@ -130,6 +132,8 @@ export class IdentityService {
       "#src = if_not_exists(#src, :source)",
       "agent_name = if_not_exists(agent_name, :agentName)",
       "customer_id = if_not_exists(customer_id, :customerIdNull)",
+      "continuation_from_session_id = if_not_exists(continuation_from_session_id, :contFromNull)",
+      "continuation_loaded_at = if_not_exists(continuation_loaded_at, :contAtNull)",
     ];
 
     const expressionNames: Record<string, string> = {
@@ -143,6 +147,8 @@ export class IdentityService {
       ":source": metadataItem.source,
       ":agentName": defaultAgentName,
       ":customerIdNull": null,
+      ":contFromNull": null,
+      ":contAtNull": null,
     };
 
     if (accountUlid !== undefined) {

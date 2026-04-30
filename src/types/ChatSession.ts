@@ -73,6 +73,14 @@ export interface ChatSessionMetadataRecord {
   cart_id?: string; // bare cart ULID
   guest_id?: string; // bare guest ULID
   customer_id: string | null; // "C#<customerUlid>" on verification success; null on creation
+  // Stamped by verify_code on success. Stores the bare session ULID that was in
+  // customer.latest_session_id at the moment of verification — i.e., the visitor's
+  // most-recent prior session, before this one. Null if verify_code was never called,
+  // if verification failed, or if the customer had no prior session (first return).
+  continuation_from_session_id: string | null;
+  // Stamped by the prior-history loader on its first fire in a session (ISO 8601).
+  // Non-null value is the gate that prevents the loader from firing a second time.
+  continuation_loaded_at: string | null;
   customer_email?: string;
 }
 
@@ -99,3 +107,11 @@ export type CollectContactInfoTrioCompletedResult = { saved: true; customerFound
 
 /** Result returned by collect_contact_info when the contact trio is incomplete or customer_id is already set. */
 export type CollectContactInfoSavedResult = { saved: true };
+
+/** Visitor profile fields used by the prior-history loader's continuation context block. */
+export interface ChatSessionContinuationProfile {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string | null;
+}

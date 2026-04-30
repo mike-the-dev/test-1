@@ -44,14 +44,14 @@ describe("CustomerService", () => {
   });
 
   describe("queryCustomerIdByEmail", () => {
-    it("returns bare customerUlid when GSI match found", async () => {
+    it("returns { customerUlid, latestSessionId: null } when GSI match found and no latest_session_id", async () => {
       ddbMock.on(QueryCommand).resolves({
         Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER" }],
       });
 
       const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
 
-      expect(result).toBe(CUSTOMER_ULID);
+      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: null });
 
       const queryCalls = ddbMock.commandCalls(QueryCommand);
       expect(queryCalls).toHaveLength(1);
@@ -86,6 +86,60 @@ describe("CustomerService", () => {
       await expect(
         service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com"),
       ).rejects.toThrow("DynamoDB unavailable");
+    });
+  });
+
+  describe("queryCustomerIdByEmail — latestSessionId", () => {
+    it("1 — returns non-null latestSessionId when Customer record has the field", async () => {
+      const PRIOR_SESSION = "01PRIORSESSION00000000000";
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: PRIOR_SESSION }],
+      });
+
+      const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
+
+      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: PRIOR_SESSION });
+    });
+
+    it("2 — returns null latestSessionId when item has no latest_session_id attribute", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER" }],
+      });
+
+      const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
+
+      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: null });
+    });
+
+    it("3 — returns null latestSessionId when latest_session_id is null", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: null }],
+      });
+
+      const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
+
+      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: null });
+    });
+
+    it("4 — lookupOrCreateCustomer still resolves correct customerUlid after refactor", async () => {
+      const PRIOR_SESSION = "01PRIORSESSION";
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: PRIOR_SESSION }],
+      });
+
+      const result = await service.lookupOrCreateCustomer({
+        tableName: TABLE_NAME,
+        accountUlid: ACCOUNT_ULID,
+        email: "test@example.com",
+        firstName: "Jane",
+        lastName: "Doe",
+        phone: null,
+      });
+
+      expect(result).toEqual({ isError: false, customerUlid: CUSTOMER_ULID, created: false });
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
     });
   });
 

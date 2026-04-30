@@ -264,6 +264,38 @@ describe("IdentityService", () => {
       expect(metadataUpdate.UpdateExpression).toContain("customer_id");
     });
 
+    it("schema-default — METADATA UpdateCommand initialises continuation_from_session_id to null on new session creation", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("discord", "888888889", "lead_capture");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const metadataUpdate = updateCalls[0].args[0].input;
+
+      expect(metadataUpdate.ExpressionAttributeValues?.[":contFromNull"]).toBeNull();
+      expect(metadataUpdate.UpdateExpression).toContain("continuation_from_session_id");
+    });
+
+    it("schema-default — METADATA UpdateCommand initialises continuation_loaded_at to null on new session creation", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("discord", "888888890", "lead_capture");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const metadataUpdate = updateCalls[0].args[0].input;
+
+      expect(metadataUpdate.ExpressionAttributeValues?.[":contAtNull"]).toBeNull();
+      expect(metadataUpdate.UpdateExpression).toContain("continuation_loaded_at");
+    });
+
     it("does not issue an UpdateCommand on a cache hit", async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {

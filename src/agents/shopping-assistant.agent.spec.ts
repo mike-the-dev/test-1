@@ -50,4 +50,16 @@ describe("ShoppingAssistantAgent", () => {
     expect(typeof agent.systemPrompt).toBe("string");
     expect(agent.systemPrompt.length).toBeGreaterThan(0);
   });
+
+  it("systemPrompt includes the RETURNING VISITOR FLOW section", () => {
+    expect(agent.systemPrompt).toContain("RETURNING VISITOR FLOW");
+  });
+
+  it("systemPrompt RETURNING VISITOR FLOW section covers verification success path", () => {
+    expect(agent.systemPrompt).toContain("verified: true");
+  });
+
+  it("systemPrompt RETURNING VISITOR FLOW section covers graceful failure path", () => {
+    expect(agent.systemPrompt).toContain("No worries");
+  });
 });

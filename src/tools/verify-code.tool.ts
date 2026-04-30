@@ -127,10 +127,7 @@ export class VerifyCodeTool implements ChatTool {
       return { result: JSON.stringify({ verified: false, reason: "wrong_code" } satisfies VerificationVerifyCodeResult) };
     }
 
-    // Step 6 — verification success: three sequential writes
-
-    // Lookup — find customer by VERIFICATION_CODE record email
-    let customerUlid: string;
+    // Step 6 — verification success: lookup customer, then three sequential writes
 
     if (!accountUlid) {
       this.logger.debug(
@@ -138,21 +135,27 @@ export class VerifyCodeTool implements ChatTool {
       );
     }
 
+    // Lookup — find customer by VERIFICATION_CODE record email.
+    // latestSessionId is captured HERE (before Write B overwrites it on the Customer record).
+    let customerUlid: string;
+    let latestSessionId: string | null;
+
     try {
-      const lookedUpUlid = await this.customerService.queryCustomerIdByEmail(
+      const lookupResult = await this.customerService.queryCustomerIdByEmail(
         tableName,
         accountUlid ?? "",
         storedEmail,
       );
 
-      if (lookedUpUlid === null) {
+      if (lookupResult === null) {
         this.logger.error(
           `[event=verify_customer_not_found sessionUlid=${sessionUlid} errorType=CustomerNotFound]`,
         );
         return { result: JSON.stringify({ verified: false, reason: "no_pending_code" } satisfies VerificationVerifyCodeResult) };
       }
 
-      customerUlid = lookedUpUlid;
+      customerUlid = lookupResult.customerUlid;
+      latestSessionId = lookupResult.latestSessionId;
     } catch (lookupError: unknown) {
       const errorName = lookupError instanceof Error ? lookupError.name : "UnknownError";
       this.logger.error(
@@ -164,15 +167,17 @@ export class VerifyCodeTool implements ChatTool {
     const customerId = `C#${customerUlid}`;
     const now = new Date().toISOString();
 
-    // Write A — set customer_id on session METADATA
+    // Write A — set customer_id and continuation_from_session_id on session METADATA atomically.
+    // continuation_from_session_id captures the prior session ULID BEFORE Write B overwrites
+    // customer.latest_session_id with the current session. Order is critical.
     try {
       await this.dynamoDb.send(
         new UpdateCommand({
           TableName: tableName,
           Key: { PK: sessionPk, SK: METADATA_SK },
-          UpdateExpression: "SET customer_id = :customerId, #lastUpdated = :now",
+          UpdateExpression: "SET customer_id = :customerId, continuation_from_session_id = :contFromSessionId, #lastUpdated = :now",
           ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-          ExpressionAttributeValues: { ":customerId": customerId, ":now": now },
+          ExpressionAttributeValues: { ":customerId": customerId, ":contFromSessionId": latestSessionId, ":now": now },
         }),
       );
     } catch (metadataError: unknown) {

@@ -7,16 +7,29 @@ import { AnthropicService } from "./anthropic.service";
 import { DatabaseConfigService } from "./database-config.service";
 import { ToolRegistryService } from "../tools/tool-registry.service";
 import { AgentRegistryService } from "../agents/agent-registry.service";
-import { ChatSessionMessageRecord, ChatSessionNewMessage } from "../types/ChatSession";
+import { ChatSessionContinuationProfile, ChatSessionMessageRecord, ChatSessionNewMessage } from "../types/ChatSession";
 import { ChatContentBlock, ChatToolResultContentBlock, ChatToolUseContentBlock } from "../types/ChatContent";
 import { WebChatHistoryMessage, WebChatToolOutput } from "../types/WebChat";
 
 const MAX_TOOL_LOOP_ITERATIONS = 10;
 const MAX_HISTORY_MESSAGES = 50;
+const PRIOR_HISTORY_MESSAGE_LIMIT = 20;
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const MESSAGE_SK_PREFIX = "MESSAGE#";
 const METADATA_SK = "METADATA";
 const DEFAULT_AGENT_NAME = "lead_capture";
+
+function buildContinuationContextBlock(profile: ChatSessionContinuationProfile): string {
+  const phone = profile.phone ?? "not provided";
+  return [
+    "The visitor you're talking to is a returning customer:",
+    `- Name: ${profile.firstName} ${profile.lastName}`,
+    `- Email: ${profile.email}`,
+    `- Phone: ${phone}`,
+    "",
+    "They were just verified. The conversation messages below begin with their prior session, then continue with today's session. Briefly acknowledge what you were working on together before answering their current question.",
+  ].join("\n");
+}
 
 // Shared convention between frontend and backend: the frontend auto-sends this
 // exact string as a user message after onboarding completes so the agent can
@@ -199,6 +212,136 @@ export class ChatSessionService {
 
       const newMessages = [newUserMessage];
 
+      // Build the base budget context string (lifted out of the while loop so the
+      // prior-history loader can extend it before the first Anthropic call).
+      const budgetContext =
+        budgetCents !== undefined && budgetCents !== null
+          ? `User context: shopping budget is approximately $${Math.floor(budgetCents / 100)}.`
+          : undefined;
+
+      let dynamicSystemContext = budgetContext;
+
+      // Prior-history loader — fires AT MOST ONCE per session.
+      // Gate: continuation_from_session_id is non-null AND continuation_loaded_at is null.
+      // Both must hold. Verified sessions where the loader has already fired are short-circuited.
+      const continuationFromSessionId: string | null =
+        metadataResult.Item?.continuation_from_session_id ?? null;
+      const continuationLoadedAt: string | null =
+        metadataResult.Item?.continuation_loaded_at ?? null;
+
+      const shouldLoadContinuation =
+        continuationFromSessionId !== null && continuationLoadedAt === null;
+
+      if (shouldLoadContinuation) {
+        try {
+          const priorSessionPk = `${CHAT_SESSION_PK_PREFIX}${continuationFromSessionId}`;
+
+          // customerId is guaranteed non-null here: continuation_from_session_id is only set
+          // by verify_code on success, which also sets customer_id atomically in Write A.
+          const rawCustomerId = customerId ?? "";
+          const customerKey = rawCustomerId.startsWith("C#") ? rawCustomerId : `C#${rawCustomerId}`;
+
+          // Issue both DDB reads in parallel — they are independent.
+          const [customerResult, priorHistoryResult] = await Promise.all([
+            this.dynamoDb.send(
+              new GetCommand({
+                TableName: table,
+                Key: { PK: customerKey, SK: customerKey },
+              }),
+            ),
+            this.dynamoDb.send(
+              new QueryCommand({
+                TableName: table,
+                KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
+                ExpressionAttributeValues: {
+                  ":pk": priorSessionPk,
+                  ":skPrefix": MESSAGE_SK_PREFIX,
+                },
+                ScanIndexForward: false,
+                Limit: PRIOR_HISTORY_MESSAGE_LIMIT,
+              }),
+            ),
+          ]);
+
+          if (!customerResult.Item) {
+            this.logger.warn(
+              `[event=continuation_loader_customer_not_found sessionUlid=${sessionUlid}]`,
+            );
+          }
+
+          if (customerResult.Item) {
+            const customerProfile = customerResult.Item;
+
+            // Reverse prior messages from descending to chronological order (oldest first).
+            const priorItems = priorHistoryResult.Items ?? [];
+            const priorItemsChronological = [...priorItems].reverse();
+
+            const priorMessagesChronological = priorItemsChronological.map((item): ChatSessionNewMessage => {
+              const rawContent = item.content;
+              const role = item.role;
+              try {
+                const parsed: ChatContentBlock[] = JSON.parse(rawContent);
+                return { role, content: parsed };
+              } catch {
+                return { role, content: [{ type: "text", text: rawContent }] };
+              }
+            });
+
+            // Prepend prior session turns to the messages array:
+            // [prior_turn_1, ..., prior_turn_N, currentHistory_turn_1, ..., newUserMessage]
+            // Two parallel turns may both run the loader — they both splice their local
+            // messages array (no shared state). The if_not_exists on continuation_loaded_at
+            // ensures only the first writer's timestamp is persisted.
+            messages.unshift(...priorMessagesChronological);
+
+            // Build the dynamic context string combining visitor profile and framing.
+            const continuationContextBlock = buildContinuationContextBlock({
+              firstName: String(customerProfile.first_name ?? ""),
+              lastName: String(customerProfile.last_name ?? ""),
+              email: String(customerProfile.email ?? ""),
+              phone: customerProfile.phone != null ? String(customerProfile.phone) : null,
+            });
+
+            dynamicSystemContext = budgetContext
+              ? `${budgetContext}\n\n${continuationContextBlock}`
+              : continuationContextBlock;
+
+            this.logger.log(
+              `[event=continuation_loaded sessionUlid=${sessionUlid} priorCount=${priorMessagesChronological.length}]`,
+            );
+
+            // Stamp continuation_loaded_at with if_not_exists to handle races between parallel turns.
+            // Best-effort: failure here is non-fatal — worst case the loader fires again next turn
+            // (idempotent in effect) but continuation_loaded_at not being set means it could re-run.
+            const loaderTimestamp = new Date().toISOString();
+            try {
+              await this.dynamoDb.send(
+                new UpdateCommand({
+                  TableName: table,
+                  Key: { PK: sessionPk, SK: METADATA_SK },
+                  UpdateExpression:
+                    "SET continuation_loaded_at = if_not_exists(continuation_loaded_at, :now), #lastUpdated = :now",
+                  ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
+                  ExpressionAttributeValues: { ":now": loaderTimestamp },
+                }),
+              );
+            } catch (flagError: unknown) {
+              const errorName = flagError instanceof Error ? flagError.name : "UnknownError";
+              this.logger.warn(
+                `[event=continuation_flag_write_failed errorType=${errorName} sessionUlid=${sessionUlid}]`,
+              );
+            }
+          }
+        } catch (loaderError: unknown) {
+          const errorName = loaderError instanceof Error ? loaderError.name : "UnknownError";
+          this.logger.warn(
+            `[event=continuation_load_failed errorType=${errorName} sessionUlid=${sessionUlid}]`,
+          );
+          // Non-fatal: messages and dynamicSystemContext stay at their pre-loader state.
+          // continuation_loaded_at is NOT set — the loader will retry on the next turn.
+        }
+      }
+
       let iteration = 0;
 
       while (iteration < MAX_TOOL_LOOP_ITERATIONS) {
@@ -207,11 +350,6 @@ export class ChatSessionService {
         this.logger.log(
           `Calling Anthropic [sessionUlid=${sessionUlid} iteration=${iteration} historySize=${messages.length}]`,
         );
-
-        const dynamicSystemContext =
-          budgetCents !== undefined && budgetCents !== null
-            ? `User context: shopping budget is approximately $${Math.floor(budgetCents / 100)}.`
-            : undefined;
 
         const response = await this.anthropicService.sendMessage(
           [...messages],

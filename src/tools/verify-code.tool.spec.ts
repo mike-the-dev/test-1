@@ -51,7 +51,7 @@ describe("VerifyCodeTool", () => {
     ddbMock.reset();
     jest.clearAllMocks();
 
-    mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(CUSTOMER_ULID);
+    mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({ customerUlid: CUSTOMER_ULID, latestSessionId: "01PRIORSESSIONULID000000000" });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -90,13 +90,15 @@ describe("VerifyCodeTool", () => {
       expect(parsed.verified).toBe(true);
       expect(parsed.customerId).toBe(`C#${CUSTOMER_ULID}`);
 
-      // METADATA UpdateCommand called with customer_id
+      // METADATA UpdateCommand called with customer_id and continuation_from_session_id
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find((call) =>
         (call.args[0].input.Key as Record<string, string>).SK === "METADATA",
       );
       expect(metadataUpdate).toBeDefined();
       expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":customerId"]).toBe(`C#${CUSTOMER_ULID}`);
+      expect(metadataUpdate!.args[0].input.UpdateExpression).toContain("continuation_from_session_id");
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBe("01PRIORSESSIONULID000000000");
 
       // Customer UpdateCommand called with latest_session_id
       const customerUpdate = updateCalls.find((call) =>
@@ -194,7 +196,7 @@ describe("VerifyCodeTool", () => {
         .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
         .resolves({ Item: makeVerificationCodeItem() });
 
-      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
+      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);  // null whole result = no customer
 
       const result = await tool.execute({ code: VALID_CODE }, TEST_CONTEXT);
 
@@ -264,6 +266,71 @@ describe("VerifyCodeTool", () => {
         ACCOUNT_ULID,
         LIVE_EMAIL,
       );
+    });
+
+    it("9 — Write A sets continuation_from_session_id to null when customer has no prior session", async () => {
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
+        .resolves({ Item: makeVerificationCodeItem() });
+
+      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({ customerUlid: CUSTOMER_ULID, latestSessionId: null });
+
+      ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(DeleteCommand).resolves({});
+
+      const result = await tool.execute({ code: VALID_CODE }, TEST_CONTEXT);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(parsed.verified).toBe(true);
+
+      const metadataUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.Key?.SK === "METADATA",
+      );
+      expect(metadataUpdate).toBeDefined();
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBeNull();
+    });
+
+    it("10 — Write A sets continuation_from_session_id to the prior session ULID (explicit check)", async () => {
+      const PRIOR_SESSION = "01PRIORSESSIONULID000000000";
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
+        .resolves({ Item: makeVerificationCodeItem() });
+
+      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({ customerUlid: CUSTOMER_ULID, latestSessionId: PRIOR_SESSION });
+
+      ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(DeleteCommand).resolves({});
+
+      await tool.execute({ code: VALID_CODE }, TEST_CONTEXT);
+
+      const metadataUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.Key?.SK === "METADATA",
+      );
+      expect(metadataUpdate).toBeDefined();
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBe(PRIOR_SESSION);
+    });
+
+    it("11 — verify_code failure path: continuation_from_session_id is NOT written when code is wrong", async () => {
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
+        .resolves({ Item: makeVerificationCodeItem({ attempts: 0 }) });
+
+      ddbMock.on(UpdateCommand).resolves({});
+
+      const result = await tool.execute({ code: "999999" }, TEST_CONTEXT);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(parsed.verified).toBe(false);
+      expect(parsed.reason).toBe("wrong_code");
+
+      // Only the attempts increment UpdateCommand fires; no METADATA UpdateCommand with continuation_from_session_id
+      const metadataUpdate = ddbMock.commandCalls(UpdateCommand).find((call) =>
+        call.args[0].input.Key?.SK === "METADATA",
+      );
+      expect(metadataUpdate).toBeUndefined();
     });
   });
 });
