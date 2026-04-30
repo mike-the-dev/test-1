@@ -21,16 +21,23 @@ export interface EmailReplyParsedInboundReply {
   inboundMessageId: string;
 }
 
+export enum EmailReplyLocalPartClassification {
+  SESSION_ULID = "SESSION_ULID",
+  ASSISTANT_ENTRY = "ASSISTANT_ENTRY",
+  UNRECOGNIZED = "UNRECOGNIZED",
+}
+
 export type EmailReplyInboundProcessOutcome =
   | "processed"
   | "duplicate"
   | "rejected_unknown_session"
   | "rejected_sender_mismatch"
-  | "rejected_malformed";
+  | "rejected_malformed"
+  | "rejected_unknown_account";
 
 export interface EmailReplyRecord {
   PK: string;
   SK: string;
   processedAt: string;
-  sessionUlid: string;
+  sessionUlid: string | null;
 }

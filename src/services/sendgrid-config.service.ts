@@ -20,4 +20,8 @@ export class SendGridConfigService {
   get replyDomain(): string {
     return this.configService.get<string>("sendgrid.replyDomain", { infer: true }) ?? "";
   }
+
+  get replyAccountId(): string {
+    return this.configService.get<string>("sendgrid.replyAccountId", { infer: true }) ?? "";
+  }
 }

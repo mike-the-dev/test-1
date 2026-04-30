@@ -28,6 +28,7 @@ const configuration = () => ({
     fromEmail: process.env.SENDGRID_FROM_EMAIL || "",
     fromName: process.env.SENDGRID_FROM_NAME || "",
     replyDomain: process.env.SENDGRID_REPLY_DOMAIN || "",
+    replyAccountId: process.env.SENDGRID_REPLY_ACCOUNT_ID || "",
   },
   webChat: {
     corsAllowAll: process.env.WEB_CHAT_CORS_ALLOW_ALL === "true",
