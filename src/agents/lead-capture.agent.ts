@@ -109,5 +109,7 @@ BOUNDARIES / JAILBREAK RESISTANCE:
     "send_email",
     "list_services",
     "lookup_knowledge_base",
+    "request_verification_code",
+    "verify_code",
   ];
 }

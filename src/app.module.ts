@@ -33,6 +33,9 @@ import { ListServicesTool } from "./tools/list-services.tool";
 import { LookupKnowledgeBaseTool } from "./tools/lookup-knowledge-base.tool";
 import { PreviewCartTool } from "./tools/preview-cart.tool";
 import { GenerateCheckoutLinkTool } from "./tools/generate-checkout-link.tool";
+import { RequestVerificationCodeTool } from "./tools/request-verification-code.tool";
+import { VerifyCodeTool } from "./tools/verify-code.tool";
+import { CustomerService } from "./services/customer.service";
 import { EmailReplyService } from "./services/email-reply.service";
 import { KB_INGESTION_QUEUE_NAME } from "./utils/knowledge-base/constants";
 import { KnowledgeBaseController } from "./controllers/knowledge-base.controller";
@@ -114,6 +117,9 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     LookupKnowledgeBaseTool,
     PreviewCartTool,
     GenerateCheckoutLinkTool,
+    RequestVerificationCodeTool,
+    VerifyCodeTool,
+    CustomerService,
     ToolRegistryService,
     LeadCaptureAgent,
     ShoppingAssistantAgent,

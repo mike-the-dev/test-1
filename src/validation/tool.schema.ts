@@ -67,3 +67,11 @@ export const lookupKnowledgeBaseInputSchema = z
   .strict();
 
 export type LookupKnowledgeBaseInput = z.infer<typeof lookupKnowledgeBaseInputSchema>;
+
+export const requestVerificationCodeInputSchema = z.object({}).strict();
+export type RequestVerificationCodeInput = z.infer<typeof requestVerificationCodeInputSchema>;
+
+export const verifyCodeInputSchema = z.object({
+  code: z.string().length(6).regex(/^\d{6}$/, "code must be a 6-digit numeric string"),
+});
+export type VerifyCodeInput = z.infer<typeof verifyCodeInputSchema>;

@@ -1,18 +1,17 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
-import { ConfigService } from "@nestjs/config";
 import {
   BatchGetCommand,
   DynamoDBDocumentClient,
   GetCommand,
   NativeAttributeValue,
   PutCommand,
-  QueryCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
+import { CustomerService } from "../services/customer.service";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
 import {
   GuestCartCustomerRecord,
@@ -63,7 +62,6 @@ function resolveServicePrice(raw: NativeAttributeValue | undefined): number {
 @Injectable()
 export class PreviewCartTool implements ChatTool {
   private readonly logger = new Logger(PreviewCartTool.name);
-  private readonly gsiName: string;
 
   readonly name = "preview_cart";
 
@@ -115,12 +113,9 @@ export class PreviewCartTool implements ChatTool {
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
-    private readonly configService: ConfigService,
     private readonly slackAlertService: SlackAlertService,
-  ) {
-    this.gsiName =
-      this.configService.get<string>("webChat.domainGsiName", { infer: true }) ?? "GSI1";
-  }
+    private readonly customerService: CustomerService,
+  ) {}
 
   async execute(input: unknown, context: ChatToolExecutionContext): Promise<ChatToolExecutionResult> {
     const { sessionUlid, accountUlid } = context;
@@ -532,45 +527,6 @@ export class PreviewCartTool implements ChatTool {
     return { result: JSON.stringify(payload) };
   }
 
-  private async queryCustomerUlidByEmail(
-    tableName: string,
-    accountUlid: string,
-    email: string,
-  ): Promise<string | null> {
-    const result = await this.dynamoDb.send(
-      new QueryCommand({
-        TableName: tableName,
-        IndexName: this.gsiName,
-        KeyConditionExpression: "#gsi1pk = :pk AND #gsi1sk = :sk",
-        FilterExpression: "#entity = :customer",
-        ExpressionAttributeNames: {
-          "#gsi1pk": "GSI1-PK",
-          "#gsi1sk": "GSI1-SK",
-          "#entity": "entity",
-        },
-        ExpressionAttributeValues: {
-          ":pk": `ACCOUNT#${accountUlid}`,
-          ":sk": `EMAIL#${email}`,
-          ":customer": "CUSTOMER",
-        },
-      }),
-    );
-
-    const items = result.Items ?? [];
-
-    if (items.length === 0) {
-      return null;
-    }
-
-    const pk = String(items[0].PK ?? "");
-
-    if (!pk.startsWith("C#")) {
-      return null;
-    }
-
-    return pk.slice(2);
-  }
-
   private async resolveCustomerUlid(
     tableName: string,
     accountUlid: string,
@@ -585,7 +541,7 @@ export class PreviewCartTool implements ChatTool {
     let existingUlid: string | null;
 
     try {
-      existingUlid = await this.queryCustomerUlidByEmail(tableName, accountUlid, email);
+      existingUlid = await this.customerService.queryCustomerIdByEmail(tableName, accountUlid, email);
     } catch (queryError: unknown) {
       const queryErrorName = queryError instanceof Error ? queryError.name : "UnknownError";
       this.logger.error(
@@ -620,6 +576,7 @@ export class PreviewCartTool implements ChatTool {
       total_abandoned_carts: 0,
       total_orders: 0,
       total_spent: 0,
+      latest_session_id: null,
       _createdAt_: now,
       _lastUpdated_: now,
     };
@@ -652,7 +609,7 @@ export class PreviewCartTool implements ChatTool {
       let recoveredUlid: string | null;
 
       try {
-        recoveredUlid = await this.queryCustomerUlidByEmail(tableName, accountUlid, email);
+        recoveredUlid = await this.customerService.queryCustomerIdByEmail(tableName, accountUlid, email);
       } catch (reQueryError: unknown) {
         const reQueryErrorName = reQueryError instanceof Error ? reQueryError.name : "UnknownError";
         this.logger.error(

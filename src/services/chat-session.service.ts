@@ -79,6 +79,7 @@ export class ChatSessionService {
       const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
       const accountUlid = metadataResult.Item?.account_id;
       const budgetCents: number | undefined = metadataResult.Item?.budget_cents;
+      const customerId: string | null = metadataResult.Item?.customer_id ?? null;
 
       const isKickoff = userMessage === SESSION_KICKOFF_MARKER;
       const existingKickoffCompletedAt: string | undefined = metadataResult.Item?.kickoff_completed_at;
@@ -337,6 +338,32 @@ export class ChatSessionService {
           if (errorName !== "ConditionalCheckFailedException") {
             this.logger.warn(
               `Session pointer lastMessageAt update failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
+            );
+          }
+        }
+      }
+
+      // Best-effort: latest_session_id update — fires only when this session is linked
+      // to a known customer. Guards at the call site so unverified sessions pay zero
+      // DDB cost. Failure is non-propagating.
+      if (customerId !== null) {
+        try {
+          const customerKey = customerId.startsWith("C#") ? customerId : `C#${customerId}`;
+          await this.dynamoDb.send(
+            new UpdateCommand({
+              TableName: table,
+              Key: { PK: customerKey, SK: customerKey },
+              UpdateExpression: "SET latest_session_id = :sessionUlid, #lastUpdated = :now",
+              ConditionExpression: "attribute_exists(PK)",
+              ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
+              ExpressionAttributeValues: { ":sessionUlid": sessionUlid, ":now": now },
+            }),
+          );
+        } catch (latestSessionError) {
+          const errorName = latestSessionError instanceof Error ? latestSessionError.name : "UnknownError";
+          if (errorName !== "ConditionalCheckFailedException") {
+            this.logger.warn(
+              `latest_session_id update failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
             );
           }
         }

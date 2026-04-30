@@ -898,6 +898,146 @@ describe("ChatSessionService", () => {
       expect(mockAnthropicService.sendMessage).not.toHaveBeenCalled();
       expect(result).toEqual({ reply: "", toolOutputs: [] });
     });
+
+    it("latest_session_id guard — UpdateCommand fires on Customer record when customer_id is non-null", async () => {
+      const CUSTOMER_ID = "C#01CUSTOMERULID0000000000000";
+
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          customer_id: CUSTOMER_ID,
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const customerUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK === CUSTOMER_ID,
+      );
+      expect(customerUpdate).toBeDefined();
+      expect(customerUpdate!.args[0].input.Key?.PK).toBe("C#01CUSTOMERULID0000000000000");
+      expect(customerUpdate!.args[0].input.Key?.SK).toBe("C#01CUSTOMERULID0000000000000");
+      expect(customerUpdate!.args[0].input.ExpressionAttributeValues?.[":sessionUlid"]).toBe(
+        "01TESTSESSION0000000000000",
+      );
+    });
+
+    it("latest_session_id guard — normalizes bare-ULID customer_id to C# prefix in UpdateCommand Key", async () => {
+      const BARE_CUSTOMER_ID = "01CUSTOMERULID0000000000000";
+
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          customer_id: BARE_CUSTOMER_ID,
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const customerUpdate = updateCalls.find(
+        (call) => call.args[0].input.Key?.PK === `C#${BARE_CUSTOMER_ID}`,
+      );
+      expect(customerUpdate).toBeDefined();
+      expect(customerUpdate!.args[0].input.Key?.PK).toBe("C#01CUSTOMERULID0000000000000");
+      expect(customerUpdate!.args[0].input.Key?.SK).toBe("C#01CUSTOMERULID0000000000000");
+      expect(customerUpdate!.args[0].input.ExpressionAttributeValues?.[":sessionUlid"]).toBe(
+        "01TESTSESSION0000000000000",
+      );
+    });
+
+    it("latest_session_id guard — prefixed customer_id is not double-prefixed in UpdateCommand Key", async () => {
+      const PREFIXED_CUSTOMER_ID = "C#01CUSTOMERULID0000000000000";
+
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          customer_id: PREFIXED_CUSTOMER_ID,
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const customerUpdate = updateCalls.find(
+        (call) => String(call.args[0].input.Key?.PK ?? "").startsWith("C#"),
+      );
+      expect(customerUpdate).toBeDefined();
+      // Must be exactly "C#..." not "C#C#..."
+      expect(customerUpdate!.args[0].input.Key?.PK).toBe("C#01CUSTOMERULID0000000000000");
+      expect(customerUpdate!.args[0].input.Key?.SK).toBe("C#01CUSTOMERULID0000000000000");
+    });
+
+    it("latest_session_id guard — UpdateCommand does NOT fire on Customer record when customer_id is null", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          customer_id: null,
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const customerUpdate = updateCalls.find(
+        (call) => String(call.args[0].input.Key?.PK ?? "").startsWith("C#"),
+      );
+      expect(customerUpdate).toBeUndefined();
+    });
+
+    it("latest_session_id guard — update failure does not propagate; handleMessage resolves normally", async () => {
+      const CUSTOMER_ID = "C#01CUSTOMERULID0000000000000";
+
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "01ACCOUNTULID00000000000000",
+          customer_id: CUSTOMER_ID,
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+
+      // Make the Customer UpdateCommand reject; other UpdateCommands succeed
+      ddbMock.on(UpdateCommand).callsFake((input: { Key?: { PK?: unknown } }) => {
+        const pk = String(input.Key?.PK ?? "");
+        if (pk.startsWith("C#")) {
+          return Promise.reject(Object.assign(new Error("Customer update failed"), { name: "InternalServerError" }));
+        }
+        return Promise.resolve({});
+      });
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      const result = await service.handleMessage("01TESTSESSION0000000000000", "Hello");
+
+      expect(result.reply).toBe("Hello from assistant");
+    });
   });
 
   describe("getHistoryForClient", () => {

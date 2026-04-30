@@ -37,6 +37,7 @@ export interface GuestCartCustomerRecord {
   total_abandoned_carts: number;
   total_orders: number;
   total_spent: number;
+  latest_session_id: string | null;
   _createdAt_: string;
   _lastUpdated_: string;
 }

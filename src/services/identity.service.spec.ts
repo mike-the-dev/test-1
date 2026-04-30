@@ -248,6 +248,22 @@ describe("IdentityService", () => {
       expect(metadataUpdate.UpdateExpression).toContain("agent_name");
     });
 
+    it("schema-default — METADATA UpdateCommand initialises customer_id to null on new session creation", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.lookupOrCreateSession("discord", "888888888", "lead_capture");
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const metadataUpdate = updateCalls[0].args[0].input;
+
+      expect(metadataUpdate.ExpressionAttributeValues?.[":customerIdNull"]).toBeNull();
+      expect(metadataUpdate.UpdateExpression).toContain("customer_id");
+    });
+
     it("does not issue an UpdateCommand on a cache hit", async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {

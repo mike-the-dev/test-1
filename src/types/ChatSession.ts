@@ -72,7 +72,7 @@ export interface ChatSessionMetadataRecord {
   // and read by generate_checkout_link to build the checkout URL.
   cart_id?: string; // bare cart ULID
   guest_id?: string; // bare guest ULID
-  customer_id?: string; // bare customer ULID (no C# prefix)
+  customer_id: string | null; // "C#<customerUlid>" on verification success; null on creation
   customer_email?: string;
 }
 

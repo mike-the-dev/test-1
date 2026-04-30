@@ -14,6 +14,7 @@ import { mockClient } from "aws-sdk-client-mock";
 import { PreviewCartTool } from "./preview-cart.tool";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
+import { CustomerService } from "../services/customer.service";
 import { SlackAlertService } from "../services/slack-alert.service";
 
 jest.mock("ulid", () => ({
@@ -129,6 +130,7 @@ async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
   return Test.createTestingModule({
     providers: [
       PreviewCartTool,
+      CustomerService,
       {
         provide: DYNAMO_DB_CLIENT,
         useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })),
@@ -651,6 +653,39 @@ describe("PreviewCartTool", () => {
 
       expect(result.isError).toBeUndefined();
       expect(JSON.parse(result.result)).toHaveProperty("cart_id");
+    });
+  });
+
+  describe("13. Schema-default — new Customer record includes latest_session_id: null", () => {
+    it("writes latest_session_id: null in the PutCommand for a new Customer record", async () => {
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
+        Item: makeContactInfoItem(),
+      });
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
+        Item: makeMetadataItem(),
+      });
+
+      // No existing customer — GSI returns empty
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      // Customer PutCommand should fire
+      ddbMock.on(PutCommand).resolves({});
+
+      ddbMock.on(BatchGetCommand).resolves({
+        Responses: { [TABLE_NAME]: [makeServiceItem()] },
+        UnprocessedKeys: {},
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 1 }] }, context);
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      // Find the customer PutCommand (PK starts with C#)
+      const customerPut = putCalls.find((call) =>
+        String(call.args[0].input.Item?.PK ?? "").startsWith("C#"),
+      );
+      expect(customerPut).toBeDefined();
+      expect(customerPut!.args[0].input.Item?.latest_session_id).toBeNull();
     });
   });
 });
