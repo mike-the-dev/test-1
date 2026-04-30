@@ -3,3 +3,4 @@
 - [NestJS 11 multi-provider pattern](feedback_nestjs_multi_provider.md) — NestJS 11 does not support `multi: true` on custom token providers — use `useFactory` to collect instances into an array instead
 - [KB Phase 7c BullMQ pattern](project_kb_phase7c_bullmq.md) — How BullMQ processor, queue injection, and test mocking are wired into the KB ingestion pipeline
 - [mrkdwn escape assertions in tests](feedback_mrkdwn_escape_test_assertions.md) — Assert &amp; not & in Slack block text — escapeSlackMrkdwn transforms item names before interpolation
+- [crypto createHash spy in Jest](feedback_crypto_spy_pattern.md) — Dynamic import or spy on named crypto imports doesn't work in Jest; assert observable behavior instead
