@@ -36,6 +36,30 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-29 — Cross-channel identity & session continuation — design spec complete
+
+**Goal:** Recognize a returning visitor across channels (chat + email today, SMS later) so their conversation continues instead of restarting. Identity is the email; the canonical entity is the existing Customer record (already created by `preview_cart` with a `(ACCOUNT, EMAIL)` GSI). The design extends that foundation upstream to email-capture moment, adds a verification flow for chat, and links chat sessions to customers so prior history can be loaded on continuation.
+
+**What changed:**
+- Brainstormed the full design with the user via the visual companion across ~12 rounds of locked-in conceptual decisions: scope (returning-visitor recognition + bidirectional chat ↔ email continuation + SMS architectural readiness); chat trust model (B+C+A merged: verify-via-email-code, soft welcome, full continuation); email-inbound trust (naturally trusted via SPF/DKIM); agent flow (tool-driven via two new tools + a side-effect on `collect_contact_info`); verification mechanics (DDB-stored, 6-digit numeric, 10-min TTL, SHA-256 hashed at rest, 5-attempt cap); session-customer linkage (two new fields, no new GSI for v1); email-inbound continuation freshness (7-day window); email addressing (global `assistant@reply.<merchant>` entry word, per-merchant subdomain).
+- Wrote `docs/cross-channel-identity/design.md` (366 lines) with the full design, decisions log, implementation decomposition sketch (4 phases proposed), and open implementation questions for phase planning.
+- Wrote `docs/cross-channel-identity/HANDOFF.md` for the fresh agent that will pick up implementation.
+- Added `.superpowers/` to `.gitignore` (brainstorming session workspace shouldn't pollute history).
+- **No implementation work started yet.** Design is the artifact; implementation handed off to a fresh Claude Code session for context-budget reasons.
+
+**Decisions worth remembering:**
+- **The Customer record + email GSI already exist** (`src/tools/preview-cart.tool.ts:604–625`). This is the data foundation everything else extends. We don't design a new entity — we extend the existing one upstream and downstream.
+- **Slack is not a PII-safe destination** (locked from Phase 8b-followup) — the same rule extends here. No verification codes, no customer profiles, no continuation events surface to Slack with PII.
+- **Naming convention for new fields: `_id` / `Id`, never `_ulid` / `Ulid`.** Existing TS variable names (`sessionUlid`, etc.) are not refactored — convention applies forward only.
+- **Spec vs. phase brief are different artifacts.** Design spec = the THINKING (one document covering the whole feature). PROMPT_DISCOVERY_SERVICE-formatted phase brief = the DOING blueprint (one per shippable phase). Spec lives at `docs/cross-channel-identity/`; phase briefs continue to live at `docs/knowledge-base/tasks/`.
+
+**Next:**
+- A fresh Claude Code session picks up from here. They read the design + HANDOFF + journal, then draft Phase 1's task brief (data model + verification primitives) per the PROMPT_DISCOVERY_SERVICE template, surface for user review, and dispatch the standard 5-step sub-agent workflow.
+- Handoff exists because the original orchestrator (this session) hit ~70% context — clean break point before any implementation work began was preferable to running out mid-phase.
+- The 4 proposed phases (data model + verification primitives → chat-side continuation → email-inbound continuation → polish) are sketched in the design's decomposition section. Each ships through the standard 5-step workflow.
+
+---
+
 ## 2026-04-28 — Slack alert enrichment with cart details (Phase 8b-followup)
 
 **Goal:** Address feedback from the frontend Playwright session that the existing Slack alerts (cart_created, checkout_link_generated) felt thin — the team got accountId + sessionUlid but no business context. Enrich both alerts with the cart ID and a per-item breakdown so the team has actionable signal in real time, while holding a hard line that no customer PII enters Slack under any circumstance.

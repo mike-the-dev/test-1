@@ -32,3 +32,7 @@ PROMPT_DISCOVERY_SERVICE.md
 # local-only scratch file for pasting Playwright transcripts during dev.
 # Not meant to be tracked.
 CURRENT_CONVERSATION_TEST.md
+
+# brainstorming session workspace (mockups, state files for the visual companion).
+# Local-only — sessions don't survive across machines and shouldn't pollute history.
+.superpowers/
