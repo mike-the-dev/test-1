@@ -1,4 +1,4 @@
-- [Core Service Foundation Architecture](project_architecture.md) — Three-layer config pattern, DynamoDB/Anthropic/Discord service design, and orchestration flow decisions
+- [Core Service Foundation Architecture](project_architecture.md) — Three-layer config pattern, DynamoDB/Anthropic service design, orchestration flow (Discord removed 2026-04-30)
 - [Structured Logging Conventions](project_logging_conventions.md) — Logger field placement, log level gating, privacy rules, key=value format, and try/catch re-throw pattern
 - [Knowledge Base Phase 4 ingestion decisions](project_kb_phase4_notes.md) — User-approved overrides: A#-prefix handling, createPayloadIndex placement, type renames, no startup dimension guard
 - [CCI Phase 2a review findings](project_cci2a_review.md) — GetCommand gating gap (brief vs plan divergence), spec-13 weakness, all MUST FIX invariants passed

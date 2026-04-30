@@ -24,11 +24,10 @@ An **identity** is a mapping from an external ID to a session ULID. External IDs
 
 | source | externalId example |
 |---|---|
-| `discord` | Discord user ID (`123456789012345678`) |
+| `web` | guest ULID stored in the browser |
 | `email` | `alice@example.com` |
 | `sms` (future) | phone number |
 | `voice` (future) | phone number |
-| `web` (future) | guest cookie / auth user ID |
 
 The identity record sits at PK/SK `IDENTITY#<source>#<externalId>` and points at the session ULID. `IdentityService.lookupOrCreateSession(source, externalId, agentName)` is the single entry point: if the identity exists, return its session ULID; if not, create a new session and bind the given agent to it.
 
@@ -41,12 +40,12 @@ This design lets one human be reachable across multiple channels while keeping a
 A **channel** is an external surface through which messages flow. Each channel has:
 
 - An **adapter** — a NestJS service or controller that owns the channel's SDK or webhook.
-- A **source name** — a short string (`discord`, `email`, etc.) used in identity records.
-- Its own reply mechanism — Discord DM, threaded email reply, etc.
+- A **source name** — a short string (`web`, `email`, etc.) used in identity records.
+- Its own reply mechanism — threaded email reply, web chat response, etc.
 
 Channels today:
 
-- [Discord](./channels/discord.md) — `DiscordService` (`src/services/discord.service.ts`)
+- Web chat — `WebChatController` (`src/controllers/web-chat.controller.ts`)
 - [Email](./channels/email.md) — `SendgridWebhookController` + `EmailReplyService` for inbound, `EmailService` for outbound
 
 Channels planned:
@@ -130,10 +129,9 @@ Messages are stored in DynamoDB with `content` as a JSON-stringified array of co
 
 Wherever a `source` value appears, it is a lowercase snake_case string identifying the channel:
 
-- `discord`
+- `web`
 - `email`
 - `sms` (planned)
 - `voice` (planned)
-- `web` (planned)
 
 Pick a short stable value when adding a new channel — it becomes part of DynamoDB keys and cannot be changed casually.

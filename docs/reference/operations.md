@@ -30,13 +30,6 @@ Validated at boot by `src/config/env.schema.ts`. Typed access goes through the p
 | `ANTHROPIC_API_KEY` | Yes (for chat) | — | API key from console.anthropic.com. |
 | `ANTHROPIC_MODEL` | No | `claude-opus-4-6` | Override to hot-swap models without code changes. |
 
-### Discord
-
-| Var | Required | Default | Notes |
-|---|---|---|---|
-| `DISCORD_BOT_TOKEN` | No | — | If unset, the Discord adapter stays idle; the rest of the app continues to work. |
-| `DISCORD_GUILD_ID` | No | — | Optional scoping for testing. |
-
 ### SendGrid / Email
 
 | Var | Required | Default | Notes |
@@ -72,11 +65,10 @@ Set `DYNAMODB_ENDPOINT=http://localhost:8000` in `.env.local`. You will need to 
 
 The app is a single NestJS process that simultaneously:
 
-- Serves HTTP (port `PORT`) — currently just the SendGrid inbound webhook and any future HTTP entry points.
-- Holds an open websocket to the Discord gateway via `DiscordService`.
-- Makes outbound calls to Anthropic, DynamoDB, and SendGrid.
+- Serves HTTP (port `PORT`) — the web chat API, SendGrid inbound webhook, and knowledge base endpoints.
+- Makes outbound calls to Anthropic, DynamoDB, SendGrid, Qdrant, and Voyage.
 
-There is no background worker, no queue, no secondary process. Scaling horizontally is straightforward for the HTTP side — Discord gateway connections require a singleton or sharding strategy if you run more than one replica.
+There is no background worker beyond the BullMQ knowledge-base ingestion queue. Scaling horizontally is straightforward for the HTTP side.
 
 ---
 

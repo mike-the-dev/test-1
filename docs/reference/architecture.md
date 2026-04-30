@@ -8,7 +8,7 @@ High-level overview of how `ai-chat-session-api` works.
 
 A NestJS backend that hosts an agentic chat layer. Messages can arrive from multiple channels, but the core of the system does not know or care where a message came from. Every conversation is a **session** identified by a ULID, and every session is bound to a single **agent** that determines the system prompt and which tools are available.
 
-The system is deliberately unopinionated about clients. Adding a new channel (Discord, email, SMS, voice, web UI) does not require changes to the core services — only a new adapter that translates inbound channel events into calls on `IdentityService` and `ChatSessionService`.
+The system is deliberately unopinionated about clients. Adding a new channel (email, SMS, voice, web UI) does not require changes to the core services — only a new adapter that translates inbound channel events into calls on `IdentityService` and `ChatSessionService`.
 
 ---
 
@@ -17,8 +17,8 @@ The system is deliberately unopinionated about clients. Adding a new channel (Di
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Channel adapters                                           │
-│  DiscordService · SendgridWebhookController → EmailReply    │
-│  (future: Twilio SMS, Twilio Voice, HTTP web client)        │
+│  SendgridWebhookController → EmailReply · WebChatController │
+│  (future: Twilio SMS, Twilio Voice)                         │
 └───────────────────────────┬─────────────────────────────────┘
                             │ (source, externalId, agentName, text)
                             ▼
@@ -50,7 +50,7 @@ Each layer is a clean boundary. Adapters never talk to Anthropic or DynamoDB dir
 A single inbound message flows through the system like this.
 
 1. **Channel adapter receives raw input.**
-   - Discord: `DiscordService` listens on the gateway (`messageCreate` + raw `MESSAGE_CREATE` for DMs) — `src/services/discord.service.ts`.
+   - Web chat: `WebChatController` accepts HTTP requests from the browser widget — `src/controllers/web-chat.controller.ts`.
    - Email reply: `SendgridWebhookController` accepts `POST /webhooks/sendgrid/inbound`, then `EmailReplyService` parses and validates the MIME payload — `src/controllers/sendgrid-webhook.controller.ts`, `src/services/email-reply.service.ts`.
 
 2. **Adapter resolves identity.** The adapter calls `IdentityService.lookupOrCreateSession(source, externalId, agentName)`. This returns a `sessionUlid`. On first contact the service creates an `IDENTITY#...` record and a `CHAT_SESSION#<ulid>` `METADATA` record with the agent binding. On subsequent contacts it reads the existing record. A conditional write prevents race conditions.
@@ -75,13 +75,13 @@ A single inbound message flows through the system like this.
 
 8. **Return.** The final assistant text is extracted from the last assistant message's `text` blocks, joined, and returned to the adapter.
 
-9. **Channel adapter replies.** The adapter formats and sends the reply in its native channel (Discord DM, threaded email reply, etc.).
+9. **Channel adapter replies.** The adapter formats and sends the reply in its native channel (threaded email reply, web chat response, etc.).
 
 ---
 
 ## Key design decisions
 
-**Sessions are channel-agnostic.** A `sessionUlid` is just a ULID. It carries no knowledge of Discord, email, or anything else. The same ULID can in principle be reached from any channel — the identity layer is what decides which external IDs map to it. See [concepts.md](./concepts.md) for how `(source, externalId)` works.
+**Sessions are channel-agnostic.** A `sessionUlid` is just a ULID. It carries no knowledge of email, web, or anything else. The same ULID can in principle be reached from any channel — the identity layer is what decides which external IDs map to it. See [concepts.md](./concepts.md) for how `(source, externalId)` works.
 
 **Agents are configuration, not code.** An agent is a NestJS provider that implements the `ChatAgent` interface — `name`, `description`, `systemPrompt`, `allowedToolNames`. It contains zero orchestration logic. The core `ChatSessionService` is generic. Adding a new agent never requires changes to the core. See [agents-and-tools.md](./agents-and-tools.md).
 
@@ -105,7 +105,7 @@ A single inbound message flows through the system like this.
 - `src/agents/agent-registry.service.ts` · `src/tools/tool-registry.service.ts` — decorator-based registries.
 - `src/agents/*.agent.ts` — agent definitions.
 - `src/tools/*.tool.ts` — tool definitions.
-- `src/services/discord.service.ts` — Discord channel adapter.
+- `src/controllers/web-chat.controller.ts` — web chat channel adapter.
 - `src/controllers/sendgrid-webhook.controller.ts` · `src/services/email-reply.service.ts` — email inbound adapter.
 - `src/services/email.service.ts` — outbound email via SendGrid.
 - `src/types/*.ts` — shared interfaces.

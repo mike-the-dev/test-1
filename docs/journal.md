@@ -36,6 +36,33 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-04-30 — Identity cleanup Phase 1: Discord channel removed
+
+**Goal:** Remove the Discord channel adapter and all of its code, config, dependencies, tests, and docs. Discord was originally a cheap test harness for the chat backend — never part of the production product. Removing it leaves web as the only remaining IDENTITY-pattern consumer, which is the unblocker for Phase 2 (the IDENTITY pattern simplification flagged in `docs/identity-cleanup/HANDOFF.md`).
+
+**What changed:**
+- Deleted source: `src/services/discord.service.ts`, `src/services/discord-config.service.ts`, `src/types/Discord.ts`. No Discord controller or module file existed — the service was flat-registered in `AppModule` and listened via `OnModuleInit` on the discord.js gateway.
+- Deleted reference doc: `docs/reference/channels/discord.md`.
+- Edited config: `src/app.module.ts` (dropped two providers + imports), `src/config/configuration.ts` (dropped `discord:` block), `src/config/env.schema.ts` (dropped `DISCORD_BOT_TOKEN` and `DISCORD_GUILD_ID`).
+- Edited dependencies: `package.json` no longer declares `discord.js`; `package-lock.json` regenerated via `npm install`.
+- Edited spec: `src/services/identity.service.spec.ts` source-string args swapped from `"discord"` to `"web"` and matching `IDENTITY#discord#…` PK fixtures swapped to `IDENTITY#web#…` (web is the only surviving consumer of `lookupOrCreateSession`, so the fixtures now reflect real production behavior). Three missing-space-after-colon nits caught by the style pass.
+- Edited live reference docs: `docs/reference/architecture.md` (diagram, request lifecycle, "what lives where"), `docs/reference/concepts.md` (identity source table, channels list, source name convention), `docs/reference/data-model.md` (example source value), `docs/reference/channels/email.md` (cross-reference rewrite), `docs/reference/operations.md` (Discord env var section removed, runtime topology paragraph corrected). One approved deviation from the original plan: `operations.md` was not in the planner's scope but had to be edited because it documented env vars that no longer existed in the schema — leaving it would have actively misled operators.
+- Edited entry-point docs: `docs/README.md` (dead link to deleted `discord.md` removed, opening prose rewritten without scar), `docs/agent/engineering/creating-agents-and-tools.md` (Discord worked-example swapped for the web channel — closest 1-to-1 swap, identical `lookupOrCreateSession` call shape).
+- Historical files (`docs/journal.md` entries, prior-phase handoffs, archived plans, `docs/cross-channel-identity/design.md`) deliberately left intact — they are historical record, not live reference.
+- Build clean. Test suite green: 601 tests / 36 suites / 0 failures (unchanged baseline; no new tests needed for a deletion).
+
+**Decisions worth remembering:**
+- **Spec fixtures swap to a real channel, don't get deleted.** `lookupOrCreateSession` is still alive because web still uses it. Phase 2 will delete the method and its tests together. Until then, the fixtures use `"web"` instead of a phantom channel string.
+- **DynamoDB orphaned records left alone.** The dev table likely has `IDENTITY#discord#…` records and `CHAT_SESSION` METADATA records with `source: "discord"`. App is pre-production, the table is not schema-enforced, orphan cost is negligible — no cleanup script. Confirmed by the user.
+- **`source` is and will remain a regular METADATA attribute.** It's never been baked into the session PK; that was only ever IDENTITY's PK. Phase 2's IDENTITY removal will not affect `source`-as-data — it survives as an analytics field on the session record.
+- **Operational alerting is Slack, not Discord.** Confirmed during planning: the `slack-alert.service.ts` path is the only operational notification surface. Nothing in Phase 1's scope touched alerting code.
+
+**Next:**
+- Phase 2 — IDENTITY pattern removal (Option B from the handoff). Backend-side: delete `IdentityService.lookupOrCreateSession` and the IDENTITY record write entirely; the web controller starts looking up sessions directly via `CHAT_SESSION#<sessionUlid> / METADATA`. Frontend-side: store `sessionUlid` in localStorage instead of `guestUlid`; on session-create, if the stored value resolves to a real session return it, otherwise mint a new one and the frontend overwrites its store. Soft-transition fallback for existing in-flight visitors is unnecessary given pre-production status.
+- Phase 2 doc pass should also clean up the two pre-existing nits the reviewer flagged: `data-model.md` line 24 (`sessionUlid` → `session_id`) and `architecture.md` lifecycle paragraph (mention email's `createSessionWithoutIdentity`).
+
+---
+
 ## 2026-04-30 — Cross-channel identity Phase 3: email-inbound continuation shipped (feature complete)
 
 **Goal:** Bring returning-visitor recognition to the email channel. Today every fresh inbound email follows Case 1 (extract a session ULID from the recipient's local-part, route to that session). Phase 3 inserts a small dispatcher in front that classifies on the local-part: ULID-shaped → Case 1 unchanged; literal "assistant" → new Case 2/3 dispatch; anything else → reject. With Phase 3 shipping, the cross-channel identity & session continuation feature is **complete end-to-end** for v1: chat-side and email-inbound channels both now recognize returning visitors and load prior conversation context naturally.

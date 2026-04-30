@@ -38,7 +38,7 @@ One per session. Holds the agent binding and session-level timestamps.
 |---|---|
 | `PK` | `CHAT_SESSION#<ulid>` |
 | `SK` | `METADATA` |
-| `source` | The channel where the session was born (`discord`, `email`, ...). Informational. |
+| `source` | The channel where the session was born (`web`, `email`, ...). Informational. |
 | `agentName` | The agent bound to this session (`lead_capture`, ...). Optional on legacy records; `DEFAULT_AGENT_NAME` is used as a fallback. |
 | `createdAt` | Preserved via `if_not_exists`. |
 | `lastMessageAt` | Refreshed on every inbound message. |

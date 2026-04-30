@@ -1,6 +1,6 @@
 # ai-chat-session-api — Documentation
 
-A channel-agnostic agentic chat backend. One conversation can start on Discord, continue over email, and (soon) carry on over SMS or voice — with persistent memory, tool execution, and purpose-scoped AI agents.
+A channel-agnostic agentic chat backend. Conversations can originate from a web chat widget, continue over email, and (soon) carry on over SMS or voice — with persistent memory, tool execution, and purpose-scoped AI agents.
 
 This directory is the hub. It is split into three halves:
 
@@ -20,7 +20,6 @@ Describe the system as it exists now. Start here to understand the architecture.
 | [Concepts](./reference/concepts.md) | Glossary of the core terms: session, identity, agent, tool, channel |
 | [Data model](./reference/data-model.md) | DynamoDB single-table layout and record shapes |
 | [Agents & tools catalog](./reference/agents-and-tools.md) | Agents and tools that currently ship in the repo |
-| [Channels: Discord](./reference/channels/discord.md) | How Discord messages enter the system |
 | [Channels: Email](./reference/channels/email.md) | Outbound email and the inbound reply loop |
 | [Operations](./reference/operations.md) | Environment variables, local run, and deployment notes |
 

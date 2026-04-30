@@ -8,21 +8,24 @@ Three-layer config system:
 1. `src/config/env.schema.ts` — Zod schema validates all env vars at startup
 2. `src/config/configuration.ts` — factory function groups env vars into named domain objects
 3. `src/config/env.validation.ts` — safeParse wrapper consumed by `ConfigModule.forRoot({ validate })`
-4. Typed config services (`DatabaseConfigService`, `AnthropicConfigService`, `DiscordConfigService`) wrap `ConfigService` with `getOrThrow`/`get` getters
+4. Typed config services (`DatabaseConfigService`, `AnthropicConfigService`) wrap `ConfigService` with `getOrThrow`/`get` getters
 5. `DynamoDBProvider` uses `useFactory` + `inject: [DatabaseConfigService]` to assemble the client
 
 **Why:** Replicates the established pattern from `ecommerce-app-backend-prod` for consistency across projects.
 
 **How to apply:** When adding new external service integrations, follow this exact layering: Zod schema field → configuration factory key → config service getter → domain service.
 
-Discord.js is the sole entry point for chat flow — no HTTP controllers for `ChatSessionService`. `DiscordService` implements `OnModuleInit` and `OnModuleDestroy`, calls `client.login()` in `onModuleInit` (not constructor), and guards against missing bot token for local dev.
+**Discord removed (2026-04-30):** `discord.js`, `DiscordService`, `DiscordConfigService`, and `src/types/Discord.ts` were deleted as part of the identity-cleanup Phase 1. Discord was a test harness only; it was never a production channel. Web is now the only channel using IDENTITY records.
 
-## Channel-Agnostic Architecture (post-refactor)
+## Channel-Agnostic Architecture (post-Discord-removal)
 
-Three-service orchestration:
-- `IdentityService` — maps (source, externalId) → sessionUlid via DynamoDB IDENTITY# records; owns the initial METADATA write
-- `ChatSessionService` — purely session-scoped: load history, call Anthropic, persist messages, update metadata. Zero knowledge of Discord/web/users
-- `DiscordService` — thin adapter: identity lookup → chat session call → message.reply(). No DynamoDB, no Anthropic
+Two-service orchestration for active channels:
+- `IdentityService` — maps (source, externalId) → sessionUlid via DynamoDB IDENTITY# records; owns the initial METADATA write. Used by web chat. Email-inbound uses `createSessionWithoutIdentity` instead.
+- `ChatSessionService` — purely session-scoped: load history, call Anthropic, persist messages, update metadata. Zero knowledge of web/email/channel
+
+Active channel adapters:
+- `WebChatController` — thin HTTP adapter: identity lookup via `lookupOrCreateSession("web", guestUlid, agentName, accountUlid)` → chat core
+- `SendgridWebhookController` + `EmailReplyService` — inbound email adapter; uses `createSessionWithoutIdentity` (no IDENTITY records for email)
 
 DynamoDB single-table schema (PK+SK composite required):
 - Identity records: PK=SK=`IDENTITY#<source>#<externalId>`, fields: sessionUlid, createdAt

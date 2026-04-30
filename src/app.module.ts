@@ -13,13 +13,11 @@ import { QdrantConfigService } from "./services/qdrant-config.service";
 import { AnthropicConfigService } from "./services/anthropic-config.service";
 import { VoyageConfigService } from "./services/voyage-config.service";
 import { VoyageService } from "./services/voyage.service";
-import { DiscordConfigService } from "./services/discord-config.service";
 import { SendGridConfigService } from "./services/sendgrid-config.service";
 import { DynamoDBProvider } from "./providers/dynamodb.provider";
 import { QdrantProvider } from "./providers/qdrant.provider";
 import { AnthropicService } from "./services/anthropic.service";
 import { ChatSessionService } from "./services/chat-session.service";
-import { DiscordService } from "./services/discord.service";
 import { EmailService } from "./services/email.service";
 import { IdentityService } from "./services/identity.service";
 import { ToolRegistryService } from "./tools/tool-registry.service";
@@ -99,7 +97,6 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     QdrantConfigService,
     AnthropicConfigService,
     VoyageConfigService,
-    DiscordConfigService,
     SendGridConfigService,
     DynamoDBProvider,
     QdrantProvider,
@@ -107,7 +104,6 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     VoyageService,
     VoyageDimGuardService,
     ChatSessionService,
-    DiscordService,
     EmailService,
     IdentityService,
     SaveUserFactTool,

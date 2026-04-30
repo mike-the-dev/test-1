@@ -268,7 +268,7 @@ Stay focused, accurate, and helpful.`;
 **Rules for agent classes:**
 
 - The `@ChatAgentProvider()` decorator MUST be applied, and it MUST come before `@Injectable()`.
-- The `name` must be a unique snake_case identifier. This is what frontends (Discord service, web controllers, etc.) pass when creating a session.
+- The `name` must be a unique snake_case identifier. This is what frontends (web controllers, email adapters, etc.) pass when creating a session.
 - The `systemPrompt` is the most important part of the agent. See the "Writing a good system prompt" section below for guidance.
 - The `allowedToolNames` is an array of tool names (matching `ChatTool.name` values). Only tools in this list will be available to the agent. An empty array means the agent has no tools — it's purely conversational.
 - Agents should have no runtime logic. Do not inject services, do not override methods. Agents are pure configuration objects.
@@ -303,7 +303,7 @@ Start the server and look for the discovery log:
 
 **5. Bind sessions to the agent**
 
-Creating an agent doesn't automatically send users to it. You need to update the relevant frontend (Discord service, web controller, etc.) to pass the agent's name when creating a session via `identityService.lookupOrCreateSession(source, externalId, agentName)`.
+Creating an agent doesn't automatically send users to it. You need to update the relevant frontend (web controller, email adapter, etc.) to pass the agent's name when creating a session via `identityService.lookupOrCreateSession(source, externalId, agentName)`.
 
 For example, if you want a web controller to route sessions to the FAQ agent:
 
@@ -361,48 +361,22 @@ End the prompt with a short statement about tone. Examples:
 
 ## Wiring to Frontends
 
-The core chat system (`ChatSessionService`, `IdentityService`, `ToolRegistryService`, `AgentRegistryService`) is **frontend-agnostic**. Adding a new frontend means adding a thin adapter that translates between the frontend's protocol (Discord events, HTTP requests, WebSocket messages, etc.) and calls to the core services.
+The core chat system (`ChatSessionService`, `IdentityService`, `ToolRegistryService`, `AgentRegistryService`) is **frontend-agnostic**. Adding a new frontend means adding a thin adapter that translates between the frontend's protocol (HTTP requests, WebSocket messages, inbound email events, etc.) and calls to the core services.
 
 ### The pattern
 
 Every frontend follows the same three-step pattern:
 
-1. **Receive a message** from the frontend (Discord `messageCreate` event, HTTP POST body, etc.)
+1. **Receive a message** from the frontend (HTTP POST body, inbound email webhook, etc.)
 2. **Look up or create a session** by calling `identityService.lookupOrCreateSession(source, externalId, agentName)` where:
-   - `source` is a string identifying the frontend (e.g., `"discord"`, `"web"`, `"mobile"`)
-   - `externalId` is the user's identifier in that frontend (e.g., Discord user ID, web guest ULID, authenticated user ID)
+   - `source` is a string identifying the frontend (e.g., `"web"`, `"email"`, `"mobile"`)
+   - `externalId` is the user's identifier in that frontend (e.g., web guest ULID, email address hash, authenticated user ID)
    - `agentName` is which agent should handle this session (only used on first creation — existing sessions keep their original agent)
 3. **Handle the message** by calling `chatSessionService.handleMessage(sessionUlid, message)` and returning the result to the user via the frontend's response mechanism
 
-### Example: Discord (already implemented)
+### Example: Web chat widget (already implemented)
 
-`src/services/discord.service.ts` listens for Discord `messageCreate` events, extracts the user ID and message text, calls the identity service with `source="discord"` and `agentName="lead_capture"`, then calls the chat session service and posts the response back to the channel.
-
-### Example: Web iframe (not yet implemented)
-
-To add a web iframe frontend, you would build a NestJS controller with two endpoints:
-
-```ts
-// src/controllers/chat.controller.ts (hypothetical)
-
-@Post("sessions")
-async createSession(@Body() body: { agentName: string; guestUlid: string }) {
-  const sessionUlid = await this.identityService.lookupOrCreateSession(
-    "web",
-    body.guestUlid,
-    body.agentName,
-  );
-  return { sessionUlid };
-}
-
-@Post("messages")
-async sendMessage(@Body() body: { sessionUlid: string; message: string }) {
-  const reply = await this.chatSessionService.handleMessage(body.sessionUlid, body.message);
-  return { reply };
-}
-```
-
-The iframe HTML/JS would generate a stable guest ULID on first load (stored in `localStorage`), call `POST /sessions` with the desired agent name, then call `POST /messages` for each user message.
+`src/controllers/web-chat.controller.ts` exposes HTTP endpoints for the embeddable chat widget. On session creation it calls `identityService.lookupOrCreateSession("web", body.guestUlid, body.agentName, accountUlid)`, then `POST /chat/web/messages` delegates each user message to `chatSessionService.handleMessage` and returns the reply. The embed generates a stable guest ULID on first load (stored in `localStorage`) and reuses it across page views so returning visitors are recognized.
 
 **Critical:** none of the core services change. The controller is a thin adapter — all the heavy lifting happens in the existing services.
 
@@ -428,7 +402,7 @@ After adding a tool or agent, verify it works end-to-end before moving on.
 2. **Check the startup logs** for:
    - `[ToolRegistryService] Discovered chat tools [count=N names=...]` — verify your new tool name appears and the count is correct
    - `[AgentRegistryService] Discovered chat agents [count=N names=...]` — verify your new agent name appears and the count is correct
-3. **Send a test message** via a frontend that routes to your agent (e.g., Discord for the default `lead_capture` agent)
+3. **Send a test message** via a frontend that routes to your agent (e.g., the web chat widget for the default `lead_capture` agent)
 4. **Watch the logs** for:
    - `[ChatSessionService] Agent resolved [sessionUlid=... agentName=... toolCount=N]` — verify the correct agent is resolved and the tool count matches what you expect based on the agent's allowlist
    - Tool dispatches when you trigger the AI to call your tool
@@ -522,7 +496,7 @@ src/
 - [ ] Write a system prompt with ROLE, PURPOSE, SCOPE, WORKFLOW, and BOUNDARIES sections
 - [ ] Add agent class to `providers` in `app.module.ts`
 - [ ] Verify discovery log shows the agent at startup
-- [ ] Update the relevant frontend (Discord service, web controller, etc.) to pass the agent's name when creating sessions
+- [ ] Update the relevant frontend (web controller, email adapter, etc.) to pass the agent's name when creating sessions
 
 ### Key architectural invariants
 

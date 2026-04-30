@@ -19,10 +19,6 @@ const configuration = () => ({
     apiKey: process.env.VOYAGE_API_KEY,
     model: process.env.VOYAGE_MODEL || "voyage-3-large",
   },
-  discord: {
-    botToken: process.env.DISCORD_BOT_TOKEN,
-    guildId: process.env.DISCORD_GUILD_ID,
-  },
   sendgrid: {
     apiKey: process.env.SENDGRID_API_KEY || "",
     fromEmail: process.env.SENDGRID_FROM_EMAIL || "",

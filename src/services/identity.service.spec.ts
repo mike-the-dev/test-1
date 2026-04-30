@@ -45,8 +45,8 @@ describe("IdentityService", () => {
         .on(GetCommand)
         .resolvesOnce({
           Item: {
-            PK: "IDENTITY#discord#123456789",
-            SK: "IDENTITY#discord#123456789",
+            PK: "IDENTITY#web#123456789",
+            SK: "IDENTITY#web#123456789",
             session_id: existingSessionUlid,
             _createdAt_: "2026-01-01T00:00:00.000Z",
           },
@@ -60,7 +60,7 @@ describe("IdentityService", () => {
           },
         });
 
-      const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+      const result = await service.lookupOrCreateSession("web", "123456789", "lead_capture");
 
       expect(result).toEqual({
         sessionUlid: existingSessionUlid,
@@ -78,8 +78,8 @@ describe("IdentityService", () => {
         .on(GetCommand)
         .resolvesOnce({
           Item: {
-            PK: "IDENTITY#discord#123456789",
-            SK: "IDENTITY#discord#123456789",
+            PK: "IDENTITY#web#123456789",
+            SK: "IDENTITY#web#123456789",
             session_id: existingSessionUlid,
             _createdAt_: "2026-01-01T00:00:00.000Z",
           },
@@ -91,7 +91,7 @@ describe("IdentityService", () => {
           },
         });
 
-      const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+      const result = await service.lookupOrCreateSession("web", "123456789", "lead_capture");
 
       expect(result).toEqual({
         sessionUlid: existingSessionUlid,
@@ -109,8 +109,8 @@ describe("IdentityService", () => {
         .on(GetCommand)
         .resolvesOnce({
           Item: {
-            PK: "IDENTITY#discord#123456789",
-            SK: "IDENTITY#discord#123456789",
+            PK: "IDENTITY#web#123456789",
+            SK: "IDENTITY#web#123456789",
             session_id: existingSessionUlid,
             _createdAt_: "2026-01-01T00:00:00.000Z",
           },
@@ -123,7 +123,7 @@ describe("IdentityService", () => {
           },
         });
 
-      const result = await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+      const result = await service.lookupOrCreateSession("web", "123456789", "lead_capture");
 
       expect(result.kickoffCompletedAt).toBe("2026-04-20T22:00:00.000Z");
     });
@@ -131,14 +131,14 @@ describe("IdentityService", () => {
     it("does not issue a PutCommand on a cache hit", async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
-          PK: "IDENTITY#discord#123456789",
-          SK: "IDENTITY#discord#123456789",
-          session_id:"01EXISTING00000000000000000",
+          PK: "IDENTITY#web#123456789",
+          SK: "IDENTITY#web#123456789",
+          session_id: "01EXISTING00000000000000000",
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
 
-      await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+      await service.lookupOrCreateSession("web", "123456789", "lead_capture");
 
       const putCalls = ddbMock.commandCalls(PutCommand);
 
@@ -149,7 +149,7 @@ describe("IdentityService", () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
       ddbMock.on(PutCommand).resolves({});
 
-      const result = await service.lookupOrCreateSession("discord", "987654321", "lead_capture");
+      const result = await service.lookupOrCreateSession("web", "987654321", "lead_capture");
 
       expect(result.sessionUlid).toMatch(/^[0-9A-Z]{26}$/);
       expect(result.onboardingCompletedAt).toBeNull();
@@ -163,7 +163,7 @@ describe("IdentityService", () => {
 
       const identityPut = putCalls[0].args[0].input;
 
-      expect(identityPut.Item?.PK).toBe("IDENTITY#discord#987654321");
+      expect(identityPut.Item?.PK).toBe("IDENTITY#web#987654321");
       expect(identityPut.Item?.session_id).toBe(result.sessionUlid);
       expect(identityPut.ConditionExpression).toBe("attribute_not_exists(PK)");
     });
@@ -172,12 +172,12 @@ describe("IdentityService", () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
       ddbMock.on(PutCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+      await service.lookupOrCreateSession("web", "123456789", "lead_capture");
 
       const getCalls = ddbMock.commandCalls(GetCommand);
 
-      expect(getCalls[0].args[0].input.Key?.PK).toBe("IDENTITY#discord#123456789");
-      expect(getCalls[0].args[0].input.Key?.SK).toBe("IDENTITY#discord#123456789");
+      expect(getCalls[0].args[0].input.Key?.PK).toBe("IDENTITY#web#123456789");
+      expect(getCalls[0].args[0].input.Key?.SK).toBe("IDENTITY#web#123456789");
     });
 
     it("re-fetches and returns the winning sessionUlid on ConditionalCheckFailedException", async () => {
@@ -192,8 +192,8 @@ describe("IdentityService", () => {
         .resolvesOnce({ Item: undefined })
         .resolvesOnce({
           Item: {
-            PK: "IDENTITY#discord#111111111",
-            SK: "IDENTITY#discord#111111111",
+            PK: "IDENTITY#web#111111111",
+            SK: "IDENTITY#web#111111111",
             session_id: winnerSessionUlid,
             _createdAt_: "2026-01-01T00:00:00.000Z",
           },
@@ -201,7 +201,7 @@ describe("IdentityService", () => {
 
       ddbMock.on(PutCommand).rejects(conditionalError);
 
-      const result = await service.lookupOrCreateSession("discord", "111111111", "lead_capture");
+      const result = await service.lookupOrCreateSession("web", "111111111", "lead_capture");
 
       expect(result).toEqual({
         sessionUlid: winnerSessionUlid,
@@ -217,7 +217,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      const result = await service.lookupOrCreateSession("discord", "555555555", "lead_capture");
+      const result = await service.lookupOrCreateSession("web", "555555555", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
@@ -227,7 +227,7 @@ describe("IdentityService", () => {
 
       expect(metadataUpdate.Key?.PK).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(metadataUpdate.Key?.SK).toBe("METADATA");
-      expect(metadataUpdate.ExpressionAttributeValues?.[":source"]).toBe("discord");
+      expect(metadataUpdate.ExpressionAttributeValues?.[":source"]).toBe("web");
       expect(metadataUpdate.ExpressionAttributeNames?.["#src"]).toBe("source");
     });
 
@@ -236,7 +236,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "777777777", "lead_capture");
+      await service.lookupOrCreateSession("web", "777777777", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
@@ -253,7 +253,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "888888888", "lead_capture");
+      await service.lookupOrCreateSession("web", "888888888", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);
@@ -269,7 +269,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "888888889", "lead_capture");
+      await service.lookupOrCreateSession("web", "888888889", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);
@@ -285,7 +285,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "888888890", "lead_capture");
+      await service.lookupOrCreateSession("web", "888888890", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);
@@ -299,14 +299,14 @@ describe("IdentityService", () => {
     it("does not issue an UpdateCommand on a cache hit", async () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
-          PK: "IDENTITY#discord#123456789",
-          SK: "IDENTITY#discord#123456789",
-          session_id:"01EXISTING00000000000000000",
+          PK: "IDENTITY#web#123456789",
+          SK: "IDENTITY#web#123456789",
+          session_id: "01EXISTING00000000000000000",
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });
 
-      await service.lookupOrCreateSession("discord", "123456789", "lead_capture");
+      await service.lookupOrCreateSession("web", "123456789", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
@@ -321,7 +321,7 @@ describe("IdentityService", () => {
       ddbMock.on(GetCommand).resolves({ Item: undefined });
       ddbMock.on(PutCommand).rejects(networkError);
 
-      await expect(service.lookupOrCreateSession("discord", "999999999", "lead_capture")).rejects.toThrow(
+      await expect(service.lookupOrCreateSession("web", "999999999", "lead_capture")).rejects.toThrow(
         "Network failure",
       );
     });
@@ -348,7 +348,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "guest-222", "lead_capture");
+      await service.lookupOrCreateSession("web", "guest-222", "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
 
@@ -394,7 +394,7 @@ describe("IdentityService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.lookupOrCreateSession("discord", "guest-444", "lead_capture");
+      await service.lookupOrCreateSession("web", "guest-444", "lead_capture");
 
       const putCalls = ddbMock.commandCalls(PutCommand);
 
@@ -488,7 +488,7 @@ describe("IdentityService", () => {
         Item: {
           PK: "IDENTITY#web#existing-guest",
           SK: "IDENTITY#web#existing-guest",
-          session_id:"01EXISTING00000000000000000",
+          session_id: "01EXISTING00000000000000000",
           _createdAt_: "2026-01-01T00:00:00.000Z",
         },
       });

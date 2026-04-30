@@ -34,7 +34,6 @@
     "@sendgrid/mail": "^8.1.6",
     "@sentry/nestjs": "10.50.0",
     "bullmq": "^5.76.2",
-    "discord.js": "^14.26.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "ulid": "^3.0.2",

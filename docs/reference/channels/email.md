@@ -17,7 +17,7 @@ The system can:
 1. **Send a confirmation email** mid-conversation as a tool call (via the `send_email` tool → `EmailService`).
 2. **Receive the recipient's reply** via a SendGrid Inbound Parse webhook, route it back to the original session, and continue the conversation — the model's next response goes out as a threaded reply to the same thread.
 
-The result is that the same conversation can start on Discord, finish on email, or vice versa, with no loss of context.
+The result is that the conversation continues seamlessly across reply threads with no loss of context.
 
 ---
 
@@ -113,7 +113,7 @@ The reply domain is a single env var today, but the architecture supports per-cl
 1. Start the app: `npm run start:local`.
 2. Tunnel the webhook: `ngrok http 3000`.
 3. Update the SendGrid Inbound Parse host's Destination URL to the ngrok URL + `/webhooks/sendgrid/inbound`.
-4. Trigger an outbound `send_email` call (Discord DM the bot and walk through `lead_capture` until it sends the confirmation).
+4. Trigger an outbound `send_email` call (use the web chat widget and walk through `lead_capture` until it sends the confirmation).
 5. From your real inbox, hit Reply.
 6. The webhook should fire within a few seconds; the model's reply should land back in your inbox.
 
