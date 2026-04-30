@@ -4,3 +4,4 @@
 - [NativeAttributeValue array helpers in tool files](feedback_nativeattributevalue_helpers.md) — toRecordArray/toNativeArray helpers replace banned Array.isArray and as-casts in tool execute() methods
 - [satisfies for test stub typing in spec files](feedback_satisfies_in_specs.md) — use `satisfies DomainInterface` instead of `as const` or `: DomainInterface =` in spec constants
 - [BullMQ module patterns](feedback_bullmq_module_patterns.md) — queue name as shared constant; useFactory must use block body, not parenthesized object return
+- [let type annotation rule for reassigned variables](feedback_let_type_annotation.md) — remove redundant annotations when TypeScript infers correctly; keep at DDB boundaries where SDK widens the type

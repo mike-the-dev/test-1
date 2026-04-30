@@ -1,4 +1,6 @@
 - [Core Service Foundation](project_core_foundation.md) — What was built in the initial foundation: config, DynamoDB, Anthropic, Discord layers
+- [verify_code Write A/B capture order](feedback_verify_code_write_order.md) — continuation_from_session_id must be captured from queryCustomerIdByEmail BEFORE Write B overwrites customer.latest_session_id
+- [dynamicSystemContext loop lift](feedback_dynamicSystemContext_loop_lift.md) — Variables feeding AnthropicService.sendMessage that pre-loop loaders must set MUST be declared before the while loop (not inside it)
 - [DynamoDB test client construction](feedback_dynamodb_test_client.md) — Use `DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" }))` in test modules; `from({} as never)` crashes at runtime
 - [NestJS 11 multi-provider pattern](feedback_nestjs_multi_provider.md) — NestJS 11 does not support `multi: true` on custom token providers — use `useFactory` to collect instances into an array instead
 - [KB Phase 7c BullMQ pattern](project_kb_phase7c_bullmq.md) — How BullMQ processor, queue injection, and test mocking are wired into the KB ingestion pipeline
