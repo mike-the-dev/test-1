@@ -17,6 +17,7 @@ import { SlackAlertService } from "../services/slack-alert.service";
 
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const METADATA_SK = "METADATA";
+const CUSTOMER_PK_PREFIX = "C#";
 
 function toRecordArray(value: NativeAttributeValue | undefined): Record<string, NativeAttributeValue>[] {
   if (!value) {
@@ -164,7 +165,11 @@ export class GenerateCheckoutLinkTool implements ChatTool {
     }
 
     // Step 6 — construct checkout URL
-    const checkout_url = `${baseResult.base}/checkout?email=${encodeURIComponent(customer_email)}&customerId=${customer_id}&guestId=${guest_id}&cartId=${cart_id}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
+    // Strip the C# prefix so the frontend receives a bare ULID via customerId= (preserves historical contract)
+    const customerUlid = customer_id.startsWith(CUSTOMER_PK_PREFIX)
+      ? customer_id.slice(CUSTOMER_PK_PREFIX.length)
+      : customer_id;
+    const checkout_url = `${baseResult.base}/checkout?email=${encodeURIComponent(customer_email)}&customerId=${customerUlid}&guestId=${guest_id}&cartId=${cart_id}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
 
     // Step 7 — fire Slack alert
     const cartTotal = alertItems.reduce((sum, item) => sum + item.subtotalCents, 0);

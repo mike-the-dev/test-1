@@ -1,12 +1,9 @@
 import { Test, TestingModule } from "@nestjs/testing";
-import { ConfigService } from "@nestjs/config";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import {
   BatchGetCommand,
   DynamoDBDocumentClient,
   GetCommand,
-  PutCommand,
-  QueryCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { mockClient } from "aws-sdk-client-mock";
@@ -14,7 +11,6 @@ import { mockClient } from "aws-sdk-client-mock";
 import { PreviewCartTool } from "./preview-cart.tool";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
-import { CustomerService } from "../services/customer.service";
 import { SlackAlertService } from "../services/slack-alert.service";
 
 jest.mock("ulid", () => ({
@@ -96,28 +92,6 @@ function makeServiceWithVariants(): Record<string, unknown> {
   });
 }
 
-function makeCustomerItem(customerUlid: string): Record<string, unknown> {
-  return {
-    PK: `C#${customerUlid}`,
-    SK: `C#${customerUlid}`,
-    entity: "CUSTOMER",
-    "GSI1-PK": `ACCOUNT#${ACCOUNT_ULID}`,
-    "GSI1-SK": "EMAIL#test@example.com",
-    email: "test@example.com",
-    first_name: "Jane",
-    last_name: "Doe",
-    phone: "555-0100",
-    billing_address: null,
-    is_email_subscribed: false,
-    abandoned_carts: [],
-    total_abandoned_carts: 0,
-    total_orders: 0,
-    total_spent: 0,
-    _createdAt_: "2024-01-01T00:00:00.000Z",
-    _lastUpdated_: "2024-01-01T00:00:00.000Z",
-  };
-}
-
 async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
   const mockConfigService = {
     get: jest.fn((key: string) => {
@@ -130,7 +104,6 @@ async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
   return Test.createTestingModule({
     providers: [
       PreviewCartTool,
-      CustomerService,
       {
         provide: DYNAMO_DB_CLIENT,
         useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })),
@@ -138,10 +111,6 @@ async function buildModule(checkoutOverride?: string): Promise<TestingModule> {
       {
         provide: DatabaseConfigService,
         useValue: mockDatabaseConfig,
-      },
-      {
-        provide: ConfigService,
-        useValue: mockConfigService,
       },
       {
         provide: SlackAlertService,
@@ -163,9 +132,8 @@ describe("PreviewCartTool", () => {
     ddbMock.reset();
     mockedUlid.mockReset();
 
-    // Default ulid sequence: customer (when new), guest, cart, then one per line
+    // Default ulid sequence: guest, cart, then one per line
     mockedUlid
-      .mockReturnValueOnce(CUSTOMER_ULID)
       .mockReturnValueOnce(GUEST_ULID)
       .mockReturnValueOnce(CART_ULID)
       .mockReturnValue(LINE_ULID_1);
@@ -174,29 +142,20 @@ describe("PreviewCartTool", () => {
     tool = module.get<PreviewCartTool>(PreviewCartTool);
   });
 
-  describe("1. First call happy path — no variants, customer created, full payload shape", () => {
+  describe("1. First call happy path — no variants, customer_id from METADATA, full payload shape", () => {
     it("returns structured CartPreviewPayload with correct shape", async () => {
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
         Item: makeContactInfoItem(),
       });
-      // METADATA get — no existing cart IDs
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
 
-      // GSI query — no existing customer
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-
-      // Customer put — success
-      ddbMock.on(PutCommand).resolves({});
-
-      // Batch get services
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
       });
 
-      // Cart UpdateCommand + METADATA UpdateCommand
       ddbMock.on(UpdateCommand).resolves({});
 
       const result = await tool.execute(
@@ -249,7 +208,6 @@ describe("PreviewCartTool", () => {
     it("reuses cart/guest IDs from METADATA and does NOT mint new ULIDs for them", async () => {
       const EXISTING_CART_ULID = "01EXISTINGCART000000000000";
       const EXISTING_GUEST_ULID = "01EXISTINGGUEST00000000000";
-      const EXISTING_CUSTOMER_ULID = "01EXISTINGCUSTOMER000000000";
 
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
         Item: makeContactInfoItem(),
@@ -258,7 +216,7 @@ describe("PreviewCartTool", () => {
         Item: makeMetadataItem({
           cart_id: EXISTING_CART_ULID,
           guest_id: EXISTING_GUEST_ULID,
-          customer_id: EXISTING_CUSTOMER_ULID,
+          customer_id: `C#${CUSTOMER_ULID}`,
           customer_email: "test@example.com",
         }),
       });
@@ -286,14 +244,8 @@ describe("PreviewCartTool", () => {
         `G#${EXISTING_GUEST_ULID}C#${EXISTING_CART_ULID}`,
       );
 
-      // No new ULIDs should have been minted for cart or guest (mockedUlid not called for those)
-      // With METADATA having all 4 IDs, customer is also reused — ulid should not be called at all
-      // (line IDs are generated separately after)
       const payload = JSON.parse(result.result) as { cart_id: string };
       expect(payload.cart_id).toBe(EXISTING_CART_ULID);
-
-      // GSI query should NOT be called (customer from METADATA)
-      expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
     });
   });
 
@@ -303,10 +255,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-      ddbMock.on(PutCommand).resolves({});
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceWithVariants()] },
         UnprocessedKeys: {},
@@ -339,10 +289,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-      ddbMock.on(PutCommand).resolves({});
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem(), service2] },
         UnprocessedKeys: {},
@@ -381,9 +329,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [makeCustomerItem(CUSTOMER_ULID)] });
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [] },
         UnprocessedKeys: {},
@@ -406,9 +353,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [makeCustomerItem(CUSTOMER_ULID)] });
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceWithVariants()] },
         UnprocessedKeys: {},
@@ -435,8 +381,6 @@ describe("PreviewCartTool", () => {
       expect(result.isError).toBe(true);
       expect(result.result).toContain("Missing account context");
       expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
-      expect(ddbMock.commandCalls(QueryCommand)).toHaveLength(0);
-      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
       expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
     });
   });
@@ -464,9 +408,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [makeCustomerItem(CUSTOMER_ULID)] });
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
@@ -494,9 +437,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [makeCustomerItem(CUSTOMER_ULID)] });
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
@@ -524,10 +466,8 @@ describe("PreviewCartTool", () => {
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-      ddbMock.on(PutCommand).resolves({});
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
@@ -566,15 +506,13 @@ describe("PreviewCartTool", () => {
       expect(typeof line.total).toBe("number");
     });
 
-    it("METADATA UpdateCommand uses if_not_exists on all four ID fields", async () => {
+    it("METADATA UpdateCommand uses if_not_exists on cart_id, guest_id, and customer_email (NOT customer_id)", async () => {
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
         Item: makeContactInfoItem(),
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
-        Item: makeMetadataItem(),
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
       });
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-      ddbMock.on(PutCommand).resolves({});
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
@@ -596,23 +534,23 @@ describe("PreviewCartTool", () => {
 
       expect(expr).toContain("if_not_exists(#cart_id");
       expect(expr).toContain("if_not_exists(#guest_id");
-      expect(expr).toContain("if_not_exists(#customer_id");
       expect(expr).toContain("if_not_exists(#customer_email");
+      // customer_id is no longer written by preview_cart
+      expect(expr).not.toContain("if_not_exists(#customer_id");
     });
   });
 
   describe("12. Slack alert — notifyCartCreated", () => {
     function setupHappyPath(): void {
       mockedUlid
-        .mockReturnValueOnce(CUSTOMER_ULID)
         .mockReturnValueOnce(GUEST_ULID)
         .mockReturnValueOnce(CART_ULID)
         .mockReturnValue(LINE_ULID_1);
 
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({ Item: makeContactInfoItem() });
-      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({ Item: makeMetadataItem() });
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
-      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
+      });
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
@@ -656,21 +594,45 @@ describe("PreviewCartTool", () => {
     });
   });
 
-  describe("13. Schema-default — new Customer record includes latest_session_id: null", () => {
-    it("writes latest_session_id: null in the PutCommand for a new Customer record", async () => {
+  describe("13. Missing customer_id in METADATA — hard requirement error", () => {
+    it("returns isError with locked message; no UpdateCommand called; logger.error called with event=preview_cart_no_customer_id", async () => {
+      const loggerErrorSpy = jest.spyOn(tool["logger"], "error");
+
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
         Item: makeContactInfoItem(),
       });
+      // makeMetadataItem() default has no customer_id
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
         Item: makeMetadataItem(),
       });
 
-      // No existing customer — GSI returns empty
-      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      const result = await tool.execute(
+        { items: [{ service_id: SERVICE_SK, quantity: 1 }] },
+        context,
+      );
 
-      // Customer PutCommand should fire
-      ddbMock.on(PutCommand).resolves({});
+      expect(result.isError).toBe(true);
+      expect(result.result).toBe(
+        "This action requires a customer profile. Please collect the visitor's email first.",
+      );
+      expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+      expect(ddbMock.commandCalls(BatchGetCommand)).toHaveLength(0);
+      expect(loggerErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("event=preview_cart_no_customer_id"),
+      );
 
+      loggerErrorSpy.mockRestore();
+    });
+  });
+
+  describe("14. cart record customer_id field uses C# prefix", () => {
+    it("writes C#<customerUlid> to cart record customer_id — strips prefix from METADATA value then re-prefixes", async () => {
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
+        Item: makeContactInfoItem(),
+      });
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
+      });
       ddbMock.on(BatchGetCommand).resolves({
         Responses: { [TABLE_NAME]: [makeServiceItem()] },
         UnprocessedKeys: {},
@@ -679,13 +641,14 @@ describe("PreviewCartTool", () => {
 
       await tool.execute({ items: [{ service_id: SERVICE_SK, quantity: 1 }] }, context);
 
-      const putCalls = ddbMock.commandCalls(PutCommand);
-      // Find the customer PutCommand (PK starts with C#)
-      const customerPut = putCalls.find((call) =>
-        String(call.args[0].input.Item?.PK ?? "").startsWith("C#"),
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const cartUpdate = updateCalls.find((call) =>
+        (call.args[0].input.Key as Record<string, string>).SK?.startsWith("G#"),
       );
-      expect(customerPut).toBeDefined();
-      expect(customerPut!.args[0].input.Item?.latest_session_id).toBeNull();
+      expect(cartUpdate).toBeDefined();
+      expect(cartUpdate!.args[0].input.ExpressionAttributeValues?.[":customer_id"]).toBe(
+        `C#${CUSTOMER_ULID}`,
+      );
     });
   });
 });

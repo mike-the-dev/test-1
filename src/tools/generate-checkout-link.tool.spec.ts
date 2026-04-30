@@ -37,7 +37,7 @@ function makeMetadataItem(overrides: Record<string, unknown> = {}): Record<strin
     source: "web_chat",
     cart_id: CART_ULID,
     guest_id: GUEST_ULID,
-    customer_id: CUSTOMER_ULID,
+    customer_id: `C#${CUSTOMER_ULID}`,
     customer_email: CUSTOMER_EMAIL,
     _createdAt_: "2024-01-01T00:00:00.000Z",
     _lastUpdated_: "2024-01-01T00:00:00.000Z",
@@ -131,11 +131,15 @@ describe("GenerateCheckoutLinkTool", () => {
 
       const url = new URL(parsed.checkout_url);
       expect(url.searchParams.get("email")).toBe(CUSTOMER_EMAIL);
+      // Strip-prefix: METADATA stores C#<ulid> but URL must contain bare ULID
       expect(url.searchParams.get("customerId")).toBe(CUSTOMER_ULID);
       expect(url.searchParams.get("guestId")).toBe(GUEST_ULID);
       expect(url.searchParams.get("cartId")).toBe(CART_ULID);
       expect(url.searchParams.get("aiSessionId")).toBe(SESSION_ULID);
       expect(parsed.checkout_url).toContain(CHECKOUT_OVERRIDE);
+      // Negative assertion: C# prefix must NOT appear in the URL
+      expect(parsed.checkout_url).not.toContain("C#");
+      expect(parsed.checkout_url).not.toContain("C%23");
 
       // Tool makes exactly 2 GetCommand calls: METADATA + cart record
       expect(ddbMock.commandCalls(GetCommand)).toHaveLength(2);
@@ -463,6 +467,33 @@ describe("GenerateCheckoutLinkTool", () => {
       expect(result.isError).toBeUndefined();
       const parsed = JSON.parse(result.result);
       expect(typeof parsed.checkout_url).toBe("string");
+    });
+  });
+
+  describe("14. Strip-prefix — C# prefix on customer_id is removed from checkout URL", () => {
+    it("with metadata.customer_id = 'C#<ulid>', URL contains customerId=<ulid> (bare) and NOT C# or C%23", async () => {
+      const PREFIXED_CUSTOMER = `C#${CUSTOMER_ULID}`;
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem({ customer_id: PREFIXED_CUSTOMER }) });
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
+
+      const result = await tool.execute({}, context);
+
+      expect(result.isError).toBeUndefined();
+
+      const parsed = JSON.parse(result.result);
+      const url = new URL(parsed.checkout_url);
+
+      // Must contain bare ULID (no prefix)
+      expect(url.searchParams.get("customerId")).toBe(CUSTOMER_ULID);
+
+      // Must NOT contain the C# prefix in any form
+      expect(parsed.checkout_url).not.toContain("C#");
+      expect(parsed.checkout_url).not.toContain("C%23");
     });
   });
 });

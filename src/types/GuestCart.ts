@@ -49,3 +49,9 @@ export type GuestCartCheckoutBaseResult = GuestCartCheckoutBaseResolved | GuestC
 export type GuestCartCustomerResolved = { isError: false; customerUlid: string };
 export type GuestCartCustomerError = { isError: true; error: string };
 export type GuestCartCustomerResult = GuestCartCustomerResolved | GuestCartCustomerError;
+
+/** Result from CustomerService.lookupOrCreateCustomer — success includes bare customerUlid and created flag. */
+export type GuestCartLookupOrCreateResolved = { isError: false; customerUlid: string; created: boolean };
+/** Error result from CustomerService.lookupOrCreateCustomer — error string is generic (no PII). */
+export type GuestCartLookupOrCreateError = { isError: true; error: string };
+export type GuestCartLookupOrCreateResult = GuestCartLookupOrCreateResolved | GuestCartLookupOrCreateError;

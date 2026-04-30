@@ -93,3 +93,9 @@ export interface ChatSessionPointerRecord {
   _createdAt_: string;
   _lastUpdated_: string;
 }
+
+/** Result returned by collect_contact_info when the contact trio completes and a customer is linked. */
+export type CollectContactInfoTrioCompletedResult = { saved: true; customerFound: boolean };
+
+/** Result returned by collect_contact_info when the contact trio is incomplete or customer_id is already set. */
+export type CollectContactInfoSavedResult = { saved: true };

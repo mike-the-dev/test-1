@@ -4,18 +4,14 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   NativeAttributeValue,
-  PutCommand,
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
-import { CustomerService } from "../services/customer.service";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
 import {
-  GuestCartCustomerRecord,
-  GuestCartCustomerResult,
   GuestCartItem,
 } from "../types/GuestCart";
 import { previewCartInputSchema } from "../validation/tool.schema";
@@ -25,6 +21,9 @@ import { SlackAlertService } from "../services/slack-alert.service";
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const USER_CONTACT_INFO_SK = "USER_CONTACT_INFO";
 const METADATA_SK = "METADATA";
+const CUSTOMER_PK_PREFIX = "C#";
+const MISSING_CUSTOMER_ERROR =
+  "This action requires a customer profile. Please collect the visitor's email first.";
 
 function toRecordArray(value: NativeAttributeValue | undefined): Record<string, NativeAttributeValue>[] {
   if (!value) {
@@ -114,7 +113,6 @@ export class PreviewCartTool implements ChatTool {
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
     private readonly slackAlertService: SlackAlertService,
-    private readonly customerService: CustomerService,
   ) {}
 
   async execute(input: unknown, context: ChatToolExecutionContext): Promise<ChatToolExecutionResult> {
@@ -142,9 +140,6 @@ export class PreviewCartTool implements ChatTool {
 
     // Step 3 — load contact info
     let email: string;
-    let firstName: string;
-    let lastName: string;
-    let phone: string | null;
 
     try {
       const contactResult = await this.dynamoDb.send(
@@ -168,9 +163,6 @@ export class PreviewCartTool implements ChatTool {
       }
 
       email = String(contactItem.email);
-      firstName = String(contactItem.first_name ?? "");
-      lastName = String(contactItem.last_name ?? "");
-      phone = contactItem.phone !== undefined ? String(contactItem.phone) : null;
     } catch (error: unknown) {
       const errorName = error instanceof Error ? error.name : "UnknownError";
       this.logger.error(
@@ -212,33 +204,22 @@ export class PreviewCartTool implements ChatTool {
       return { result: "We hit a problem creating the cart. Please ask the visitor to try again in a moment.", isError: true };
     }
 
-    // Step 5 — resolve customer ULID
-    let customerUlid = metadataCustomerId ?? "";
-
-    if (metadataCustomerId) {
-      // Reuse from METADATA — skip GSI query
-      this.logger.debug(
-        `Customer lookup [sessionUlid=${sessionUlid} outcome=metadata customerUlid=${customerUlid}]`,
-      );
-    }
-
+    // Step 5 — resolve customer ULID from METADATA (hard requirement)
     if (!metadataCustomerId) {
-      const customerResult = await this.resolveCustomerUlid(
-        tableName,
-        accountUlid,
-        email,
-        firstName,
-        lastName,
-        phone,
-        sessionUlid,
+      this.logger.error(
+        `[event=preview_cart_no_customer_id sessionUlid=${sessionUlid}]`,
       );
-
-      if (customerResult.isError) {
-        return { result: customerResult.error, isError: true };
-      }
-
-      customerUlid = customerResult.customerUlid;
+      return { result: MISSING_CUSTOMER_ERROR, isError: true };
     }
+
+    // Strip the C# prefix to get the bare ULID for use in the cart record's customer_id field
+    const customerUlid = metadataCustomerId.startsWith(CUSTOMER_PK_PREFIX)
+      ? metadataCustomerId.slice(CUSTOMER_PK_PREFIX.length)
+      : metadataCustomerId;
+
+    this.logger.debug(
+      `[event=preview_cart_customer_from_metadata sessionUlid=${sessionUlid}]`,
+    );
 
     // Step 6 — batch fetch services
     const batchKeys = validated.items.map((item) => {
@@ -455,17 +436,15 @@ export class PreviewCartTool implements ChatTool {
             SK: METADATA_SK,
           },
           UpdateExpression:
-            "SET #cart_id = if_not_exists(#cart_id, :cart_id), #guest_id = if_not_exists(#guest_id, :guest_id), #customer_id = if_not_exists(#customer_id, :customer_id), #customer_email = if_not_exists(#customer_email, :customer_email)",
+            "SET #cart_id = if_not_exists(#cart_id, :cart_id), #guest_id = if_not_exists(#guest_id, :guest_id), #customer_email = if_not_exists(#customer_email, :customer_email)",
           ExpressionAttributeNames: {
             "#cart_id": "cart_id",
             "#guest_id": "guest_id",
-            "#customer_id": "customer_id",
             "#customer_email": "customer_email",
           },
           ExpressionAttributeValues: {
             ":cart_id": cartUlid,
             ":guest_id": guestUlid,
-            ":customer_id": customerUlid,
             ":customer_email": resolvedCustomerEmail,
           },
         }),
@@ -525,110 +504,5 @@ export class PreviewCartTool implements ChatTool {
     }
 
     return { result: JSON.stringify(payload) };
-  }
-
-  private async resolveCustomerUlid(
-    tableName: string,
-    accountUlid: string,
-    email: string,
-    firstName: string,
-    lastName: string,
-    phone: string | null,
-    sessionUlid: string,
-  ): Promise<GuestCartCustomerResult> {
-    const genericError = "We hit a problem creating the cart. Please ask the visitor to try again in a moment.";
-
-    let existingUlid: string | null;
-
-    try {
-      existingUlid = await this.customerService.queryCustomerIdByEmail(tableName, accountUlid, email);
-    } catch (queryError: unknown) {
-      const queryErrorName = queryError instanceof Error ? queryError.name : "UnknownError";
-      this.logger.error(
-        `preview_cart customer GSI query failed [errorType=${queryErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
-      );
-      return { isError: true, error: genericError };
-    }
-
-    if (existingUlid !== null) {
-      this.logger.debug(
-        `Customer lookup [sessionUlid=${sessionUlid} outcome=existing customerUlid=${existingUlid}]`,
-      );
-      return { isError: false, customerUlid: existingUlid };
-    }
-
-    const newCustomerUlid = ulid();
-    const now = new Date().toISOString();
-
-    const customerRecord: GuestCartCustomerRecord = {
-      PK: `C#${newCustomerUlid}`,
-      SK: `C#${newCustomerUlid}`,
-      entity: "CUSTOMER",
-      "GSI1-PK": `ACCOUNT#${accountUlid}`,
-      "GSI1-SK": `EMAIL#${email}`,
-      email,
-      first_name: firstName,
-      last_name: lastName,
-      phone: phone ?? null,
-      billing_address: null,
-      is_email_subscribed: false,
-      abandoned_carts: [],
-      total_abandoned_carts: 0,
-      total_orders: 0,
-      total_spent: 0,
-      latest_session_id: null,
-      _createdAt_: now,
-      _lastUpdated_: now,
-    };
-
-    try {
-      await this.dynamoDb.send(
-        new PutCommand({
-          TableName: tableName,
-          Item: customerRecord,
-          ConditionExpression: "attribute_not_exists(PK)",
-        }),
-      );
-
-      this.logger.debug(
-        `Customer lookup [sessionUlid=${sessionUlid} outcome=created customerUlid=${newCustomerUlid}]`,
-      );
-      return { isError: false, customerUlid: newCustomerUlid };
-    } catch (putError: unknown) {
-      const putErrorName = putError instanceof Error ? putError.name : "UnknownError";
-
-      if (putErrorName !== "ConditionalCheckFailedException") {
-        this.logger.error(
-          `preview_cart customer put failed [errorType=${putErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
-        );
-        return { isError: true, error: genericError };
-      }
-
-      this.logger.debug(`customer create race recovered [sessionUlid=${sessionUlid}]`);
-
-      let recoveredUlid: string | null;
-
-      try {
-        recoveredUlid = await this.customerService.queryCustomerIdByEmail(tableName, accountUlid, email);
-      } catch (reQueryError: unknown) {
-        const reQueryErrorName = reQueryError instanceof Error ? reQueryError.name : "UnknownError";
-        this.logger.error(
-          `preview_cart race recovery query failed [errorType=${reQueryErrorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
-        );
-        return { isError: true, error: genericError };
-      }
-
-      if (recoveredUlid === null) {
-        this.logger.error(
-          `preview_cart race recovery re-query returned zero items [errorType=RaceRecoveryFailed sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
-        );
-        return { isError: true, error: genericError };
-      }
-
-      this.logger.debug(
-        `Customer lookup [sessionUlid=${sessionUlid} outcome=existing customerUlid=${recoveredUlid}]`,
-      );
-      return { isError: false, customerUlid: recoveredUlid };
-    }
   }
 }
