@@ -8,7 +8,7 @@ High-level overview of how `ai-chat-session-api` works.
 
 A NestJS backend that hosts an agentic chat layer. Messages can arrive from multiple channels, but the core of the system does not know or care where a message came from. Every conversation is a **session** identified by a ULID, and every session is bound to a single **agent** that determines the system prompt and which tools are available.
 
-The system is deliberately unopinionated about clients. Adding a new channel (email, SMS, voice, web UI) does not require changes to the core services — only a new adapter that translates inbound channel events into calls on `IdentityService` and `ChatSessionService`.
+The system is deliberately unopinionated about clients. Adding a new channel (email, SMS, voice, web UI) does not require changes to the core services — only a new adapter that translates inbound channel events into calls on `SessionService` and `ChatSessionService`.
 
 ---
 
@@ -20,13 +20,15 @@ The system is deliberately unopinionated about clients. Adding a new channel (em
 │  SendgridWebhookController → EmailReply · WebChatController │
 │  (future: Twilio SMS, Twilio Voice)                         │
 └───────────────────────────┬─────────────────────────────────┘
-                            │ (source, externalId, agentName, text)
+                            │ (sessionId or new session, text)
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  Identity layer                                             │
-│  IdentityService — maps (source, externalId) → sessionUlid  │
+│  Session layer                                              │
+│  SessionService — creates sessions; no translation table    │
+│  Web: controller does GetItem on METADATA (lookup-or-mint)  │
+│  Email: SessionService.createSession() per new conversation │
 └───────────────────────────┬─────────────────────────────────┘
-                            │ sessionUlid, text
+                            │ sessionId, text
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Conversation core                                          │
@@ -41,7 +43,7 @@ The system is deliberately unopinionated about clients. Adding a new channel (em
                      channel reply
 ```
 
-Each layer is a clean boundary. Adapters never talk to Anthropic or DynamoDB directly. The core never knows the channel format. Identity is the only thing that translates between external IDs and session ULIDs.
+Each layer is a clean boundary. Adapters never talk to Anthropic or DynamoDB directly. The core never knows the channel format. Sessions are identified by a ULID stored directly by the client — there is no translation table between external IDs and session IDs.
 
 ---
 
@@ -53,7 +55,9 @@ A single inbound message flows through the system like this.
    - Web chat: `WebChatController` accepts HTTP requests from the browser widget — `src/controllers/web-chat.controller.ts`.
    - Email reply: `SendgridWebhookController` accepts `POST /webhooks/sendgrid/inbound`, then `EmailReplyService` parses and validates the MIME payload — `src/controllers/sendgrid-webhook.controller.ts`, `src/services/email-reply.service.ts`.
 
-2. **Adapter resolves identity.** The adapter calls `IdentityService.lookupOrCreateSession(source, externalId, agentName)`. This returns a `sessionUlid`. On first contact the service creates an `IDENTITY#...` record and a `CHAT_SESSION#<ulid>` `METADATA` record with the agent binding. On subsequent contacts it reads the existing record. A conditional write prevents race conditions.
+2. **Adapter resolves or creates a session.**
+   - Web chat: `WebChatController` implements a lookup-or-mint policy. If the browser sends a `sessionId`, the controller does a `GetItem` on `CHAT_SESSION#<sessionId> / METADATA`. If the item exists, the session is resumed. If not (stale or absent), `SessionService.createSession("web", accountUlid)` mints a new session and the new ID is returned to the browser for storage.
+   - Email inbound: `EmailReplyService` routes using the session ULID encoded in the outbound sender address (Case 1 / Case 3-fresh) or calls `SessionService.createSession("email", accountId)` to start a fresh session (Case 2 / Case 3-stale).
 
 3. **Adapter calls the core.** The adapter passes the `sessionUlid` and the user's plain text into `ChatSessionService.handleMessage(sessionUlid, userMessage)`.
 
@@ -81,7 +85,7 @@ A single inbound message flows through the system like this.
 
 ## Key design decisions
 
-**Sessions are channel-agnostic.** A `sessionUlid` is just a ULID. It carries no knowledge of email, web, or anything else. The same ULID can in principle be reached from any channel — the identity layer is what decides which external IDs map to it. See [concepts.md](./concepts.md) for how `(source, externalId)` works.
+**Sessions are channel-agnostic.** A session ID is just a ULID. It carries no knowledge of email, web, or anything else. The browser stores it directly; email derives it from the outbound sender address. No translation table sits between the client-visible handle and the session — the session ID IS the handle. See [concepts.md](./concepts.md).
 
 **Agents are configuration, not code.** An agent is a NestJS provider that implements the `ChatAgent` interface — `name`, `description`, `systemPrompt`, `allowedToolNames`. It contains zero orchestration logic. The core `ChatSessionService` is generic. Adding a new agent never requires changes to the core. See [agents-and-tools.md](./agents-and-tools.md).
 
@@ -100,7 +104,7 @@ A single inbound message flows through the system like this.
 - `src/main.ts` — NestJS bootstrap.
 - `src/app.module.ts` — the single root module; registers config, providers, agents, and tools.
 - `src/services/chat-session.service.ts` — the tool-use loop.
-- `src/services/identity.service.ts` — channel-agnostic session lookup/creation.
+- `src/services/session.service.ts` — session creation and onboarding updates.
 - `src/services/anthropic.service.ts` — thin wrapper around the Anthropic SDK.
 - `src/agents/agent-registry.service.ts` · `src/tools/tool-registry.service.ts` — decorator-based registries.
 - `src/agents/*.agent.ts` — agent definitions.

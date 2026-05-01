@@ -1,16 +1,16 @@
 export interface WebChatCreateSessionRequest {
   agentName: string;
-  guestUlid: string;
+  sessionId?: string;
   accountUlid: string;
 }
 
 export interface WebChatSendMessageRequest {
-  sessionUlid: string;
+  sessionId: string;
   message: string;
 }
 
 export interface WebChatCreateSessionResponse {
-  sessionUlid: string;
+  sessionId: string;
   displayName: string;
   onboardingCompletedAt: string | null;
   kickoffCompletedAt: string | null;
@@ -35,7 +35,7 @@ export interface WebChatOnboardingRequest {
 }
 
 export interface WebChatOnboardingResponse {
-  sessionUlid: string;
+  sessionId: string;
   onboardingCompletedAt: string;
   kickoffCompletedAt: string | null;
   budgetCents: number;

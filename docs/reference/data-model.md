@@ -14,22 +14,6 @@ No GSIs are used today. If future features need a non-session access pattern (e.
 
 ## Record types
 
-### `IDENTITY#<source>#<externalId>` — `IDENTITY#<source>#<externalId>`
-
-Maps an external channel-specific ID to a session ULID.
-
-| Field | Notes |
-|---|---|
-| `PK`, `SK` | Both set to `IDENTITY#<source>#<externalId>`. |
-| `sessionUlid` | The session this identity points at. |
-| `createdAt` | ISO 8601 timestamp. |
-
-Written by `IdentityService.lookupOrCreateSession(...)` using a conditional put (only if the item does not already exist) to handle race conditions when two messages arrive nearly simultaneously.
-
-Type: `ChatSessionIdentityRecord` in `src/types/ChatSession.ts`.
-
----
-
 ### `CHAT_SESSION#<ulid>` — `METADATA`
 
 One per session. Holds the agent binding and session-level timestamps.
@@ -43,7 +27,7 @@ One per session. Holds the agent binding and session-level timestamps.
 | `createdAt` | Preserved via `if_not_exists`. |
 | `lastMessageAt` | Refreshed on every inbound message. |
 
-Written initially by `IdentityService`, then patched on every message by `ChatSessionService.handleMessage(...)`.
+Written initially by `SessionService.createSession(...)`, then patched on every message by `ChatSessionService.handleMessage(...)`.
 
 Type: `ChatSessionMetadataRecord` in `src/types/ChatSession.ts`.
 
@@ -120,7 +104,6 @@ Type: `EmailReplyRecord` in `src/types/EmailReply.ts`.
 
 | What we need | How we get it |
 |---|---|
-| Look up session for an external user | `GetCommand` on `IDENTITY#<source>#<externalId>` |
 | Load session metadata | `GetCommand` on `CHAT_SESSION#<ulid>` / `METADATA` |
 | Load recent messages | `QueryCommand` on `PK = CHAT_SESSION#<ulid> AND begins_with(SK, "MESSAGE#")` with `ScanIndexForward: false, Limit: 50` |
 | Write a new message | `PutCommand` with SK `MESSAGE#<newUlid>` |

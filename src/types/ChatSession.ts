@@ -1,12 +1,11 @@
 import { ChatContentBlock } from "./ChatContent";
 
-/** Return type for IdentityService.lookupOrCreateSession(). */
-export interface LookupOrCreateSessionResult {
+/** Return type for SessionService.updateOnboarding(). */
+export interface ChatSessionUpdateOnboardingResult {
   sessionUlid: string;
-  onboardingCompletedAt: string | null;
+  onboardingCompletedAt: string;
   kickoffCompletedAt: string | null;
-  budgetCents: number | null;
-  wasCreated: boolean;
+  budgetCents: number;
 }
 
 export type ChatSessionRole = "user" | "assistant";
@@ -36,13 +35,6 @@ export interface ChatAnthropicResponse {
   stop_reason: string;
 }
 
-export interface ChatSessionIdentityRecord {
-  PK: string;
-  SK: string;
-  session_id: string;
-  _createdAt_: string;
-}
-
 export interface ChatSessionMessageRecord {
   PK: string;
   SK: string;
@@ -61,10 +53,10 @@ export interface ChatSessionMetadataRecord {
   account_id?: string;
   onboarding_completed_at?: string;
   // Stamped by ChatSessionService.handleMessage the first time the session's
-  // kickoff marker message commits successfully. Read by IdentityService to
-  // expose kickoffCompletedAt on the wire so the frontend can decide whether
-  // to dispatch the kickoff auto-greeting. Set via UpdateCommand with
-  // if_not_exists so it is write-once — never clobbered.
+  // kickoff marker message commits successfully. Read by the web-chat controller
+  // and SessionService.updateOnboarding to expose kickoffCompletedAt on the wire
+  // so the frontend can decide whether to dispatch the kickoff auto-greeting.
+  // Set via UpdateCommand with if_not_exists so it is write-once — never clobbered.
   kickoff_completed_at?: string;
   budget_cents?: number;
   // Cart state — set by preview_cart on first call in the session, reused on

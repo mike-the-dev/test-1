@@ -8,7 +8,7 @@ import { SendGridConfigService } from "./sendgrid-config.service";
 import { EmailService } from "./email.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
-import { IdentityService } from "./identity.service";
+import { SessionService } from "./session.service";
 import {
   EmailReplySendGridInboundFormFields,
   EmailReplyInboundProcessOutcome,
@@ -82,7 +82,7 @@ export class EmailReplyService {
     private readonly emailService: EmailService,
     private readonly chatSessionService: ChatSessionService,
     private readonly customerService: CustomerService,
-    private readonly identityService: IdentityService,
+    private readonly sessionService: SessionService,
   ) {}
 
   private classifyLocalPart(localPart: string): EmailReplyLocalPartClassification {
@@ -381,7 +381,7 @@ export class EmailReplyService {
     accountId: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
-    const sessionUlid = await this.identityService.createSessionWithoutIdentity("email", accountId);
+    const sessionUlid = await this.sessionService.createSession("email", accountId);
 
     await this.dynamoDb.send(
       new UpdateCommand({
@@ -492,7 +492,7 @@ export class EmailReplyService {
     accountId: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
-    const newSessionUlid = await this.identityService.createSessionWithoutIdentity("email", accountId);
+    const newSessionUlid = await this.sessionService.createSession("email", accountId);
 
     const customerId = `C#${customerUlid}`;
 

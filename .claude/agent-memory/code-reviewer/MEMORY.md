@@ -4,3 +4,4 @@
 - [CCI Phase 2a review findings](project_cci2a_review.md) — GetCommand gating gap (brief vs plan divergence), spec-13 weakness, all MUST FIX invariants passed
 - [CCI Phase 2b review findings](project_cci2b_review.md) — All MUST FIX invariants passed; one SHOULD FIX: loader sets continuation_loaded_at even when Customer record is missing (should skip+retry)
 - [CCI Phase 3 review findings](project_cci3_review.md) — deduplicateInboundEmail stores "assistant-entry" placeholder in sessionUlid field; isConditionalCheckFailed not fixed in identity.service.ts; all invariants passed
+- [CCI Phase 2 identity-cleanup review](project_cci_phase2_identity_cleanup.md) — IDENTITY table removed, SessionService wired in, lookup-or-mint in controller; approved with minor SHOULD-FIX; dead type ChatSessionCreateSessionResult; −14 test delta explained

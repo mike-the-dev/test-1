@@ -6,7 +6,7 @@ The vocabulary you need to read the rest of these docs.
 
 ## Session
 
-A **session** is one continuous conversation with the system. It is identified by a **session ULID** — a 26-character lexicographically sortable identifier. A session has no inherent channel affinity: it is just a row (technically, a group of rows) in DynamoDB under `CHAT_SESSION#<ulid>`.
+A **session** is one continuous conversation with the system. It is identified by a **session ID** — a 26-character ULID that is lexicographically sortable. A session has no inherent channel affinity: it is just a row (technically, a group of rows) in DynamoDB under `CHAT_SESSION#<ulid>`.
 
 A session holds:
 
@@ -14,24 +14,9 @@ A session holds:
 - **Messages** — the full chat history as structured content blocks.
 - **Per-agent state** — e.g. collected contact info, saved user facts.
 
-Sessions persist forever. When a user comes back, we look them up and resume.
+Sessions persist indefinitely. When a user returns, they send the stored session ID and the backend resumes the existing session. If the session ID is unknown (stale, forged, or from a different environment), the backend creates a fresh session.
 
----
-
-## Identity
-
-An **identity** is a mapping from an external ID to a session ULID. External IDs come in tuples of `(source, externalId)`:
-
-| source | externalId example |
-|---|---|
-| `web` | guest ULID stored in the browser |
-| `email` | `alice@example.com` |
-| `sms` (future) | phone number |
-| `voice` (future) | phone number |
-
-The identity record sits at PK/SK `IDENTITY#<source>#<externalId>` and points at the session ULID. `IdentityService.lookupOrCreateSession(source, externalId, agentName)` is the single entry point: if the identity exists, return its session ULID; if not, create a new session and bind the given agent to it.
-
-This design lets one human be reachable across multiple channels while keeping a clean 1:1 mapping inside any single channel. A future enhancement can introduce a "merge" operation that points two identities at the same session.
+The browser stores the session ID directly in `localStorage` under `instapaytient_chat_session_id`. There is no intermediate translation table; the session ID IS the stable persistent handle.
 
 ---
 
@@ -40,7 +25,7 @@ This design lets one human be reachable across multiple channels while keeping a
 A **channel** is an external surface through which messages flow. Each channel has:
 
 - An **adapter** — a NestJS service or controller that owns the channel's SDK or webhook.
-- A **source name** — a short string (`web`, `email`, etc.) used in identity records.
+- A **source name** — a short string (`web`, `email`, etc.) recorded on the session's METADATA record.
 - Its own reply mechanism — threaded email reply, web chat response, etc.
 
 Channels today:
@@ -54,7 +39,7 @@ Channels planned:
 - Twilio Voice (real-time transcription → chat core → TTS reply)
 - HTTP / web client
 
-A channel adapter's job is minimal: receive a message, resolve identity, call the core, send the reply. That's it. No business logic lives in the adapter.
+A channel adapter's job is minimal: receive a message, resolve or create a session, call the core, send the reply. No business logic lives in the adapter.
 
 ---
 
@@ -78,7 +63,7 @@ interface ChatAgent {
 
 Agents contain no orchestration logic. They are pure configuration, discovered at runtime via the `@ChatAgentProvider()` decorator.
 
-Each session is bound to exactly one agent via the `agentName` field in its `METADATA` record. The binding is set the first time the identity is created and does not change during the session's lifetime.
+Each session is bound to exactly one agent via the `agentName` field in its `METADATA` record. The binding is set the first time the session is created and does not change during the session's lifetime.
 
 Today the only agent that ships is [`lead_capture`](./agents-and-tools.md#lead_capture).
 
@@ -134,4 +119,4 @@ Wherever a `source` value appears, it is a lowercase snake_case string identifyi
 - `sms` (planned)
 - `voice` (planned)
 
-Pick a short stable value when adding a new channel — it becomes part of DynamoDB keys and cannot be changed casually.
+Pick a short stable value when adding a new channel — it is stored on the session's METADATA record and on the account-scoped pointer record. It is informational only and does not affect routing.

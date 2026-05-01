@@ -21,14 +21,14 @@ const MAX_BUDGET_CENTS = 100_000_000;
 
 export const createSessionSchema = z.object({
   agentName: z.string().min(1),
-  guestUlid: z.string().regex(ulidRegex, "guestUlid must be a valid 26-character ULID"),
+  sessionId: z.string().regex(ulidRegex, "sessionId must be a valid 26-character ULID").optional(),
   accountUlid: z
     .string()
     .regex(accountUlidRegex, "accountUlid must be an A#-prefixed 26-character ULID"),
 });
 
 export const sendMessageSchema = z.object({
-  sessionUlid: z.string().regex(ulidRegex, "sessionUlid must be a valid 26-character ULID"),
+  sessionId: z.string().regex(ulidRegex, "sessionId must be a valid 26-character ULID"),
   message: z.string().min(1, "message must not be empty"),
 });
 
@@ -40,9 +40,9 @@ export const onboardingSchema = z.object({
     .max(MAX_BUDGET_CENTS, "budgetCents exceeds the maximum allowed value"),
 });
 
-export const sessionUlidParamSchema = z
+export const sessionIdParamSchema = z
   .string()
-  .regex(ulidRegex, "sessionUlid must be a valid 26-character ULID");
+  .regex(ulidRegex, "sessionId must be a valid 26-character ULID");
 
 export const embedAuthorizeSchema = z.object({
   accountUlid: z

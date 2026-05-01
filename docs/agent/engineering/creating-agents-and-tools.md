@@ -40,8 +40,9 @@ Each agent is a single NestJS provider that implements the `ChatAgent` interface
 When a user sends a message, the flow is:
 
 ```
-1. A session is either created or looked up by the identity service
-   (the session metadata includes which agent owns the session)
+1. A session is either resumed (if a valid sessionId was supplied) or
+   created by SessionService.createSession() — the session metadata
+   includes which agent owns the session
 
 2. ChatSessionService loads the agent config from the AgentRegistry
 

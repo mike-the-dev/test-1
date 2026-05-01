@@ -19,7 +19,7 @@ import { QdrantProvider } from "./providers/qdrant.provider";
 import { AnthropicService } from "./services/anthropic.service";
 import { ChatSessionService } from "./services/chat-session.service";
 import { EmailService } from "./services/email.service";
-import { IdentityService } from "./services/identity.service";
+import { SessionService } from "./services/session.service";
 import { ToolRegistryService } from "./tools/tool-registry.service";
 import { SaveUserFactTool } from "./tools/save-user-fact.tool";
 import { CollectContactInfoTool } from "./tools/collect-contact-info.tool";
@@ -105,7 +105,7 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     VoyageDimGuardService,
     ChatSessionService,
     EmailService,
-    IdentityService,
+    SessionService,
     SaveUserFactTool,
     CollectContactInfoTool,
     SendEmailTool,
