@@ -17,6 +17,8 @@ const RATE_LIMIT_MAX_REQUESTS = 3;
 const VERIFICATION_CODE_SK = "VERIFICATION_CODE";
 const USER_CONTACT_INFO_SK = "USER_CONTACT_INFO";
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
+const METADATA_SK = "METADATA";
+const CUSTOMER_PK_PREFIX = "C#";
 const HASH_ALGORITHM = "sha256";
 const VERIFICATION_EMAIL_SUBJECT = "Your verification code";
 
@@ -134,6 +136,95 @@ export class RequestVerificationCodeTool implements ChatTool {
       );
       return { result: JSON.stringify({ sent: false, reason: "send_failed" } satisfies VerificationRequestCodeResult) };
     }
+
+    // Step 2.5 — Guard: refuse to send if the customer was created during this session (new visitor).
+    // A code may only be sent when METADATA links to a customer whose _createdAt_ predates the session.
+
+    // Sub-step (i) — Read METADATA to get customer_id and session creation timestamp
+    let sessionCreatedAt: string;
+    let customerId: string;
+
+    try {
+      const metadataResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { PK: sessionPk, SK: METADATA_SK },
+        }),
+      );
+
+      const metadataItem = metadataResult.Item;
+
+      if (!metadataItem) {
+        this.logger.error(
+          `request_verification_code METADATA record missing [sessionUlid=${sessionUlid}]`,
+        );
+        return { result: JSON.stringify({ sent: false, reason: "send_failed" } satisfies VerificationRequestCodeResult) };
+      }
+
+      const rawCustomerId = metadataItem.customer_id;
+
+      if (rawCustomerId === null || rawCustomerId === undefined || rawCustomerId === "") {
+        this.logger.warn(
+          `[event=verification_request_blocked_no_customer_id sessionUlid=${sessionUlid}]`,
+        );
+        return { result: JSON.stringify({ sent: false, reason: "no_existing_customer_to_verify" } satisfies VerificationRequestCodeResult) };
+      }
+
+      sessionCreatedAt = String(metadataItem._createdAt_);
+      customerId = String(rawCustomerId);
+    } catch (metadataError: unknown) {
+      const errorName = metadataError instanceof Error ? metadataError.name : "UnknownError";
+      this.logger.error(
+        `request_verification_code METADATA fetch failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
+      );
+      return { result: JSON.stringify({ sent: false, reason: "send_failed" } satisfies VerificationRequestCodeResult) };
+    }
+
+    // Sub-step (ii) — Read customer record (customerId already has C# prefix from METADATA)
+    let customerCreatedAt: string;
+
+    try {
+      const customerResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: tableName,
+          Key: { PK: customerId, SK: customerId },
+        }),
+      );
+
+      if (!customerResult.Item) {
+        this.logger.warn(
+          `[event=verification_request_blocked_customer_missing sessionUlid=${sessionUlid} customerId=${customerId}]`,
+        );
+        return { result: JSON.stringify({ sent: false, reason: "no_existing_customer_to_verify" } satisfies VerificationRequestCodeResult) };
+      }
+
+      customerCreatedAt = String(customerResult.Item._createdAt_ ?? "");
+    } catch (customerError: unknown) {
+      const errorName = customerError instanceof Error ? customerError.name : "UnknownError";
+      this.logger.error(
+        `request_verification_code customer record fetch failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
+      );
+      return { result: JSON.stringify({ sent: false, reason: "send_failed" } satisfies VerificationRequestCodeResult) };
+    }
+
+    // Sub-step (iii) — Timestamp comparison
+    // Pre-CCI legacy customers may lack _createdAt_ — treat as "cannot prove pre-existence"
+    if (customerCreatedAt === "") {
+      this.logger.warn(
+        `[event=verification_request_blocked_new_customer sessionUlid=${sessionUlid} customerCreatedAt=missing sessionCreatedAt=${sessionCreatedAt}]`,
+      );
+      return { result: JSON.stringify({ sent: false, reason: "no_existing_customer_to_verify" } satisfies VerificationRequestCodeResult) };
+    }
+
+    // If customer was created at or after the session started, they are a new visitor
+    if (new Date(customerCreatedAt) >= new Date(sessionCreatedAt)) {
+      this.logger.warn(
+        `[event=verification_request_blocked_new_customer sessionUlid=${sessionUlid} customerCreatedAt=${customerCreatedAt} sessionCreatedAt=${sessionCreatedAt}]`,
+      );
+      return { result: JSON.stringify({ sent: false, reason: "no_existing_customer_to_verify" } satisfies VerificationRequestCodeResult) };
+    }
+
+    // Customer pre-existed — fall through to code generation
 
     // Step 3 — generate the 6-digit zero-padded code
     const code = randomInt(0, 10 ** CODE_LENGTH).toString().padStart(CODE_LENGTH, "0");

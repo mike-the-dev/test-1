@@ -94,11 +94,8 @@ export interface ChatSessionPointerRecord {
   _lastUpdated_: string;
 }
 
-/** Result returned by collect_contact_info when the contact trio completes and a customer is linked. */
-export type CollectContactInfoTrioCompletedResult = { saved: true; customerFound: boolean };
-
-/** Result returned by collect_contact_info when the contact trio is incomplete or customer_id is already set. */
-export type CollectContactInfoSavedResult = { saved: true };
+/** Result returned by collect_contact_info. isReturningVisitor is only present (and always true) when the contact trio completed and matched an existing customer record. */
+export type CollectContactInfoSavedResult = { saved: true; isReturningVisitor?: true };
 
 /** Visitor profile fields used by the prior-history loader's continuation context block. */
 export interface ChatSessionContinuationProfile {

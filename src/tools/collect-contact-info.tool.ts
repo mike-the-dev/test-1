@@ -5,7 +5,7 @@ import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "../services/database-config.service";
 import { CustomerService } from "../services/customer.service";
 import { ChatTool, ChatToolInputSchema, ChatToolExecutionContext, ChatToolExecutionResult } from "../types/Tool";
-import { CollectContactInfoTrioCompletedResult, CollectContactInfoSavedResult } from "../types/ChatSession";
+import { CollectContactInfoSavedResult } from "../types/ChatSession";
 import { collectContactInfoInputSchema, CollectContactInfoInput } from "../validation/tool.schema";
 import { ChatToolProvider } from "./chat-tool.decorator";
 
@@ -244,12 +244,12 @@ export class CollectContactInfoTool implements ChatTool {
     }
 
     // Step 7 — Return structured result
-    const customerFound = !customerResult.created;
+    if (customerResult.created) {
+      return { result: JSON.stringify({ saved: true } satisfies CollectContactInfoSavedResult) };
+    }
 
     return {
-      result: JSON.stringify(
-        { saved: true, customerFound } satisfies CollectContactInfoTrioCompletedResult,
-      ),
+      result: JSON.stringify({ saved: true, isReturningVisitor: true } satisfies CollectContactInfoSavedResult),
     };
   }
 }

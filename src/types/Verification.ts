@@ -17,7 +17,8 @@ export type VerificationRequestCodeResult =
   | { sent: true }
   | { sent: false; reason: "no_email_in_session" }
   | { sent: false; reason: "rate_limited" }
-  | { sent: false; reason: "send_failed" };
+  | { sent: false; reason: "send_failed" }
+  | { sent: false; reason: "no_existing_customer_to_verify" };
 
 export type VerificationVerifyCodeResult =
   | { verified: true; customerId: string }

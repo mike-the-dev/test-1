@@ -68,7 +68,7 @@ describe("CollectContactInfoTool", () => {
 
   describe("execute", () => {
     describe("1 — save firstName only (no email) — trio incomplete, no customer side-effect", () => {
-      it("returns { saved: true } without customerFound; CustomerService NOT called", async () => {
+      it("returns { saved: true } without isReturningVisitor; CustomerService NOT called", async () => {
         ddbMock.on(UpdateCommand).resolves({});
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
@@ -82,13 +82,14 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
         expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
       });
     });
 
     describe("2 — save email only; first/last NOT in USER_CONTACT_INFO — trio incomplete", () => {
-      it("returns { saved: true } without customerFound; CustomerService NOT called", async () => {
+      it("returns { saved: true } without isReturningVisitor; CustomerService NOT called", async () => {
         ddbMock.on(UpdateCommand).resolves({});
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
@@ -102,13 +103,14 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
         expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
       });
     });
 
     describe("3 — save firstName + lastName together, no email yet — trio incomplete", () => {
-      it("returns { saved: true } without customerFound; CustomerService NOT called", async () => {
+      it("returns { saved: true } without isReturningVisitor; CustomerService NOT called", async () => {
         ddbMock.on(UpdateCommand).resolves({});
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
@@ -122,13 +124,14 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
         expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
       });
     });
 
     describe("4 — trio completes on email-save; prior first+last in USER_CONTACT_INFO — customer HIT", () => {
-      it("returns { saved: true, customerFound: true }; CustomerService called with correct args; METADATA UpdateCommand fires with if_not_exists and C# prefixed customer_id", async () => {
+      it("returns { saved: true, isReturningVisitor: true }; CustomerService called with correct args; METADATA UpdateCommand fires with if_not_exists and C# prefixed customer_id", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: false,
           customerUlid: CUSTOMER_ULID,
@@ -150,7 +153,8 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
-        expect(parsed.customerFound).toBe(true);
+        expect(parsed.isReturningVisitor).toBe(true);
+        expect(parsed.customerFound).toBeUndefined();
 
         expect(mockCustomerService.lookupOrCreateCustomer).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -176,7 +180,7 @@ describe("CollectContactInfoTool", () => {
     });
 
     describe("5 — trio completes on email-save — customer MISS (new record created)", () => {
-      it("returns { saved: true, customerFound: false }", async () => {
+      it("returns { saved: true } without isReturningVisitor", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: false,
           customerUlid: CUSTOMER_ULID,
@@ -198,12 +202,13 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
-        expect(parsed.customerFound).toBe(false);
+        expect(parsed.isReturningVisitor).toBeUndefined();
+        expect(parsed.customerFound).toBeUndefined();
       });
     });
 
     describe("6 — trio completes on firstName-save; prior email + lastName in USER_CONTACT_INFO — customer HIT", () => {
-      it("returns { saved: true, customerFound: true }; CustomerService called", async () => {
+      it("returns { saved: true, isReturningVisitor: true }; CustomerService called", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: false,
           customerUlid: CUSTOMER_ULID,
@@ -225,13 +230,14 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
-        expect(parsed.customerFound).toBe(true);
+        expect(parsed.isReturningVisitor).toBe(true);
+        expect(parsed.customerFound).toBeUndefined();
         expect(mockCustomerService.lookupOrCreateCustomer).toHaveBeenCalled();
       });
     });
 
     describe("7 — trio completes on lastName-save; prior email + firstName in USER_CONTACT_INFO — customer MISS (new)", () => {
-      it("returns { saved: true, customerFound: false }; CustomerService called", async () => {
+      it("returns { saved: true } without isReturningVisitor; CustomerService called", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: false,
           customerUlid: CUSTOMER_ULID,
@@ -253,13 +259,14 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
-        expect(parsed.customerFound).toBe(false);
+        expect(parsed.isReturningVisitor).toBeUndefined();
+        expect(parsed.customerFound).toBeUndefined();
         expect(mockCustomerService.lookupOrCreateCustomer).toHaveBeenCalled();
       });
     });
 
     describe("8 — all three saved in one call (trio completes immediately)", () => {
-      it("CustomerService called with correct non-null firstName and lastName; returns { saved: true, customerFound: ... }", async () => {
+      it("CustomerService called with correct non-null firstName and lastName; returns { saved: true, isReturningVisitor: true } for HIT", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: false,
           customerUlid: CUSTOMER_ULID,
@@ -284,7 +291,8 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
-        expect(typeof parsed.customerFound).toBe("boolean");
+        expect(parsed.isReturningVisitor).toBe(true);
+        expect(parsed.customerFound).toBeUndefined();
 
         expect(mockCustomerService.lookupOrCreateCustomer).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -297,7 +305,7 @@ describe("CollectContactInfoTool", () => {
     });
 
     describe("9 — save AGAIN after trio complete and customer_id already set — gate short-circuits", () => {
-      it("returns { saved: true } without customerFound; CustomerService NOT called; METADATA UpdateCommand NOT called", async () => {
+      it("returns { saved: true } without isReturningVisitor; CustomerService NOT called; METADATA UpdateCommand NOT called", async () => {
         ddbMock.on(UpdateCommand).resolves({});
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
@@ -315,6 +323,7 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
 
         expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
@@ -329,7 +338,7 @@ describe("CollectContactInfoTool", () => {
     });
 
     describe("10 — save phone only — trio not complete (no email/firstName/lastName)", () => {
-      it("returns { saved: true } without customerFound; CustomerService NOT called", async () => {
+      it("returns { saved: true } without isReturningVisitor; CustomerService NOT called", async () => {
         ddbMock.on(UpdateCommand).resolves({});
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
@@ -343,13 +352,14 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
         expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
       });
     });
 
     describe("11 — CustomerService.lookupOrCreateCustomer returns error — best-effort", () => {
-      it("returns { saved: true } without customerFound; METADATA UpdateCommand NOT called; no isError", async () => {
+      it("returns { saved: true } without isReturningVisitor; METADATA UpdateCommand NOT called; no isError", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: true,
           error: "An unexpected error occurred. Please try again.",
@@ -370,6 +380,7 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
 
         // METADATA UpdateCommand NOT called
@@ -382,7 +393,7 @@ describe("CollectContactInfoTool", () => {
     });
 
     describe("12 — METADATA UpdateCommand fails — best-effort degradation", () => {
-      it("returns { saved: true } without customerFound; no isError", async () => {
+      it("returns { saved: true } without isReturningVisitor; no isError", async () => {
         mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
           isError: false,
           customerUlid: CUSTOMER_ULID,
@@ -409,6 +420,7 @@ describe("CollectContactInfoTool", () => {
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
         expect(parsed.saved).toBe(true);
+        expect(parsed.isReturningVisitor).toBeUndefined();
         expect(parsed.customerFound).toBeUndefined();
       });
     });

@@ -11,6 +11,7 @@ import { EmailService } from "../services/email.service";
 
 const TABLE_NAME = "test-conversations-table";
 const SESSION_ULID = "01TESTSESSION0000000000000";
+const CUSTOMER_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
 
@@ -44,6 +45,26 @@ function makeVerificationCodeItem(overrides: Record<string, unknown> = {}): Reco
     ttl: Math.floor(Date.now() / 1000) + 600,
     _createdAt_: tenMinutesAgo,
     _lastUpdated_: tenMinutesAgo,
+    ...overrides,
+  };
+}
+
+function makeMetadataItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    PK: `CHAT_SESSION#${SESSION_ULID}`,
+    SK: "METADATA",
+    _createdAt_: new Date(Date.now() - 60_000).toISOString(), // 1 minute ago
+    customer_id: `C#${CUSTOMER_ULID}`,
+    ...overrides,
+  };
+}
+
+function makeCustomerItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    PK: `C#${CUSTOMER_ULID}`,
+    SK: `C#${CUSTOMER_ULID}`,
+    entity: "CUSTOMER",
+    _createdAt_: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(), // 1 week ago
     ...overrides,
   };
 }
@@ -88,6 +109,14 @@ describe("RequestVerificationCodeTool", () => {
       ddbMock
         .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
         .resolves({ Item: undefined });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}` } })
+        .resolves({ Item: makeCustomerItem() });
 
       ddbMock.on(PutCommand).resolves({});
 
@@ -180,6 +209,14 @@ describe("RequestVerificationCodeTool", () => {
           }),
         });
 
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}` } })
+        .resolves({ Item: makeCustomerItem() });
+
       ddbMock.on(PutCommand).resolves({});
 
       const result = await tool.execute({}, TEST_CONTEXT);
@@ -203,6 +240,14 @@ describe("RequestVerificationCodeTool", () => {
         .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
         .resolves({ Item: undefined });
 
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}` } })
+        .resolves({ Item: makeCustomerItem() });
+
       mockEmailService.send.mockRejectedValue(new Error("SendGrid unavailable"));
 
       const result = await tool.execute({}, TEST_CONTEXT);
@@ -213,6 +258,7 @@ describe("RequestVerificationCodeTool", () => {
       expect(parsed.reason).toBe("send_failed");
 
       expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+      expect(mockEmailService.send).toHaveBeenCalledTimes(1);
     });
 
     it("6 — zero-padding preserved: code in email body and DDB hash are consistent", async () => {
@@ -223,6 +269,14 @@ describe("RequestVerificationCodeTool", () => {
       ddbMock
         .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
         .resolves({ Item: undefined });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}` } })
+        .resolves({ Item: makeCustomerItem() });
 
       ddbMock.on(PutCommand).resolves({});
 
@@ -246,6 +300,95 @@ describe("RequestVerificationCodeTool", () => {
       const storedHash = putCalls[0].args[0].input.Item?.code_hash as string;
       const expectedHash = createHash("sha256").update(codeInEmail).digest("hex");
       expect(storedHash).toBe(expectedHash);
+    });
+
+    it("7 — guard: customer_id null on METADATA returns { sent: false, reason: 'no_existing_customer_to_verify' }", async () => {
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+        .resolves({ Item: makeContactInfoItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
+        .resolves({ Item: undefined });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem({ customer_id: null }) });
+
+      const result = await tool.execute({}, TEST_CONTEXT);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(parsed.sent).toBe(false);
+      expect(parsed.reason).toBe("no_existing_customer_to_verify");
+
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+      expect(mockEmailService.send).not.toHaveBeenCalled();
+    });
+
+    it("8 — guard: customer _createdAt_ AFTER session _createdAt_ returns { sent: false, reason: 'no_existing_customer_to_verify' }", async () => {
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+        .resolves({ Item: makeContactInfoItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
+        .resolves({ Item: undefined });
+
+      // Session was created 5 minutes ago; customer was created 1 minute ago (newer than session — new visitor)
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem({ _createdAt_: fiveMinutesAgo }) });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}` } })
+        .resolves({ Item: makeCustomerItem({ _createdAt_: oneMinuteAgo }) });
+
+      const result = await tool.execute({}, TEST_CONTEXT);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(parsed.sent).toBe(false);
+      expect(parsed.reason).toBe("no_existing_customer_to_verify");
+
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+      expect(mockEmailService.send).not.toHaveBeenCalled();
+    });
+
+    it("9 — guard: customer _createdAt_ BEFORE session _createdAt_ (returning visitor) allows through and sends email", async () => {
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+      const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+        .resolves({ Item: makeContactInfoItem() });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "VERIFICATION_CODE" } })
+        .resolves({ Item: undefined });
+
+      // Session created 1 minute ago; customer created 1 week ago (clearly pre-existed — returning visitor)
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem({ _createdAt_: oneMinuteAgo }) });
+
+      ddbMock
+        .on(GetCommand, { Key: { PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}` } })
+        .resolves({ Item: makeCustomerItem({ _createdAt_: oneWeekAgo }) });
+
+      ddbMock.on(PutCommand).resolves({});
+
+      const result = await tool.execute({}, TEST_CONTEXT);
+
+      expect(result.isError).toBeUndefined();
+      const parsed = JSON.parse(result.result);
+      expect(parsed.sent).toBe(true);
+
+      expect(mockEmailService.send).toHaveBeenCalledTimes(1);
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(1);
     });
   });
 });
