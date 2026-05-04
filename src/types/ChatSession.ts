@@ -73,15 +73,16 @@ export interface ChatSessionMetadataRecord {
   // and read by generate_checkout_link to build the checkout URL.
   cart_id?: string; // bare cart ULID
   guest_id?: string; // bare guest ULID
-  customer_id: string | null; // "C#<customerUlid>" on verification success; null on creation
+  customer_id?: string | null; // "C#<customerUlid>" on verification success; absent on creation — set by collect_contact_info or verify_code
   // Stamped by verify_code on success. Stores the bare session ULID that was in
   // customer.latest_session_id at the moment of verification — i.e., the visitor's
-  // most-recent prior session, before this one. Null if verify_code was never called,
+  // most-recent prior session, before this one. Absent if verify_code was never called,
   // if verification failed, or if the customer had no prior session (first return).
-  continuation_from_session_id: string | null;
+  continuation_from_session_id?: string | null;
   // Stamped by the prior-history loader on its first fire in a session (ISO 8601).
   // Non-null value is the gate that prevents the loader from firing a second time.
-  continuation_loaded_at: string | null;
+  // Absent on creation — set by the continuation loader on first fire.
+  continuation_loaded_at?: string | null;
   customer_email?: string;
 }
 

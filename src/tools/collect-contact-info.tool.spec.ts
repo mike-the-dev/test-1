@@ -447,5 +447,38 @@ describe("CollectContactInfoTool", () => {
         expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
       });
     });
+
+    describe("15 — METADATA has no customer_id attribute (fresh session, post-fix state) — Step 6 writes real customer_id", () => {
+      it("METADATA UpdateCommand fires with C#-prefixed customer_id when customer_id is absent from METADATA", async () => {
+        mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
+          isError: false,
+          customerUlid: CUSTOMER_ULID,
+          created: true,
+        });
+
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({
+            Item: makeContactInfoItem({ email: "j@x.com", first_name: "Jane", last_name: "Doe" }),
+          });
+        // METADATA item with NO customer_id attribute (post-fix state — attribute is simply absent)
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        await tool.execute({ email: "j@x.com" }, TEST_CONTEXT);
+
+        // Step 6's UpdateCommand must fire with the real C#-prefixed customer_id
+        const metadataUpdate = ddbMock.commandCalls(UpdateCommand).find(
+          (call) => call.args[0].input.Key?.SK === "METADATA",
+        );
+        expect(metadataUpdate).toBeDefined();
+        expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":customer_id"]).toBe(
+          `C#${CUSTOMER_ULID}`,
+        );
+        expect(metadataUpdate!.args[0].input.UpdateExpression).toContain("if_not_exists(#customer_id");
+      });
+    });
   });
 });

@@ -87,9 +87,6 @@ export class SessionService {
       "#lastUpdated = :now",
       "#src = if_not_exists(#src, :source)",
       "agent_name = if_not_exists(agent_name, :agentName)",
-      "customer_id = if_not_exists(customer_id, :customerIdNull)",
-      "continuation_from_session_id = if_not_exists(continuation_from_session_id, :contFromNull)",
-      "continuation_loaded_at = if_not_exists(continuation_loaded_at, :contAtNull)",
     ];
 
     const expressionNames: Record<string, string> = {
@@ -102,9 +99,6 @@ export class SessionService {
       ":now": now,
       ":source": source,
       ":agentName": agentName,
-      ":customerIdNull": null,
-      ":contFromNull": null,
-      ":contAtNull": null,
     };
 
     if (accountUlid !== undefined) {

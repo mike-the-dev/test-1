@@ -87,7 +87,7 @@ describe("SessionService", () => {
       expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
     });
 
-    it("issues an UpdateCommand with correct PK, source, agentName, and null defaults", async () => {
+    it("issues an UpdateCommand with correct PK, source, and agentName — does NOT pre-initialize customer_id, continuation_from_session_id, or continuation_loaded_at", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
       const result = await service.lookupOrCreateSession("web", null, "shopping_assistant");
@@ -100,11 +100,14 @@ describe("SessionService", () => {
       expect(input.Key?.SK).toBe("METADATA");
       expect(input.ExpressionAttributeValues?.[":source"]).toBe("web");
       expect(input.ExpressionAttributeNames?.["#src"]).toBe("source");
-      expect(input.ExpressionAttributeValues?.[":customerIdNull"]).toBeNull();
-      expect(input.ExpressionAttributeValues?.[":contFromNull"]).toBeNull();
-      expect(input.ExpressionAttributeValues?.[":contAtNull"]).toBeNull();
       expect(input.ExpressionAttributeValues?.[":agentName"]).toBe("shopping_assistant");
       expect(input.UpdateExpression).toContain("agent_name");
+      expect(input.ExpressionAttributeValues).not.toHaveProperty(":customerIdNull");
+      expect(input.ExpressionAttributeValues).not.toHaveProperty(":contFromNull");
+      expect(input.ExpressionAttributeValues).not.toHaveProperty(":contAtNull");
+      expect(input.UpdateExpression).not.toContain("customer_id");
+      expect(input.UpdateExpression).not.toContain("continuation_from_session_id");
+      expect(input.UpdateExpression).not.toContain("continuation_loaded_at");
     });
 
     it("issues a PutCommand for the pointer record with agentName when accountUlid is provided", async () => {
