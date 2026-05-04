@@ -9,6 +9,11 @@ import { DatabaseConfigService } from "./database-config.service";
 
 const TABLE_NAME = "test-conversations-table";
 
+const VALID_ACCOUNT_ULID = "01BXACCNTACCT0000000000000";
+const VALID_SESSION_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+const STALE_SESSION_ULID = "01ARYZ3NDEKTSV4RRFFQ69G5FA";
+const ULID_REGEX = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
 const mockDatabaseConfig = {
   conversationsTable: TABLE_NAME,
 };
@@ -37,40 +42,87 @@ describe("SessionService", () => {
     service = module.get<SessionService>(SessionService);
   });
 
-  describe("createSession", () => {
-    it("issues an UpdateCommand with correct PK, source, and null defaults", async () => {
+  describe("lookupOrCreateSession", () => {
+    it("(a) sessionId provided + METADATA exists → resumes existing session without writing DDB", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          onboarding_completed_at: "2026-04-19T20:00:00.000Z",
+          kickoff_completed_at: null,
+          budget_cents: 50_000,
+        },
+      });
+
+      const result = await service.lookupOrCreateSession("web", VALID_SESSION_ULID, "shopping_assistant", VALID_ACCOUNT_ULID);
+
+      expect(result.sessionUlid).toBe(VALID_SESSION_ULID);
+      expect(result.wasCreated).toBe(false);
+      expect(result.onboardingCompletedAt).toBe("2026-04-19T20:00:00.000Z");
+      expect(result.budgetCents).toBe(50_000);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
+      expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+    });
+
+    it("(b) sessionId provided + METADATA not found → mints new session with different ULID", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+      ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(PutCommand).resolves({});
+
+      const result = await service.lookupOrCreateSession("web", STALE_SESSION_ULID, "shopping_assistant", VALID_ACCOUNT_ULID);
+
+      expect(result.wasCreated).toBe(true);
+      expect(result.sessionUlid).not.toBe(STALE_SESSION_ULID);
+      expect(result.sessionUlid).toMatch(ULID_REGEX);
+      expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(1);
+      expect(ddbMock.commandCalls(PutCommand)).toHaveLength(1);
+    });
+
+    it("(c) sessionId is null → mints immediately without issuing a GetCommand", async () => {
+      ddbMock.on(UpdateCommand).resolves({});
+      ddbMock.on(PutCommand).resolves({});
+
+      const result = await service.lookupOrCreateSession("web", null, "shopping_assistant", VALID_ACCOUNT_ULID);
+
+      expect(result.wasCreated).toBe(true);
+      expect(ddbMock.commandCalls(GetCommand)).toHaveLength(0);
+    });
+
+    it("issues an UpdateCommand with correct PK, source, agentName, and null defaults", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      const result = await service.createSession("web");
+      const result = await service.lookupOrCreateSession("web", null, "shopping_assistant");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);
 
       const input = updateCalls[0].args[0].input;
-      expect(input.Key?.PK).toBe(`CHAT_SESSION#${result}`);
+      expect(input.Key?.PK).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(input.Key?.SK).toBe("METADATA");
       expect(input.ExpressionAttributeValues?.[":source"]).toBe("web");
       expect(input.ExpressionAttributeNames?.["#src"]).toBe("source");
       expect(input.ExpressionAttributeValues?.[":customerIdNull"]).toBeNull();
       expect(input.ExpressionAttributeValues?.[":contFromNull"]).toBeNull();
       expect(input.ExpressionAttributeValues?.[":contAtNull"]).toBeNull();
+      expect(input.ExpressionAttributeValues?.[":agentName"]).toBe("shopping_assistant");
+      expect(input.UpdateExpression).toContain("agent_name");
     });
 
-    it("issues a PutCommand for the pointer record when accountUlid is provided", async () => {
+    it("issues a PutCommand for the pointer record with agentName when accountUlid is provided", async () => {
       ddbMock.on(UpdateCommand).resolves({});
       ddbMock.on(PutCommand).resolves({});
 
-      const result = await service.createSession("web", "01ACCOUNTULID00000000000000");
+      const result = await service.lookupOrCreateSession("web", null, "shopping_assistant", VALID_ACCOUNT_ULID);
 
       const putCalls = ddbMock.commandCalls(PutCommand);
       expect(putCalls).toHaveLength(1);
 
       const pointerPut = putCalls[0].args[0].input;
-      expect(pointerPut.Item?.PK).toBe("A#01ACCOUNTULID00000000000000");
-      expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result}`);
+      expect(pointerPut.Item?.PK).toBe(`A#${VALID_ACCOUNT_ULID}`);
+      expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(pointerPut.Item?.entity).toBe("CHAT_SESSION");
-      expect(pointerPut.Item?.session_id).toBe(result);
+      expect(pointerPut.Item?.session_id).toBe(result.sessionUlid);
       expect(pointerPut.Item?.source).toBe("web");
+      expect(pointerPut.Item?.agent_name).toBe("shopping_assistant");
       expect(typeof pointerPut.Item?._createdAt_).toBe("string");
       expect(typeof pointerPut.Item?._lastUpdated_).toBe("string");
     });
@@ -78,13 +130,13 @@ describe("SessionService", () => {
     it("does not issue a PutCommand when accountUlid is omitted", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.createSession("email");
+      await service.lookupOrCreateSession("email", null, "lead_capture");
 
       const putCalls = ddbMock.commandCalls(PutCommand);
       expect(putCalls).toHaveLength(0);
     });
 
-    it("catches pointer write failure and logs without re-throwing — return value still present", async () => {
+    it("catches pointer write failure and logs without re-throwing — result still returned", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
       const pointerError = Object.assign(new Error("Pointer write failed"), {
@@ -93,38 +145,40 @@ describe("SessionService", () => {
 
       ddbMock.on(PutCommand).rejects(pointerError);
 
-      const result = await service.createSession("web", "01ACCOUNTULID00000000000000");
+      const result = await service.lookupOrCreateSession("web", null, "lead_capture", VALID_ACCOUNT_ULID);
 
-      expect(result).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(result.sessionUlid).toMatch(ULID_REGEX);
+      expect(result.wasCreated).toBe(true);
     });
 
-    it("returns the new session ULID as a string", async () => {
+    it("returns wasCreated: true and a ULID string in sessionUlid", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      const result = await service.createSession("web");
+      const result = await service.lookupOrCreateSession("web", null, "lead_capture");
 
-      expect(typeof result).toBe("string");
-      expect(result).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(result.wasCreated).toBe(true);
+      expect(typeof result.sessionUlid).toBe("string");
+      expect(result.sessionUlid).toMatch(ULID_REGEX);
     });
 
     it("writes accountUlid to the UpdateCommand when provided", async () => {
       ddbMock.on(UpdateCommand).resolves({});
       ddbMock.on(PutCommand).resolves({});
 
-      await service.createSession("web", "01ACCOUNTULID00000000000000");
+      await service.lookupOrCreateSession("web", null, "lead_capture", VALID_ACCOUNT_ULID);
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);
 
       const input = updateCalls[0].args[0].input;
-      expect(input.ExpressionAttributeValues?.[":accountId"]).toBe("01ACCOUNTULID00000000000000");
+      expect(input.ExpressionAttributeValues?.[":accountId"]).toBe(VALID_ACCOUNT_ULID);
       expect(input.UpdateExpression).toContain("account_id");
     });
 
     it("does not write accountUlid to the UpdateCommand when omitted", async () => {
       ddbMock.on(UpdateCommand).resolves({});
 
-      await service.createSession("web");
+      await service.lookupOrCreateSession("web", null, "lead_capture");
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);

@@ -381,7 +381,8 @@ export class EmailReplyService {
     accountId: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
-    const sessionUlid = await this.sessionService.createSession("email", accountId);
+    const sessionResult = await this.sessionService.lookupOrCreateSession("email", null, "lead_capture", accountId);
+    const sessionUlid = sessionResult.sessionUlid;
 
     await this.dynamoDb.send(
       new UpdateCommand({
@@ -492,7 +493,8 @@ export class EmailReplyService {
     accountId: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
-    const newSessionUlid = await this.sessionService.createSession("email", accountId);
+    const sessionResult = await this.sessionService.lookupOrCreateSession("email", null, "lead_capture", accountId);
+    const newSessionUlid = sessionResult.sessionUlid;
 
     const customerId = `C#${customerUlid}`;
 

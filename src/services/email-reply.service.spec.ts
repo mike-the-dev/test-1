@@ -19,10 +19,10 @@ const SENDER_EMAIL = "alice@example.com";
 const INBOUND_MESSAGE_ID = "abc123@mail.example.com";
 
 const ASSISTANT_TO = `assistant@${REPLY_DOMAIN}`;
-const ACCOUNT_ID = "01ACCOUNTID0000000000000000";
-const CUSTOMER_ULID = "01CUSTOMERULID0000000000000";
-const PRIOR_SESSION_ULID = "01PRIORSESSION00000000000000";
-const NEW_SESSION_ULID = "01NEWSESSIONULID000000000000";
+const ACCOUNT_ID = "01BXACCNTACCT0000000000000";
+const CUSTOMER_ULID = "01BXCSTMR00000000000000000";
+const PRIOR_SESSION_ULID = "01BXPRYRSESSN0000000000000";
+const NEW_SESSION_ULID = "01BXNEWSESSN00000000000000";
 
 const VALID_HEADERS = `MIME-Version: 1.0\nMessage-ID: <${INBOUND_MESSAGE_ID}>\nContent-Type: text/plain`;
 
@@ -53,7 +53,7 @@ const mockChatSessionService = { handleMessage: jest.fn() };
 
 const mockCustomerService = { queryCustomerIdByEmail: jest.fn() };
 
-const mockSessionService = { createSession: jest.fn() };
+const mockSessionService = { lookupOrCreateSession: jest.fn() };
 
 describe("EmailReplyService", () => {
   let service: EmailReplyService;
@@ -308,7 +308,7 @@ describe("EmailReplyService", () => {
     it("uppercase 'ASSISTANT' local-part routes to ASSISTANT_ENTRY (case-insensitive)", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -318,13 +318,13 @@ describe("EmailReplyService", () => {
 
       // Routes to Case 2 (customer not found)
       expect(result).toBe("processed");
-      expect(mockSessionService.createSession).toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
     });
 
     it("mixed-case 'Assistant' local-part routes to ASSISTANT_ENTRY", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -333,7 +333,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(mixedFields);
 
       expect(result).toBe("processed");
-      expect(mockSessionService.createSession).toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
     });
 
     it("empty string local-part returns rejected_malformed", async () => {
@@ -363,7 +363,7 @@ describe("EmailReplyService", () => {
     it("unknown sender creates new session without customer_id and returns processed", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -371,7 +371,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(ASSISTANT_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      expect(mockSessionService.createSession).toHaveBeenCalledWith("email", ACCOUNT_ID);
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ID);
 
       // USER_CONTACT_INFO UpdateCommand should be called
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
@@ -408,7 +408,7 @@ describe("EmailReplyService", () => {
     it("Case 2 empty body after strip returns rejected_malformed", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
 
       const allQuotedFields = {
@@ -449,7 +449,7 @@ describe("EmailReplyService", () => {
       // handleMessage must be called with the EXISTING session, not a new one
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, "My new message.");
       // No session creation
-      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
       // No METADATA customer_id UpdateCommand
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataCustomerIdUpdate = updateCalls.find(
@@ -519,7 +519,7 @@ describe("EmailReplyService", () => {
       // First GetCommand: prior session METADATA (freshness check — 8 days old = stale)
       ddbMock.on(GetCommand).resolvesOnce({ Item: { _lastUpdated_: eightDaysAgo } });
 
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Good to see you again!", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -527,7 +527,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(ASSISTANT_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      expect(mockSessionService.createSession).toHaveBeenCalledWith("email", ACCOUNT_ID);
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ID);
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "My new message.");
 
       // Verify the METADATA UpdateCommand includes all three continuation fields
@@ -553,7 +553,7 @@ describe("EmailReplyService", () => {
       });
 
       ddbMock.on(GetCommand).resolvesOnce({ Item: { _lastUpdated_: eightDaysAgo } });
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -577,7 +577,7 @@ describe("EmailReplyService", () => {
       });
 
       // No GetCommand for prior metadata needed (latestSessionId is null — skip freshness check)
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -609,7 +609,7 @@ describe("EmailReplyService", () => {
       // Prior session METADATA not found
       ddbMock.on(GetCommand).resolvesOnce({ Item: undefined });
 
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -617,7 +617,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(ASSISTANT_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      expect(mockSessionService.createSession).toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find(
@@ -636,7 +636,7 @@ describe("EmailReplyService", () => {
       });
 
       ddbMock.on(GetCommand).resolvesOnce({ Item: { _lastUpdated_: eightDaysAgo } });
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -665,7 +665,7 @@ describe("EmailReplyService", () => {
       });
 
       ddbMock.on(GetCommand).resolvesOnce({ Item: { _lastUpdated_: atLeastSevenDaysAgo } });
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -674,7 +674,7 @@ describe("EmailReplyService", () => {
 
       expect(result).toBe("processed");
       // Stale path: new session created
-      expect(mockSessionService.createSession).toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
       // handleMessage called with NEW session (stale path)
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "My new message.");
     });
@@ -703,7 +703,7 @@ describe("EmailReplyService", () => {
 
       expect(result).toBe("processed");
       // Fresh path: no new session created
-      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
       // handleMessage called with EXISTING session (fresh path)
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, "My new message.");
     });
@@ -716,7 +716,7 @@ describe("EmailReplyService", () => {
       });
 
       ddbMock.on(GetCommand).resolvesOnce({ Item: { _lastUpdated_: "not-a-date" } });
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -725,7 +725,7 @@ describe("EmailReplyService", () => {
 
       expect(result).toBe("processed");
       // Stale path taken due to unparseable timestamp
-      expect(mockSessionService.createSession).toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
     });
   });
 
@@ -733,7 +733,7 @@ describe("EmailReplyService", () => {
     it("assistant entry but customer not in GSI falls through to Case 2 (new session, no customer link)", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.createSession.mockResolvedValue(NEW_SESSION_ULID);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -742,7 +742,7 @@ describe("EmailReplyService", () => {
 
       expect(result).toBe("processed");
       // New session created (Case 2)
-      expect(mockSessionService.createSession).toHaveBeenCalledWith("email", ACCOUNT_ID);
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ID);
 
       // No METADATA customer_id UpdateCommand written
       const updateCalls = ddbMock.commandCalls(UpdateCommand);

@@ -3,14 +3,12 @@ import {
   Body,
   Controller,
   Get,
-  Inject,
   InternalServerErrorException,
   Logger,
   NotFoundException,
   Param,
   Post,
 } from "@nestjs/common";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
 import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
@@ -18,8 +16,6 @@ import { ChatSessionService } from "../services/chat-session.service";
 import { SessionService } from "../services/session.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import { SlackAlertService } from "../services/slack-alert.service";
-import { DatabaseConfigService } from "../services/database-config.service";
-import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import {
   WebChatCreateSessionResponse,
   WebChatEmbedAuthorizeResponse,
@@ -36,9 +32,6 @@ import {
 } from "../validation/web-chat.schema";
 import type { CreateSessionBody, EmbedAuthorizeBody, OnboardingBody, SendMessageBody } from "../validation/web-chat.schema";
 
-const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
-const METADATA_SK = "METADATA";
-
 @Controller("chat/web")
 export class WebChatController {
   private readonly logger = new Logger(WebChatController.name);
@@ -49,8 +42,6 @@ export class WebChatController {
     private readonly agentRegistry: AgentRegistryService,
     private readonly originAllowlistService: OriginAllowlistService,
     private readonly slackAlertService: SlackAlertService,
-    private readonly databaseConfig: DatabaseConfigService,
-    @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
   ) {}
 
   @Post("sessions")
@@ -74,66 +65,28 @@ export class WebChatController {
       throw new InternalServerErrorException("Unable to resolve account for request.");
     }
 
-    const table = this.databaseConfig.conversationsTable;
-    const displayName = agent.displayName ?? agent.name;
-
-    // Lookup-or-mint: if the frontend sends a sessionId, attempt to resolve it
-    // directly from the METADATA record. If found, resume. If not found or no
-    // sessionId was sent, create a fresh session.
-    if (body.sessionId !== undefined) {
-      const existingSessionUlid = body.sessionId;
-
-      const metadataResult = await this.dynamoDb.send(
-        new GetCommand({
-          TableName: table,
-          Key: {
-            PK: `${CHAT_SESSION_PK_PREFIX}${existingSessionUlid}`,
-            SK: METADATA_SK,
-          },
-        }),
-      );
-
-      if (metadataResult.Item) {
-        const onboardingCompletedAt = metadataResult.Item.onboarding_completed_at ?? null;
-        const kickoffCompletedAt = metadataResult.Item.kickoff_completed_at ?? null;
-        const budgetCents = metadataResult.Item.budget_cents ?? null;
-
-        this.logger.debug(
-          `Resumed existing session [sessionUlid=${existingSessionUlid} accountUlid=${accountUlid}]`,
-        );
-
-        return {
-          sessionId: existingSessionUlid,
-          displayName,
-          onboardingCompletedAt,
-          kickoffCompletedAt,
-          budgetCents,
-        };
-      }
-
-      // sessionId sent but not found — mint a new session below.
-      this.logger.debug(
-        `sessionId not found, minting new session [requestedSessionUlid=${existingSessionUlid} accountUlid=${accountUlid}]`,
-      );
-    }
-
-    const newSessionUlid = await this.sessionService.createSession("web", accountUlid);
-
-    this.slackAlertService.notifyConversationStarted({
-      accountId: accountUlid,
-      sessionUlid: newSessionUlid,
-    }).catch(() => undefined);
-
-    this.logger.debug(
-      `New session created [agentName=${body.agentName} sessionUlid=${newSessionUlid} accountUlid=${accountUlid}]`,
+    const sessionResult = await this.sessionService.lookupOrCreateSession(
+      "web",
+      body.sessionId ?? null,
+      body.agentName,
+      accountUlid,
     );
 
+    if (sessionResult.wasCreated) {
+      this.slackAlertService.notifyConversationStarted({
+        accountId: accountUlid,
+        sessionUlid: sessionResult.sessionUlid,
+      }).catch(() => undefined);
+    }
+
+    const displayName = agent.displayName ?? agent.name;
+
     return {
-      sessionId: newSessionUlid,
+      sessionId: sessionResult.sessionUlid,
       displayName,
-      onboardingCompletedAt: null,
-      kickoffCompletedAt: null,
-      budgetCents: null,
+      onboardingCompletedAt: sessionResult.onboardingCompletedAt,
+      kickoffCompletedAt: sessionResult.kickoffCompletedAt,
+      budgetCents: sessionResult.budgetCents,
     };
   }
 

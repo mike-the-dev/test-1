@@ -1,16 +1,11 @@
 import { BadRequestException, InternalServerErrorException, NotFoundException } from "@nestjs/common";
 import { Test, TestingModule } from "@nestjs/testing";
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
-import { mockClient } from "aws-sdk-client-mock";
 
 import { AgentRegistryService } from "../agents/agent-registry.service";
 import { ChatSessionService } from "../services/chat-session.service";
 import { SessionService } from "../services/session.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import { SlackAlertService } from "../services/slack-alert.service";
-import { DatabaseConfigService } from "../services/database-config.service";
-import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import {
   createSessionSchema,
@@ -26,10 +21,9 @@ const VALID_SESSION_ULID = "01BX5ZZKBKACTAV9WEVGEMMVS1";
 const VALID_ACCOUNT_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const VALID_ACCOUNT_ULID_WITH_PREFIX = `A#${VALID_ACCOUNT_ULID}`;
 const AGENT_NAME = "lead_capture";
-const TABLE_NAME = "test-conversations-table";
 
 const mockSessionService = {
-  createSession: jest.fn(),
+  lookupOrCreateSession: jest.fn(),
   updateOnboarding: jest.fn(),
 };
 
@@ -54,18 +48,20 @@ const mockSlackAlertService = {
   notifyCheckoutLinkGenerated: jest.fn().mockResolvedValue(undefined),
 };
 
-const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
-
 describe("WebChatController", () => {
   let controller: WebChatController;
-  const ddbMock = mockClient(DynamoDBDocumentClient);
 
   beforeEach(async () => {
-    ddbMock.reset();
     jest.clearAllMocks();
 
     mockOriginAllowlistService.verifyAccountActive.mockResolvedValue(VALID_ACCOUNT_ULID);
-    mockSessionService.createSession.mockResolvedValue(VALID_SESSION_ULID);
+    mockSessionService.lookupOrCreateSession.mockResolvedValue({
+      sessionUlid: VALID_SESSION_ULID,
+      onboardingCompletedAt: null,
+      kickoffCompletedAt: null,
+      budgetCents: null,
+      wasCreated: true,
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [WebChatController],
@@ -75,11 +71,6 @@ describe("WebChatController", () => {
         { provide: AgentRegistryService, useValue: mockAgentRegistry },
         { provide: OriginAllowlistService, useValue: mockOriginAllowlistService },
         { provide: SlackAlertService, useValue: mockSlackAlertService },
-        { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
-        {
-          provide: DYNAMO_DB_CLIENT,
-          useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })),
-        },
       ],
     }).compile();
 
@@ -97,7 +88,7 @@ describe("WebChatController", () => {
         }),
       ).rejects.toThrow(BadRequestException);
 
-      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
     });
 
     it("returns sessionId, displayName, and onboarding nulls for a new session (no sessionId sent)", async () => {
@@ -115,7 +106,7 @@ describe("WebChatController", () => {
         kickoffCompletedAt: null,
         budgetCents: null,
       });
-      expect(mockSessionService.createSession).toHaveBeenCalledWith("web", VALID_ACCOUNT_ULID);
+      expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("web", null, AGENT_NAME, VALID_ACCOUNT_ULID);
     });
 
     it("falls back to agent.name when displayName is not set", async () => {
@@ -152,10 +143,10 @@ describe("WebChatController", () => {
         }),
       ).rejects.toThrow(InternalServerErrorException);
 
-      expect(mockSessionService.createSession).not.toHaveBeenCalled();
+      expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
     });
 
-    it("fires notifyConversationStarted when no sessionId is sent (new session)", async () => {
+    it("fires notifyConversationStarted when wasCreated is true (new session)", async () => {
       mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
 
       await controller.createSession({
@@ -167,6 +158,25 @@ describe("WebChatController", () => {
       const [callArgs] = mockSlackAlertService.notifyConversationStarted.mock.calls[0];
       expect(callArgs.accountId).toBe(VALID_ACCOUNT_ULID);
       expect(callArgs.sessionUlid).toBe(VALID_SESSION_ULID);
+    });
+
+    it("does NOT fire slack alert when an existing session is resumed (wasCreated: false)", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: VALID_SESSION_ULID,
+        onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
+        kickoffCompletedAt: null,
+        budgetCents: 50_000,
+        wasCreated: false,
+      });
+
+      await controller.createSession({
+        agentName: AGENT_NAME,
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+        sessionId: VALID_SESSION_ULID,
+      });
+
+      expect(mockSlackAlertService.notifyConversationStarted).not.toHaveBeenCalled();
     });
 
     it("returns the session response even when notifyConversationStarted rejects", async () => {
@@ -223,81 +233,6 @@ describe("WebChatController", () => {
       expect(() =>
         pipe.transform({ agentName: AGENT_NAME, accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX }),
       ).not.toThrow(); // accountUlid present, sessionId absent — valid
-    });
-
-    // Lookup-or-mint policy tests (plan items a, b, c, d)
-
-    it("(a) sessionId absent → SessionService.createSession called → new sessionId returned → slack alert fires", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
-      const newId = "01NEWSESSIONULID000000000000";
-      mockSessionService.createSession.mockResolvedValue(newId);
-
-      const result = await controller.createSession({
-        agentName: AGENT_NAME,
-        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
-      });
-
-      expect(result.sessionId).toBe(newId);
-      expect(mockSessionService.createSession).toHaveBeenCalledWith("web", VALID_ACCOUNT_ULID);
-      expect(mockSlackAlertService.notifyConversationStarted).toHaveBeenCalledTimes(1);
-    });
-
-    it("(b) sessionId present and METADATA GetItem returns a record → existing session data returned → SessionService.createSession NOT called → Slack alert NOT called", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
-
-      ddbMock.on(GetCommand).resolves({
-        Item: {
-          PK: `CHAT_SESSION#${VALID_SESSION_ULID}`,
-          SK: "METADATA",
-          onboarding_completed_at: "2026-04-19T20:00:00.000Z",
-          kickoff_completed_at: null,
-          budget_cents: 50_000,
-        },
-      });
-
-      const result = await controller.createSession({
-        agentName: AGENT_NAME,
-        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
-        sessionId: VALID_SESSION_ULID,
-      });
-
-      expect(result.sessionId).toBe(VALID_SESSION_ULID);
-      expect(result.onboardingCompletedAt).toBe("2026-04-19T20:00:00.000Z");
-      expect(result.budgetCents).toBe(50_000);
-      expect(mockSessionService.createSession).not.toHaveBeenCalled();
-      expect(mockSlackAlertService.notifyConversationStarted).not.toHaveBeenCalled();
-    });
-
-    it("(c) sessionId present but METADATA GetItem returns no record → SessionService.createSession called → new sessionId returned → returned sessionId differs from requested → slack alert fires", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
-
-      ddbMock.on(GetCommand).resolves({ Item: undefined });
-
-      const newId = "01NEWSESSIONULID000000000000";
-      mockSessionService.createSession.mockResolvedValue(newId);
-
-      const result = await controller.createSession({
-        agentName: AGENT_NAME,
-        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
-        sessionId: VALID_SESSION_ULID,
-      });
-
-      expect(result.sessionId).toBe(newId);
-      expect(result.sessionId).not.toBe(VALID_SESSION_ULID);
-      expect(mockSessionService.createSession).toHaveBeenCalledWith("web", VALID_ACCOUNT_ULID);
-      expect(mockSlackAlertService.notifyConversationStarted).toHaveBeenCalledTimes(1);
-    });
-
-    it("(d) malformed sessionId (non-ULID string) → Zod schema rejects with 400", () => {
-      const pipe = new ZodValidationPipe(createSessionSchema);
-
-      expect(() =>
-        pipe.transform({
-          agentName: AGENT_NAME,
-          accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
-          sessionId: "not-valid-ulid",
-        }),
-      ).toThrow(BadRequestException);
     });
   });
 
@@ -406,7 +341,7 @@ describe("WebChatController", () => {
       mockChatSessionService.handleMessage.mockResolvedValue({
         reply: "Here's your cart.",
         toolOutputs: [
-          { call_id: "toolu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
+          { call_id: "toulu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
         ],
       });
 
@@ -415,7 +350,7 @@ describe("WebChatController", () => {
       expect(result).toEqual({
         reply: "Here's your cart.",
         tool_outputs: [
-          { call_id: "toolu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
+          { call_id: "toulu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
         ],
       });
     });

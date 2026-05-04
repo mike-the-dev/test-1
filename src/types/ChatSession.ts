@@ -8,6 +8,15 @@ export interface ChatSessionUpdateOnboardingResult {
   budgetCents: number;
 }
 
+/** Return type for SessionService.lookupOrCreateSession(). */
+export interface ChatSessionLookupOrCreateResult {
+  sessionUlid: string;
+  onboardingCompletedAt: string | null;
+  kickoffCompletedAt: string | null;
+  budgetCents: number | null;
+  wasCreated: boolean;
+}
+
 export type ChatSessionRole = "user" | "assistant";
 
 /**

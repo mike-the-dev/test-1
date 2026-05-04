@@ -4,13 +4,12 @@ import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
-import { ChatSessionPointerRecord, ChatSessionUpdateOnboardingResult } from "../types/ChatSession";
+import { ChatSessionPointerRecord, ChatSessionUpdateOnboardingResult, ChatSessionLookupOrCreateResult } from "../types/ChatSession";
 
 const ACCOUNT_PK_PREFIX = "A#";
 
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const METADATA_SK = "METADATA";
-const LEAD_CAPTURE_AGENT_NAME = "lead_capture";
 
 @Injectable()
 export class SessionService {
@@ -22,15 +21,61 @@ export class SessionService {
   ) {}
 
   /**
-   * Creates a new chat session METADATA record. Does not write any identity
-   * indirection record — callers supply and store the session ID directly.
+   * Looks up an existing session or mints a new one, atomically from the
+   * caller's perspective. No IDENTITY records are written — session identity
+   * is carried by the sessionId parameter (web) or is irrelevant (email).
    *
-   * Used by the web-chat controller (new-session path) and by email-inbound
-   * Case 2 and Case 3-stale, where routing is driven by the recipient's
-   * local-part and the Customer GSI.
+   * Branch A — sessionId is provided:
+   *   Attempts a GetItem on CHAT_SESSION#<sessionId>/METADATA. If the record
+   *   exists, returns it with wasCreated: false (resume path). If the record
+   *   is not found (stale or tampered sessionId), falls through to Branch B.
+   *   This deliberate fallthrough is why a stale sessionId results in a fresh
+   *   session rather than a 404 — the caller always gets a usable session back.
+   *
+   * Branch B — mint new:
+   *   Generates a fresh ULID, writes METADATA via UpdateCommand (if_not_exists
+   *   guards make it idempotent), writes an account-scoped pointer record
+   *   (best-effort, failure is logged but not re-thrown), and returns the new
+   *   sessionUlid with wasCreated: true.
    */
-  async createSession(source: string, accountUlid?: string): Promise<string> {
+  async lookupOrCreateSession(
+    source: string,
+    sessionId: string | null,
+    agentName: string,
+    accountUlid?: string,
+  ): Promise<ChatSessionLookupOrCreateResult> {
     const table = this.databaseConfig.conversationsTable;
+
+    // Branch A: attempt to resume an existing session
+    if (sessionId !== null) {
+      const existingPk = `${CHAT_SESSION_PK_PREFIX}${sessionId}`;
+
+      const metadataResult = await this.dynamoDb.send(
+        new GetCommand({
+          TableName: table,
+          Key: { PK: existingPk, SK: METADATA_SK },
+        }),
+      );
+
+      if (metadataResult.Item) {
+        const onboardingCompletedAt = metadataResult.Item.onboarding_completed_at ?? null;
+        const kickoffCompletedAt = metadataResult.Item.kickoff_completed_at ?? null;
+        const budgetCents = metadataResult.Item.budget_cents ?? null;
+
+        this.logger.debug(
+          `Resumed existing session [sessionUlid=${sessionId} accountUlid=${accountUlid ?? "<none>"}]`,
+        );
+
+        return { sessionUlid: sessionId, onboardingCompletedAt, kickoffCompletedAt, budgetCents, wasCreated: false };
+      }
+
+      // sessionId provided but not found — fall through to mint a new session
+      this.logger.debug(
+        `sessionId not found, minting new session [requestedSessionUlid=${sessionId} accountUlid=${accountUlid ?? "<none>"}]`,
+      );
+    }
+
+    // Branch B: mint a new session
     const sessionUlid = ulid();
     const now = new Date().toISOString();
     const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
@@ -41,6 +86,7 @@ export class SessionService {
       "#createdAt = if_not_exists(#createdAt, :now)",
       "#lastUpdated = :now",
       "#src = if_not_exists(#src, :source)",
+      "agent_name = if_not_exists(agent_name, :agentName)",
       "customer_id = if_not_exists(customer_id, :customerIdNull)",
       "continuation_from_session_id = if_not_exists(continuation_from_session_id, :contFromNull)",
       "continuation_loaded_at = if_not_exists(continuation_loaded_at, :contAtNull)",
@@ -55,6 +101,7 @@ export class SessionService {
     const expressionValues: Record<string, unknown> = {
       ":now": now,
       ":source": source,
+      ":agentName": agentName,
       ":customerIdNull": null,
       ":contFromNull": null,
       ":contAtNull": null,
@@ -75,13 +122,17 @@ export class SessionService {
       }),
     );
 
+    // Write the account-scoped pointer record so the account can Query all its
+    // sessions without scanning. Best-effort: if this fails, the primary
+    // session is still valid and usable — the pointer is recoverable via
+    // backfill from the METADATA record's account_id attribute.
     if (accountUlid !== undefined) {
       const pointerItem = {
         PK: `${ACCOUNT_PK_PREFIX}${accountUlid}`,
         SK: sessionPk,
         entity: "CHAT_SESSION",
         session_id: sessionUlid,
-        agent_name: LEAD_CAPTURE_AGENT_NAME,
+        agent_name: agentName,
         source,
         _createdAt_: now,
         _lastUpdated_: now,
@@ -94,7 +145,7 @@ export class SessionService {
             Item: pointerItem,
           }),
         );
-      } catch (pointerError) {
+      } catch (pointerError: unknown) {
         const errorName = pointerError instanceof Error ? pointerError.name : "UnknownError";
         this.logger.error(
           `Failed to write session pointer [errorType=${errorName} sessionUlid=${sessionUlid} accountUlid=${accountUlid}]`,
@@ -102,7 +153,7 @@ export class SessionService {
       }
     }
 
-    return sessionUlid;
+    return { sessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true };
   }
 
   async updateOnboarding(sessionUlid: string, budgetCents: number): Promise<ChatSessionUpdateOnboardingResult> {
