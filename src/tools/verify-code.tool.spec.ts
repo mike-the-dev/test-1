@@ -98,14 +98,14 @@ describe("VerifyCodeTool", () => {
       expect(metadataUpdate).toBeDefined();
       expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":customerId"]).toBe(`C#${CUSTOMER_ULID}`);
       expect(metadataUpdate!.args[0].input.UpdateExpression).toContain("continuation_from_session_id");
-      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBe("01PRIORSESSIONULID000000000");
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBe("CHAT_SESSION#01PRIORSESSIONULID000000000");
 
       // Customer UpdateCommand called with latest_session_id
       const customerUpdate = updateCalls.find((call) =>
         (call.args[0].input.Key as Record<string, string>).PK === `C#${CUSTOMER_ULID}`,
       );
       expect(customerUpdate).toBeDefined();
-      expect(customerUpdate!.args[0].input.ExpressionAttributeValues?.[":sessionUlid"]).toBe(SESSION_ULID);
+      expect(customerUpdate!.args[0].input.ExpressionAttributeValues?.[":sessionUlid"]).toBe(`CHAT_SESSION#${SESSION_ULID}`);
 
       // DeleteCommand called on VERIFICATION_CODE
       const deleteCalls = ddbMock.commandCalls(DeleteCommand);
@@ -309,7 +309,7 @@ describe("VerifyCodeTool", () => {
         call.args[0].input.Key?.SK === "METADATA",
       );
       expect(metadataUpdate).toBeDefined();
-      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBe(PRIOR_SESSION);
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues?.[":contFromSessionId"]).toBe(`CHAT_SESSION#${PRIOR_SESSION}`);
     });
 
     it("11 — verify_code failure path: continuation_from_session_id is NOT written when code is wrong", async () => {

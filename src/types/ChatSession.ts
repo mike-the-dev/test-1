@@ -59,7 +59,7 @@ export interface ChatSessionMetadataRecord {
   _lastUpdated_: string;
   source: string;
   agent_name?: string;
-  account_id?: string;
+  account_id?: string; // stored as "A#<accountUlid>"
   onboarding_completed_at?: string;
   // Stamped by ChatSessionService.handleMessage the first time the session's
   // kickoff marker message commits successfully. Read by the web-chat controller
@@ -71,13 +71,14 @@ export interface ChatSessionMetadataRecord {
   // Cart state — set by preview_cart on first call in the session, reused on
   // subsequent preview_cart calls (idempotent stable IDs via if_not_exists)
   // and read by generate_checkout_link to build the checkout URL.
-  cart_id?: string; // bare cart ULID
-  guest_id?: string; // bare guest ULID
+  cart_id?: string; // "C#<cartUlid>"
+  guest_id?: string; // "G#<guestUlid>"
   customer_id?: string | null; // "C#<customerUlid>" on verification success; absent on creation — set by collect_contact_info or verify_code
-  // Stamped by verify_code on success. Stores the bare session ULID that was in
-  // customer.latest_session_id at the moment of verification — i.e., the visitor's
-  // most-recent prior session, before this one. Absent if verify_code was never called,
-  // if verification failed, or if the customer had no prior session (first return).
+  // Stamped by verify_code on success. Stores "CHAT_SESSION#<sessionUlid>" for the
+  // session that was in customer.latest_session_id at the moment of verification —
+  // i.e., the visitor's most-recent prior session, before this one. Absent if
+  // verify_code was never called, if verification failed, or if the customer had no
+  // prior session (first return).
   continuation_from_session_id?: string | null;
   // Stamped by the prior-history loader on its first fire in a session (ISO 8601).
   // Non-null value is the gate that prevents the loader from firing a second time.
@@ -97,7 +98,7 @@ export interface ChatSessionPointerRecord {
   PK: string;
   SK: string;
   entity: "CHAT_SESSION";
-  session_id: string;
+  session_id: string; // "CHAT_SESSION#<sessionUlid>" — matches the SK
   agent_name: string;
   source: string;
   _createdAt_: string;

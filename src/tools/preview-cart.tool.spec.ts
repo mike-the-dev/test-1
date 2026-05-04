@@ -214,8 +214,8 @@ describe("PreviewCartTool", () => {
       });
       ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
         Item: makeMetadataItem({
-          cart_id: EXISTING_CART_ULID,
-          guest_id: EXISTING_GUEST_ULID,
+          cart_id: `C#${EXISTING_CART_ULID}`,
+          guest_id: `G#${EXISTING_GUEST_ULID}`,
           customer_id: `C#${CUSTOMER_ULID}`,
           customer_email: "test@example.com",
         }),
@@ -526,17 +526,53 @@ describe("PreviewCartTool", () => {
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find((call) =>
-        (call.args[0].input.Key as Record<string, string>).SK === "METADATA",
+        call.args[0].input.Key?.SK === "METADATA",
       );
 
       expect(metadataUpdate).toBeDefined();
-      const expr = metadataUpdate!.args[0].input.UpdateExpression as string;
+      const expr = metadataUpdate!.args[0].input.UpdateExpression;
 
       expect(expr).toContain("if_not_exists(#cart_id");
       expect(expr).toContain("if_not_exists(#guest_id");
       expect(expr).toContain("if_not_exists(#customer_email");
       // customer_id is no longer written by preview_cart
       expect(expr).not.toContain("if_not_exists(#customer_id");
+
+      // On fresh mint (no existing IDs in METADATA), written values must carry prefixes
+      const values = metadataUpdate!.args[0].input.ExpressionAttributeValues!;
+      expect(String(values[":cart_id"])).toMatch(/^C#/);
+      expect(String(values[":guest_id"])).toMatch(/^G#/);
+    });
+
+    it("METADATA UpdateCommand on first call (fresh mint) writes prefixed cart_id and guest_id", async () => {
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } }).resolves({
+        Item: makeContactInfoItem(),
+      });
+      // No existing cart_id or guest_id in METADATA — fresh mint path
+      ddbMock.on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } }).resolves({
+        Item: makeMetadataItem({ customer_id: `C#${CUSTOMER_ULID}` }),
+      });
+      ddbMock.on(BatchGetCommand).resolves({
+        Responses: { [TABLE_NAME]: [makeServiceItem()] },
+        UnprocessedKeys: {},
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await tool.execute(
+        { items: [{ service_id: SERVICE_SK, quantity: 1 }] },
+        context,
+      );
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      const metadataUpdate = updateCalls.find((call) =>
+        call.args[0].input.Key?.SK === "METADATA",
+      );
+
+      expect(metadataUpdate).toBeDefined();
+      const values = metadataUpdate!.args[0].input.ExpressionAttributeValues!;
+      // Fresh mint: cart_id stored as C#<ulid>, guest_id stored as G#<ulid>
+      expect(String(values[":cart_id"])).toBe(`C#${CART_ULID}`);
+      expect(String(values[":guest_id"])).toBe(`G#${GUEST_ULID}`);
     });
   });
 
@@ -643,11 +679,15 @@ describe("PreviewCartTool", () => {
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const cartUpdate = updateCalls.find((call) =>
-        (call.args[0].input.Key as Record<string, string>).SK?.startsWith("G#"),
+        call.args[0].input.Key?.SK?.toString().startsWith("G#"),
       );
       expect(cartUpdate).toBeDefined();
       expect(cartUpdate!.args[0].input.ExpressionAttributeValues?.[":customer_id"]).toBe(
         `C#${CUSTOMER_ULID}`,
+      );
+      // Lock the fresh-mint cart SK shape: G#<26-char-ulid>C#<26-char-ulid>
+      expect(cartUpdate!.args[0].input.Key?.SK).toMatch(
+        /^G#[0-9A-Z]{26}C#[0-9A-Z]{26}$/,
       );
     });
   });

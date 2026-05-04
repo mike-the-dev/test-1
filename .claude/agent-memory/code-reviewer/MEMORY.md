@@ -7,3 +7,4 @@
 - [CCI Phase 2 identity-cleanup review](project_cci_phase2_identity_cleanup.md) — IDENTITY table removed, SessionService wired in, lookup-or-mint in controller; approved with minor SHOULD-FIX; dead type ChatSessionCreateSessionResult; −14 test delta explained
 - [New visitor guard + collect_contact_info rename review](project_cci_new_visitor_guard_review.md) — SHOULD-FIX: test 5 missing METADATA/customer mocks; guard otherwise correct; CUSTOMER_ULID in new spec is valid Crockford; approved
 - [SessionService lookupOrCreateSession restructure review](project_session_restructure_review.md) — agent_name regression fix; all invariants passed; approved clean; updateOnboarding SESSION_ULID has pre-existing 'I' char (out of scope)
+- [ID-prefix consistency phase review](project_id_prefix_phase_review.md) — 7-field prefix alignment; defensive normalization pattern; SK construction divergence; EmailReplyRecord field rename; approved with minor SHOULD-FIX

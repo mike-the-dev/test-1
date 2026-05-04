@@ -177,7 +177,7 @@ export class VerifyCodeTool implements ChatTool {
           Key: { PK: sessionPk, SK: METADATA_SK },
           UpdateExpression: "SET customer_id = :customerId, continuation_from_session_id = :contFromSessionId, #lastUpdated = :now",
           ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-          ExpressionAttributeValues: { ":customerId": customerId, ":contFromSessionId": latestSessionId, ":now": now },
+          ExpressionAttributeValues: { ":customerId": customerId, ":contFromSessionId": latestSessionId !== null ? `${CHAT_SESSION_PK_PREFIX}${latestSessionId}` : null, ":now": now },
         }),
       );
     } catch (metadataError: unknown) {
@@ -196,7 +196,7 @@ export class VerifyCodeTool implements ChatTool {
           UpdateExpression: "SET latest_session_id = :sessionUlid, #lastUpdated = :now",
           ConditionExpression: "attribute_exists(PK)",
           ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-          ExpressionAttributeValues: { ":sessionUlid": sessionUlid, ":now": now },
+          ExpressionAttributeValues: { ":sessionUlid": `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`, ":now": now },
         }),
       );
     } catch (customerError: unknown) {

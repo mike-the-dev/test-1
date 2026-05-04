@@ -123,7 +123,7 @@ describe("SessionService", () => {
       expect(pointerPut.Item?.PK).toBe(`A#${VALID_ACCOUNT_ULID}`);
       expect(pointerPut.Item?.SK).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(pointerPut.Item?.entity).toBe("CHAT_SESSION");
-      expect(pointerPut.Item?.session_id).toBe(result.sessionUlid);
+      expect(pointerPut.Item?.session_id).toBe(`CHAT_SESSION#${result.sessionUlid}`);
       expect(pointerPut.Item?.source).toBe("web");
       expect(pointerPut.Item?.agent_name).toBe("shopping_assistant");
       expect(typeof pointerPut.Item?._createdAt_).toBe("string");
@@ -174,7 +174,7 @@ describe("SessionService", () => {
       expect(updateCalls).toHaveLength(1);
 
       const input = updateCalls[0].args[0].input;
-      expect(input.ExpressionAttributeValues?.[":accountId"]).toBe(VALID_ACCOUNT_ULID);
+      expect(input.ExpressionAttributeValues?.[":accountId"]).toBe(`A#${VALID_ACCOUNT_ULID}`);
       expect(input.UpdateExpression).toContain("account_id");
     });
 

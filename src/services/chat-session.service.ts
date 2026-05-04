@@ -90,7 +90,16 @@ export class ChatSessionService {
 
       const rawAgentName: string | undefined = metadataResult.Item?.agent_name;
       const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
-      const accountUlid = metadataResult.Item?.account_id;
+      // Defensive compat — old records store bare ULID; new records store A#<ulid>;
+      // strip the prefix so all downstream code receives a bare ULID.
+      // Remove when old records cycle out.
+      const rawAccountId: string | undefined = metadataResult.Item?.account_id;
+      let accountUlid: string | undefined;
+
+      if (rawAccountId !== undefined) {
+        accountUlid = rawAccountId.startsWith("A#") ? rawAccountId.slice(2) : rawAccountId;
+      }
+
       const budgetCents: number | undefined = metadataResult.Item?.budget_cents;
       const customerId: string | null = metadataResult.Item?.customer_id ?? null;
 
@@ -234,7 +243,12 @@ export class ChatSessionService {
 
       if (shouldLoadContinuation) {
         try {
-          const priorSessionPk = `${CHAT_SESSION_PK_PREFIX}${continuationFromSessionId}`;
+          // Defensive compat — old records store bare ULID; new records store CHAT_SESSION#<ulid>;
+          // guard against double-prefix if value is already prefixed.
+          // Remove when old records cycle out.
+          const priorSessionPk = continuationFromSessionId!.startsWith(CHAT_SESSION_PK_PREFIX)
+            ? continuationFromSessionId!
+            : `${CHAT_SESSION_PK_PREFIX}${continuationFromSessionId}`;
 
           // customerId is guaranteed non-null here: continuation_from_session_id is only set
           // by verify_code on success, which also sets customer_id atomically in Write A.
@@ -494,7 +508,7 @@ export class ChatSessionService {
               UpdateExpression: "SET latest_session_id = :sessionUlid, #lastUpdated = :now",
               ConditionExpression: "attribute_exists(PK)",
               ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-              ExpressionAttributeValues: { ":sessionUlid": sessionUlid, ":now": now },
+              ExpressionAttributeValues: { ":sessionUlid": `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`, ":now": now },
             }),
           );
         } catch (latestSessionError) {

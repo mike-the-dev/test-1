@@ -7,6 +7,7 @@ import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { GuestCartCustomerRecord, GuestCartLookupOrCreateResult } from "../types/GuestCart";
 
 const CUSTOMER_PK_PREFIX = "C#";
+const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const ACCOUNT_PREFIX = "ACCOUNT#";
 const EMAIL_PREFIX = "EMAIL#";
 const GENERIC_ERROR_STRING = "An unexpected error occurred. Please try again.";
@@ -66,8 +67,17 @@ export class CustomerService {
       return null;
     }
 
-    const latestSessionId =
-      items[0].latest_session_id != null ? String(items[0].latest_session_id) : null;
+    // Defensive compat — old records store bare ULID; new records store CHAT_SESSION#<ulid>;
+    // strip the prefix so callers receive a bare ULID.
+    // Remove when old records cycle out.
+    const rawLatestSessionId = items[0].latest_session_id != null ? String(items[0].latest_session_id) : null;
+    let latestSessionId: string | null = null;
+
+    if (rawLatestSessionId !== null) {
+      latestSessionId = rawLatestSessionId.startsWith(CHAT_SESSION_PK_PREFIX)
+        ? rawLatestSessionId.slice(CHAT_SESSION_PK_PREFIX.length)
+        : rawLatestSessionId;
+    }
 
     return { customerUlid: pk.slice(CUSTOMER_PK_PREFIX.length), latestSessionId };
   }

@@ -541,7 +541,7 @@ describe("EmailReplyService", () => {
       expect(metadataUpdate).toBeDefined();
       const values = metadataUpdate!.args[0].input.ExpressionAttributeValues!;
       expect(values[":customerId"]).toBe(`C#${CUSTOMER_ULID}`);
-      expect(values[":contFrom"]).toBe(PRIOR_SESSION_ULID);
+      expect(values[":contFrom"]).toBe(`CHAT_SESSION#${PRIOR_SESSION_ULID}`);
       expect(values[":contAt"]).toBeNull();
     });
 
@@ -566,7 +566,7 @@ describe("EmailReplyService", () => {
           call.args[0].input.Key?.SK === "METADATA" &&
           call.args[0].input.UpdateExpression?.includes("continuation_from_session_id"),
       );
-      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues![":contFrom"]).toBe(PRIOR_SESSION_ULID);
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues![":contFrom"]).toBe(`CHAT_SESSION#${PRIOR_SESSION_ULID}`);
     });
 
     it("Case 3 stale with null latestSessionId writes continuation_from_session_id = null", async () => {

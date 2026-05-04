@@ -130,7 +130,7 @@ export class GenerateCheckoutLinkTool implements ChatTool {
     let alertItems: CartItemAlertEntry[] = [];
 
     try {
-      const cartSk = `G#${guest_id}C#${cart_id}`;
+      const cartSk = `${guest_id}${cart_id}`;
       const cartResult = await this.dynamoDb.send(
         new GetCommand({
           TableName: tableName,
@@ -169,21 +169,21 @@ export class GenerateCheckoutLinkTool implements ChatTool {
     const customerUlid = customer_id.startsWith(CUSTOMER_PK_PREFIX)
       ? customer_id.slice(CUSTOMER_PK_PREFIX.length)
       : customer_id;
-    const checkout_url = `${baseResult.base}/checkout?email=${encodeURIComponent(customer_email)}&customerId=${customerUlid}&guestId=${guest_id}&cartId=${cart_id}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
+    const checkout_url = `${baseResult.base}/checkout?email=${encodeURIComponent(customer_email)}&customerId=${customerUlid}&guestId=${guest_id.startsWith("G#") ? guest_id.slice(2) : guest_id}&cartId=${cart_id.startsWith("C#") ? cart_id.slice(2) : cart_id}&aiSessionId=${encodeURIComponent(sessionUlid)}`;
 
     // Step 7 — fire Slack alert
     const cartTotal = alertItems.reduce((sum, item) => sum + item.subtotalCents, 0);
     this.slackAlertService.notifyCheckoutLinkGenerated({
       accountId: accountUlid,
       sessionUlid,
-      guestCartId: cart_id,
+      guestCartId: cart_id.startsWith("C#") ? cart_id.slice(2) : cart_id,
       cartTotalCents: cartTotal,
       items: alertItems,
       checkoutUrl: checkout_url,
     }).catch(() => undefined);
 
     return {
-      result: JSON.stringify({ checkout_url, cart_id }),
+      result: JSON.stringify({ checkout_url, cart_id: cart_id.startsWith("C#") ? cart_id.slice(2) : cart_id }),
     };
   }
 

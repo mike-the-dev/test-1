@@ -39,5 +39,5 @@ export interface EmailReplyRecord {
   PK: string;
   SK: string;
   processedAt: string;
-  sessionUlid: string | null;
+  sessionId: string | null; // "CHAT_SESSION#<sessionUlid>" or null
 }

@@ -90,16 +90,16 @@ describe("CustomerService", () => {
   });
 
   describe("queryCustomerIdByEmail — latestSessionId", () => {
-    it("1 — returns non-null latestSessionId when Customer record has the field", async () => {
-      const PRIOR_SESSION = "01PRIORSESSION00000000000";
+    it("1 — returns non-null latestSessionId when Customer record has the prefixed field (normalizes to bare ULID)", async () => {
+      const PRIOR_SESSION_BARE = "01PRIORSESSION00000000000";
 
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: PRIOR_SESSION }],
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: `CHAT_SESSION#${PRIOR_SESSION_BARE}` }],
       });
 
       const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
 
-      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: PRIOR_SESSION });
+      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: PRIOR_SESSION_BARE });
     });
 
     it("2 — returns null latestSessionId when item has no latest_session_id attribute", async () => {
@@ -126,7 +126,7 @@ describe("CustomerService", () => {
       const PRIOR_SESSION = "01PRIORSESSION";
 
       ddbMock.on(QueryCommand).resolves({
-        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: PRIOR_SESSION }],
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: `CHAT_SESSION#${PRIOR_SESSION}` }],
       });
 
       const result = await service.lookupOrCreateCustomer({
@@ -140,6 +140,30 @@ describe("CustomerService", () => {
 
       expect(result).toEqual({ isError: false, customerUlid: CUSTOMER_ULID, created: false });
       expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
+    });
+
+    it("normalizes prefixed latest_session_id to bare ULID", async () => {
+      const PRIOR_SESSION_BARE = "01PRIORSESSION00000000000";
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: `CHAT_SESSION#${PRIOR_SESSION_BARE}` }],
+      });
+
+      const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
+
+      expect(result?.latestSessionId).toBe(PRIOR_SESSION_BARE);
+    });
+
+    it("handles legacy bare latest_session_id without stripping", async () => {
+      const PRIOR_SESSION_BARE = "01PRIORSESSION00000000000";
+
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER", latest_session_id: PRIOR_SESSION_BARE }],
+      });
+
+      const result = await service.queryCustomerIdByEmail(TABLE_NAME, ACCOUNT_ULID, "test@example.com");
+
+      expect(result?.latestSessionId).toBe(PRIOR_SESSION_BARE);
     });
   });
 

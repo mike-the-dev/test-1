@@ -60,7 +60,7 @@ describe("ChatSessionService", () => {
     mockToolRegistry.getAll.mockReturnValue([]);
     mockAgentRegistry.getByName.mockReturnValue(STUB_AGENT);
 
-    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
+    ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -776,7 +776,7 @@ describe("ChatSessionService", () => {
 
     it("passes a dynamic system context with budget when budget_cents is set on METADATA", async () => {
       ddbMock.on(GetCommand).resolves({
-        Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", budget_cents: 100_000 },
+        Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", budget_cents: 100_000 },
       });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
@@ -804,7 +804,7 @@ describe("ChatSessionService", () => {
     });
 
     it("stamps kickoff_completed_at on first successful kickoff turn", async () => {
-      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
@@ -849,7 +849,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           kickoff_completed_at: "2026-04-20T22:00:00.000Z",
         },
       });
@@ -905,7 +905,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           customer_id: CUSTOMER_ID,
         },
       });
@@ -925,7 +925,7 @@ describe("ChatSessionService", () => {
       expect(customerUpdate!.args[0].input.Key?.PK).toBe("C#01CUSTOMERULID0000000000000");
       expect(customerUpdate!.args[0].input.Key?.SK).toBe("C#01CUSTOMERULID0000000000000");
       expect(customerUpdate!.args[0].input.ExpressionAttributeValues?.[":sessionUlid"]).toBe(
-        "01TESTSESSION0000000000000",
+        "CHAT_SESSION#01TESTSESSION0000000000000",
       );
     });
 
@@ -935,7 +935,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           customer_id: BARE_CUSTOMER_ID,
         },
       });
@@ -955,7 +955,7 @@ describe("ChatSessionService", () => {
       expect(customerUpdate!.args[0].input.Key?.PK).toBe("C#01CUSTOMERULID0000000000000");
       expect(customerUpdate!.args[0].input.Key?.SK).toBe("C#01CUSTOMERULID0000000000000");
       expect(customerUpdate!.args[0].input.ExpressionAttributeValues?.[":sessionUlid"]).toBe(
-        "01TESTSESSION0000000000000",
+        "CHAT_SESSION#01TESTSESSION0000000000000",
       );
     });
 
@@ -965,7 +965,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           customer_id: PREFIXED_CUSTOMER_ID,
         },
       });
@@ -991,7 +991,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           customer_id: null,
         },
       });
@@ -1016,7 +1016,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           customer_id: CUSTOMER_ID,
         },
       });
@@ -1045,9 +1045,14 @@ describe("ChatSessionService", () => {
     const PRIOR_SESSION_ULID = "01PRIORSESSION000000000000";
     const CUSTOMER_ID = "C#01CUSTOMERULID0000000000000";
 
+    // GATE_OPEN_METADATA stores `continuation_from_session_id` in BARE ULID form
+    // to exercise the legacy/old-record code path through the defensive prefix
+    // guard at chat-session.service.ts:~243. The new prefixed-form code path is
+    // covered by a dedicated test (search for "CHAT_SESSION#" prefix tests in
+    // this file).
     const GATE_OPEN_METADATA = {
       agent_name: "lead_capture",
-      account_id: "01ACCOUNTULID00000000000000",
+      account_id: "A#01ACCOUNTULID00000000000000",
       customer_id: CUSTOMER_ID,
       continuation_from_session_id: PRIOR_SESSION_ULID,
       continuation_loaded_at: null,
@@ -1075,7 +1080,7 @@ describe("ChatSessionService", () => {
     }
 
     it("1 — loader does NOT fire when continuation_from_session_id is null", async () => {
-      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
+      ddbMock.on(GetCommand).resolves({ Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", continuation_from_session_id: null, continuation_loaded_at: null } });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});
@@ -1096,7 +1101,7 @@ describe("ChatSessionService", () => {
       ddbMock.on(GetCommand).resolves({
         Item: {
           agent_name: "lead_capture",
-          account_id: "01ACCOUNTULID00000000000000",
+          account_id: "A#01ACCOUNTULID00000000000000",
           customer_id: CUSTOMER_ID,
           continuation_from_session_id: PRIOR_SESSION_ULID,
           continuation_loaded_at: "2026-01-01T00:00:00.000Z",
@@ -1434,6 +1439,77 @@ describe("ChatSessionService", () => {
       // dynamicSystemContext is undefined (no budget, no continuation)
       const dynamicCtx: string | undefined = mockAnthropicService.sendMessage.mock.calls[0][3];
       expect(dynamicCtx).toBeUndefined();
+    });
+
+    it("account_id normalization — A#-prefixed account_id in METADATA is stripped to bare ULID for tool context", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          agent_name: "lead_capture",
+          account_id: "A#01ACCOUNTULID00000000000000",
+          continuation_from_session_id: null,
+          continuation_loaded_at: null,
+        },
+      });
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "done" });
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce({
+          content: [{ type: "tool_use", id: "toolu_01", name: "save_user_fact", input: { key: "k", value: "v" } }],
+          stop_reason: "tool_use",
+        })
+        .mockResolvedValueOnce({
+          content: [{ type: "text", text: "Done." }],
+          stop_reason: "end_turn",
+        });
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      // accountUlid passed to tool context must be bare (no A# prefix)
+      expect(mockToolRegistry.execute).toHaveBeenCalledWith(
+        "save_user_fact",
+        { key: "k", value: "v" },
+        { sessionUlid: SESSION_ULID, accountUlid: "01ACCOUNTULID00000000000000" },
+      );
+    });
+
+    it("prior-history loader — handles new prefixed continuation_from_session_id without double-prefix", async () => {
+      const PRIOR_SESSION_PREFIXED = `CHAT_SESSION#${PRIOR_SESSION_ULID}`;
+
+      ddbMock.on(GetCommand)
+        .resolvesOnce({
+          Item: {
+            agent_name: "lead_capture",
+            account_id: "A#01ACCOUNTULID00000000000000",
+            customer_id: CUSTOMER_ID,
+            continuation_from_session_id: PRIOR_SESSION_PREFIXED,
+            continuation_loaded_at: null,
+          },
+        })
+        .resolvesOnce({ Item: CUSTOMER_ITEM });
+
+      ddbMock.on(QueryCommand)
+        .resolvesOnce({ Items: [] })
+        .resolvesOnce({ Items: [] });
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage(SESSION_ULID, "Hello");
+
+      // Verify the prior session QueryCommand uses the correct single-prefixed PK
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      // Second QueryCommand is the prior-session history query
+      const priorHistoryQuery = queryCalls[1];
+      expect(priorHistoryQuery).toBeDefined();
+      expect(priorHistoryQuery.args[0].input.ExpressionAttributeValues?.[":pk"]).toBe(
+        `CHAT_SESSION#${PRIOR_SESSION_ULID}`,
+      );
     });
   });
 

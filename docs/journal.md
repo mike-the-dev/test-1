@@ -36,6 +36,45 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-05-04 — DDB ID-prefix consistency pass (7 fields aligned with ecommerce-side conventions)
+
+**Goal:** A live Playwright test on May 4 surfaced a real consistency issue: the customer record's `latest_session_id` field stored a bare ULID, while session METADATA's `customer_id` stored a prefixed `C#<ulid>`. The user noted that the e-commerce application that shares this DynamoDB table uses prefixed IDs everywhere — storing bare IDs in this API broke cross-application consistency and made debugging harder. This phase aligns 6 attribute values to prefixed form across CUSTOMER, SESSION METADATA, and CHAT_SESSION POINTER records, plus renames one field on EMAIL_INBOUND records (`sessionUlid` → `sessionId`) per the project's NEW-fields-use-`Id`-not-`Ulid` naming rule.
+
+The user explicitly emphasized: "we need to get it right and not introduce bugs." After two prior phases where silent scope drift caused regressions, this work was scoped tightly with extensive risk-mitigation — defensive normalization at all read sites to handle both old (bare) and new (prefixed) records during transition, plus a dedicated regression test for each high-risk path.
+
+**What changed:**
+- 7 DynamoDB attribute changes (6 value-prefix, 1 field rename + value-prefix):
+  1. `latest_session_id` on CUSTOMER record → `CHAT_SESSION#<ulid>`
+  2. `account_id` on SESSION METADATA → `A#<ulid>`
+  3. `continuation_from_session_id` on SESSION METADATA → `CHAT_SESSION#<ulid>` or null
+  4. `cart_id` on SESSION METADATA → `C#<cartUlid>`
+  5. `guest_id` on SESSION METADATA → `G#<guestUlid>`
+  6. `session_id` on CHAT_SESSION POINTER → `CHAT_SESSION#<ulid>` (matches the SK exactly)
+  7. EMAIL_INBOUND record: field renamed `sessionUlid` → `sessionId`, value prefixed → `CHAT_SESSION#<ulid>` or null
+- 4 defensive normalization sites added to handle both old (bare) and new (prefixed) records during transition: `customer.service.ts` strips `CHAT_SESSION#` from `latest_session_id` so callers continue to receive bare ULIDs; `chat-session.service.ts:~93` strips `A#` from `account_id` so downstream tool context still receives bare ULID; `chat-session.service.ts:~243` uses `startsWith(CHAT_SESSION_PK_PREFIX)` guard before building `priorSessionPk` to prevent `CHAT_SESSION#CHAT_SESSION#<ulid>` double-prefix on prefixed records; `preview-cart.tool.ts` and `generate-checkout-link.tool.ts` strip `C#`/`G#` prefixes in payload returns, Slack alert args, and URL params (frontend expects bare ULIDs in checkout URL query strings).
+- Cart SK construction (`preview-cart.tool.ts`) diverges by `hasBothIds` flag: when METADATA has both fields (already prefixed), SK is built by pure concatenation `${guestUlid}${cartUlid}`. When freshly minting (bare ULIDs from `ulid()`), SK is built with explicit prefixes `G#${guestUlid}C#${cartUlid}`. Both branches are clearly delineated and individually tested.
+- `EmailReplyRecord` field rename: `sessionUlid: string | null` → `sessionId: string | null`. No defensive read needed — the field is write-and-forget audit only (no consumer reads it back). Hard cutover for this one field.
+- 6 new regression tests added across 4 spec files: `customer.service.spec.ts` (prefixed-value normalization + legacy-bare passthrough), `chat-session.service.spec.ts` (`account_id` normalization + `continuation_from_session_id` double-prefix guard), `preview-cart.tool.spec.ts` (fresh-mint METADATA prefix write + cart SK shape regex), `generate-checkout-link.tool.spec.ts` (URL params strip prefixes).
+- Style pass: replaced 2 nested ternaries in defensive normalization sites with `let` + `if` blocks for readability; removed 3 `as Record<string, string>` casts from new tests, replaced with optional chaining.
+- Reviewer-driven cleanup pass: added cart SK shape regex assertion in fresh-mint test, added clarifying comment on `GATE_OPEN_METADATA` (legacy-bare-form fixture), extracted `CHAT_SESSION_PK_PREFIX` constant in `customer.service.ts` (was repeating the literal string twice).
+- Build clean. Test suite green: 597 tests / 36 suites / 0 failures (was 591 pre-phase, +6 from new regression tests).
+
+**Decisions worth remembering:**
+- **Cross-application consistency is a stronger principle than minimal-diff.** The previous arch-planner pass recommended leaving 4 fields bare (compound-key parts and audit-only fields) on minimal-diff grounds. The user overrode this on cross-application-consistency grounds: the e-commerce app uses prefixed IDs everywhere, and this API not following the same convention created a real-world inconsistency that would compound over time. Ship the consistent shape now; defensive normalization handles the transition.
+- **`hasBothIds` SK construction divergence is intentional and worth testing both branches.** When values flow from METADATA (already prefixed), use concatenation. When freshly minted (bare), use explicit prefix. Crossing the branches would silently produce malformed SKs that are unfindable. Both branches now have explicit test coverage.
+- **Defensive read normalization is the right pattern for this kind of transition.** The alternative — strict cutover with no fallback — would have rendered every pre-fix dev session unreadable. Defensive code is ~3-5 lines per site and lifts cleanly when old records cycle out. TODO comments mark each site for eventual removal.
+- **Field naming convention violations should be cleaned up when found, not deferred.** The `sessionUlid` field on EMAIL_INBOUND was a pre-existing inconsistency with the project's "NEW fields use `_id`/`Id`" rule. The wire-contract rename earlier shipped left this storage-side field unchanged. Catching it here as part of the broader prefix pass was efficient — same blast radius for a rename + a value change.
+- **Three sleeper bugs prevented by tight reviews.** (1) The arch-planner caught the double-prefix risk on `chat-session.service.ts:~243` — without the `startsWith` guard the loader would silently fail. (2) The reviewer caught that the `!hasBothIds` branch SK was exercised but not directly asserted against the expected shape — added an explicit regex assertion. (3) The implementer caught that the strict Crockford regex `[0-9A-HJKMNP-TV-Z]{26}` would reject the existing test fixture ULIDs (which contain `I`/`L`/`U` from pre-existing constants out of scope), pragmatically using `[0-9A-Z]{26}` instead since structural shape is the test's job (Crockford byte validity is the ulid library's).
+- **Test fixture Crockford-invalid constants flagged for future cleanup.** Several pre-existing fixture constants like `01PRIORSESSION00000000000` contain Crockford-excluded characters and/or are wrong length. They were left alone in this phase per the user's "don't refactor existing names" rule but will need a future small cleanup pass.
+
+**Next:**
+- **Re-test the full flow with the new prefix shapes in production.** Phase 1 (new visitor) should produce a checkout URL with bare ULIDs in query params (frontend-facing strip works). Phase 2 (returning visitor) should still verify cleanly via `verify_code` (defensive guards handle the prefixed values transparently). The DDB records can be inspected directly to confirm the new shapes (`A#<ulid>`, `C#<ulid>`, `G#<ulid>`, `CHAT_SESSION#<ulid>`).
+- **Issue 2 (cart awareness on return) still queued for future discussion.** From the May 4 Playwright test: after verification, the agent re-asked "would you like me to add this to your cart" instead of recognizing the unpaid cart from Phase 1. This is a separate UX issue — the prior-history loader fired but didn't surface the cart state for the agent to reason about. Worth scoping as a future phase: prompt + possibly tool work to expose returning-customer cart state cleanly.
+- **Email-path follow-up (handleCase3StaleNewSession null-init recreation)** — flagged by the reviewer of the May 3 customer_id fix as a pre-existing CCI Phase 3 issue. The current phase didn't touch it. Still queued as a small follow-up.
+- **Architecture diagrams** still on the deferred list per the user's request from May 3. Surface proactively after the next major piece ships.
+
+---
+
 ## 2026-05-03 — Fix customer_id null-init bug (downstream `if_not_exists` writes were silently no-op'ing)
 
 **Goal:** Live Playwright test on May 3 surfaced a real production bug. After a clean shopping_assistant end-to-end checkout flow, the session METADATA had `customer_id: null` despite `[event=customer_created]` having fired in the logs. Downstream effect: checkout URL contained `customerId=null`, breaking Stripe metadata propagation and AI-conversion Slack notifications. Diagnostic chain pointed at the foundation-era pattern of pre-initializing METADATA fields to null on session creation.

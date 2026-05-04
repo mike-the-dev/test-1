@@ -35,8 +35,8 @@ function makeMetadataItem(overrides: Record<string, unknown> = {}): Record<strin
     PK: `CHAT_SESSION#${SESSION_ULID}`,
     SK: "METADATA",
     source: "web_chat",
-    cart_id: CART_ULID,
-    guest_id: GUEST_ULID,
+    cart_id: `C#${CART_ULID}`,
+    guest_id: `G#${GUEST_ULID}`,
     customer_id: `C#${CUSTOMER_ULID}`,
     customer_email: CUSTOMER_EMAIL,
     _createdAt_: "2024-01-01T00:00:00.000Z",
@@ -494,6 +494,35 @@ describe("GenerateCheckoutLinkTool", () => {
       // Must NOT contain the C# prefix in any form
       expect(parsed.checkout_url).not.toContain("C#");
       expect(parsed.checkout_url).not.toContain("C%23");
+    });
+  });
+
+  describe("15. URL params strip C#/G# prefixes from cart_id and guest_id", () => {
+    it("checkout URL params contain bare ULIDs even when METADATA stores prefixed cart_id and guest_id", async () => {
+      ddbMock
+        .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+        .resolves({ Item: makeMetadataItem() }); // makeMetadataItem now has C#/G# prefixes
+      ddbMock
+        .on(GetCommand, { Key: { PK: `A#${ACCOUNT_ULID}`, SK: `G#${GUEST_ULID}C#${CART_ULID}` } })
+        .resolves({ Item: makeCartItem() });
+
+      const result = await tool.execute({}, context);
+
+      expect(result.isError).toBeUndefined();
+
+      const parsed = JSON.parse(result.result);
+      const url = new URL(parsed.checkout_url);
+
+      // Both URL params must be bare ULIDs (no G#/C# prefix)
+      expect(url.searchParams.get("guestId")).toBe(GUEST_ULID);
+      expect(url.searchParams.get("cartId")).toBe(CART_ULID);
+
+      // result.cart_id must also be bare
+      expect(parsed.cart_id).toBe(CART_ULID);
+
+      // No prefix chars in the URL
+      expect(parsed.checkout_url).not.toContain("G#");
+      expect(parsed.checkout_url).not.toContain("C#");
     });
   });
 });

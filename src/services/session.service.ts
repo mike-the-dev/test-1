@@ -103,7 +103,7 @@ export class SessionService {
 
     if (accountUlid !== undefined) {
       setClauses.push("account_id = if_not_exists(account_id, :accountId)");
-      expressionValues[":accountId"] = accountUlid;
+      expressionValues[":accountId"] = `${ACCOUNT_PK_PREFIX}${accountUlid}`;
     }
 
     await this.dynamoDb.send(
@@ -125,7 +125,7 @@ export class SessionService {
         PK: `${ACCOUNT_PK_PREFIX}${accountUlid}`,
         SK: sessionPk,
         entity: "CHAT_SESSION",
-        session_id: sessionUlid,
+        session_id: sessionPk,
         agent_name: agentName,
         source,
         _createdAt_: now,

@@ -383,7 +383,11 @@ export class PreviewCartTool implements ChatTool {
       );
     }
 
-    const sk = `G#${guestUlid}C#${cartUlid}`;
+    // When hasBothIds is true the values already carry their G#/C# prefixes (read from METADATA).
+    // When hasBothIds is false the values are freshly minted bare ULIDs — add explicit prefixes.
+    const sk = hasBothIds
+      ? `${guestUlid}${cartUlid}`
+      : `G#${guestUlid}C#${cartUlid}`;
     const now = new Date().toISOString();
 
     // Step 9 — write cart record via UpdateCommand with if_not_exists on _createdAt_
@@ -443,8 +447,8 @@ export class PreviewCartTool implements ChatTool {
             "#customer_email": "customer_email",
           },
           ExpressionAttributeValues: {
-            ":cart_id": cartUlid,
-            ":guest_id": guestUlid,
+            ":cart_id": hasBothIds ? cartUlid : `C#${cartUlid}`,
+            ":guest_id": hasBothIds ? guestUlid : `G#${guestUlid}`,
             ":customer_email": resolvedCustomerEmail,
           },
         }),
@@ -477,7 +481,7 @@ export class PreviewCartTool implements ChatTool {
     const cartTotal = cartItems.reduce((sum, cartItem) => sum + cartItem.total, 0);
 
     const payload = {
-      cart_id: cartUlid,
+      cart_id: cartUlid.startsWith("C#") ? cartUlid.slice(2) : cartUlid,
       item_count: itemCount,
       currency: "usd",
       cart_total: cartTotal,
@@ -490,7 +494,7 @@ export class PreviewCartTool implements ChatTool {
       this.slackAlertService.notifyCartCreated({
         accountId: accountUlid,
         sessionUlid,
-        guestCartId: cartUlid,
+        guestCartId: cartUlid.startsWith("C#") ? cartUlid.slice(2) : cartUlid,
         cartTotalCents: cartTotal,
         itemCount,
         items: cartItems.map((cartItem) => {
