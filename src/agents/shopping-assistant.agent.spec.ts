@@ -65,11 +65,15 @@ describe("ShoppingAssistantAgent", () => {
     expect(agent.systemPrompt).toContain("No worries");
   });
 
-  it("systemPrompt includes the POST-VERIFICATION CART CHECK section", () => {
-    expect(agent.systemPrompt).toContain("POST-VERIFICATION CART CHECK");
+  it("systemPrompt includes the post-verification has_cart: true branch", () => {
+    expect(agent.systemPrompt).toContain("If check_active_cart returns { has_cart: true }");
   });
 
-  it("systemPrompt POST-VERIFICATION CART CHECK section references check_active_cart", () => {
+  it("systemPrompt includes the post-verification has_cart: false branch", () => {
+    expect(agent.systemPrompt).toContain("If check_active_cart returns { has_cart: false }");
+  });
+
+  it("systemPrompt references check_active_cart", () => {
     expect(agent.systemPrompt).toContain("check_active_cart");
   });
 });
