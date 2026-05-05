@@ -29,13 +29,15 @@ describe("ShoppingAssistantAgent", () => {
       "lookup_knowledge_base",
       "request_verification_code",
       "verify_code",
+      "check_active_cart",
     ]);
-    expect(agent.allowedToolNames).toHaveLength(7);
+    expect(agent.allowedToolNames).toHaveLength(8);
     expect(agent.allowedToolNames).toContain("preview_cart");
     expect(agent.allowedToolNames).toContain("generate_checkout_link");
     expect(agent.allowedToolNames).toContain("lookup_knowledge_base");
     expect(agent.allowedToolNames).toContain("request_verification_code");
     expect(agent.allowedToolNames).toContain("verify_code");
+    expect(agent.allowedToolNames).toContain("check_active_cart");
   });
 
   it("does not include save_user_fact in allowedToolNames", () => {
@@ -61,5 +63,13 @@ describe("ShoppingAssistantAgent", () => {
 
   it("systemPrompt RETURNING VISITOR FLOW section covers graceful failure path", () => {
     expect(agent.systemPrompt).toContain("No worries");
+  });
+
+  it("systemPrompt includes the POST-VERIFICATION CART CHECK section", () => {
+    expect(agent.systemPrompt).toContain("POST-VERIFICATION CART CHECK");
+  });
+
+  it("systemPrompt POST-VERIFICATION CART CHECK section references check_active_cart", () => {
+    expect(agent.systemPrompt).toContain("check_active_cart");
   });
 });

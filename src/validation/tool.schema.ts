@@ -75,3 +75,6 @@ export const verifyCodeInputSchema = z.object({
   code: z.string().length(6).regex(/^\d{6}$/, "code must be a 6-digit numeric string"),
 });
 export type VerifyCodeInput = z.infer<typeof verifyCodeInputSchema>;
+
+export const checkActiveCartInputSchema = z.object({}).strict();
+export type CheckActiveCartInput = z.infer<typeof checkActiveCartInputSchema>;

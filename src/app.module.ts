@@ -33,6 +33,7 @@ import { PreviewCartTool } from "./tools/preview-cart.tool";
 import { GenerateCheckoutLinkTool } from "./tools/generate-checkout-link.tool";
 import { RequestVerificationCodeTool } from "./tools/request-verification-code.tool";
 import { VerifyCodeTool } from "./tools/verify-code.tool";
+import { CheckActiveCartTool } from "./tools/check-active-cart.tool";
 import { CustomerService } from "./services/customer.service";
 import { EmailReplyService } from "./services/email-reply.service";
 import { KB_INGESTION_QUEUE_NAME } from "./utils/knowledge-base/constants";
@@ -115,6 +116,7 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     GenerateCheckoutLinkTool,
     RequestVerificationCodeTool,
     VerifyCodeTool,
+    CheckActiveCartTool,
     CustomerService,
     ToolRegistryService,
     LeadCaptureAgent,

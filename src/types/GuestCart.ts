@@ -55,3 +55,23 @@ export type GuestCartLookupOrCreateResolved = { isError: false; customerUlid: st
 /** Error result from CustomerService.lookupOrCreateCustomer — error string is generic (no PII). */
 export type GuestCartLookupOrCreateError = { isError: true; error: string };
 export type GuestCartLookupOrCreateResult = GuestCartLookupOrCreateResolved | GuestCartLookupOrCreateError;
+
+export type GuestCartCheckActiveCartHit = {
+  has_cart: true;
+  items: {
+    name: string;
+    quantity: number;
+    price: number;
+    total: number;
+    variant_label: string | null;
+  }[];
+  cart_total_cents: number;
+  last_updated_at: string;
+  was_link_generated_at: string | null;
+};
+
+export type GuestCartCheckActiveCartMiss = {
+  has_cart: false;
+};
+
+export type GuestCartCheckActiveCartResult = GuestCartCheckActiveCartHit | GuestCartCheckActiveCartMiss;
