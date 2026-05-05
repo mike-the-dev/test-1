@@ -503,12 +503,11 @@ export class EmailReplyService {
         TableName: table,
         Key: { PK: `${CHAT_SESSION_PK_PREFIX}${newSessionUlid}`, SK: METADATA_SK },
         UpdateExpression:
-          "SET customer_id = :customerId, continuation_from_session_id = :contFrom, continuation_loaded_at = :contAt, #lastUpdated = :now",
+          "SET customer_id = :customerId, continuation_from_session_id = :contFrom, #lastUpdated = :now",
         ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
         ExpressionAttributeValues: {
           ":customerId": customerId,
           ":contFrom": priorLatestSessionId !== null ? `${CHAT_SESSION_PK_PREFIX}${priorLatestSessionId}` : null,
-          ":contAt": null,
           ":now": new Date().toISOString(),
         },
       }),

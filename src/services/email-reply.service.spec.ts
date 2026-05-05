@@ -509,7 +509,7 @@ describe("EmailReplyService", () => {
   describe("Case 3 stale — known sender, old session", () => {
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
 
-    it("known sender with session >= 7 days old creates new linked session with all three METADATA fields", async () => {
+    it("known sender with session >= 7 days old creates new linked session with customer_id and continuation_from_session_id fields", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({
         customerUlid: CUSTOMER_ULID,
@@ -530,7 +530,9 @@ describe("EmailReplyService", () => {
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ID);
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "My new message.");
 
-      // Verify the METADATA UpdateCommand includes all three continuation fields
+      // Verify the METADATA UpdateCommand writes customer_id and continuation_from_session_id
+      // but does NOT pre-initialize continuation_loaded_at (null-init would poison the downstream
+      // if_not_exists(continuation_loaded_at, :now) write in chat-session.service.ts).
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find(
         (call) =>
@@ -539,10 +541,13 @@ describe("EmailReplyService", () => {
       );
 
       expect(metadataUpdate).toBeDefined();
+      const expr = metadataUpdate!.args[0].input.UpdateExpression!;
       const values = metadataUpdate!.args[0].input.ExpressionAttributeValues!;
       expect(values[":customerId"]).toBe(`C#${CUSTOMER_ULID}`);
       expect(values[":contFrom"]).toBe(`CHAT_SESSION#${PRIOR_SESSION_ULID}`);
-      expect(values[":contAt"]).toBeNull();
+      // Inverse assertions: continuation_loaded_at must NOT be pre-initialized to null
+      expect(expr).not.toContain("continuation_loaded_at");
+      expect(values).not.toHaveProperty(":contAt");
     });
 
     it("continuation_from_session_id is the CAPTURED prior latestSessionId, not re-fetched", async () => {
