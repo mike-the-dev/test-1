@@ -9,3 +9,4 @@
 - [SessionService lookupOrCreateSession restructure review](project_session_restructure_review.md) — agent_name regression fix; all invariants passed; approved clean; updateOnboarding SESSION_ULID has pre-existing 'I' char (out of scope)
 - [ID-prefix consistency phase review](project_id_prefix_phase_review.md) — 7-field prefix alignment; defensive normalization pattern; SK construction divergence; EmailReplyRecord field rename; approved with minor SHOULD-FIX
 - [check_active_cart tool review](project_check_active_cart_review.md) — Approved with SHOULD-FIX: line 91 wrong log event name (current vs prior metadata); prompt ordering tension in agent; no test for missing accountUlid path
+- [SMS channel phase review](project_sms_channel_review.md) — READY TO SHIP with should-fix: inline const annotation in sms.service.ts; dedupe sessionId never updated; trailing-slash risk in publicWebhookUrl construction

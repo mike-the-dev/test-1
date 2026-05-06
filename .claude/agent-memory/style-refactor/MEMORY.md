@@ -7,3 +7,4 @@
 - [let type annotation rule for reassigned variables](feedback_let_type_annotation.md) — remove redundant annotations when TypeScript infers correctly; keep at DDB boundaries where SDK widens the type
 - [isConditionalCheckFailed pattern](feedback_isconditionalcheckfailed_pattern.md) — use `instanceof Error` not `as`-cast record shapes; `unknown` is not directly assignable to typed shapes in strict mode
 - [catch clause unknown annotation](feedback_catch_unknown.md) — always write catch (errorVar: unknown), never bare catch (errorVar); enables instanceof Error narrowing
+- [SDK error property extraction without as-casts](feedback_sdk_error_extraction.md) — extend Error interface with optional extras in src/types/; narrow with instanceof Error, then use typed variable annotation

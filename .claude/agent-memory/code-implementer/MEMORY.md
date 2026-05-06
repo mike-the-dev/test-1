@@ -6,3 +6,4 @@
 - [KB Phase 7c BullMQ pattern](project_kb_phase7c_bullmq.md) — How BullMQ processor, queue injection, and test mocking are wired into the KB ingestion pipeline
 - [mrkdwn escape assertions in tests](feedback_mrkdwn_escape_test_assertions.md) — Assert &amp; not & in Slack block text — escapeSlackMrkdwn transforms item names before interpolation
 - [crypto createHash spy in Jest](feedback_crypto_spy_pattern.md) — Dynamic import or spy on named crypto imports doesn't work in Jest; assert observable behavior instead
+- [jest.mock factory hoisting](feedback_jest_mock_hoisting.md) — Don't reference outer `const mockFn = jest.fn()` inside jest.mock factory; create inside factory, retrieve via jest.requireMock after
