@@ -3,6 +3,7 @@ import "./instrument";
 
 import { NestFactory } from "@nestjs/core";
 import { Logger, LogLevel } from "@nestjs/common";
+import express from "express";
 
 import { AppModule } from "./app.module";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
@@ -58,6 +59,10 @@ async function bootstrap() {
       callback(null, accountUlid !== null);
     },
   });
+
+  // Parse application/x-www-form-urlencoded bodies — required for Twilio webhook payloads.
+  // Must be registered before app.listen().
+  app.use(express.urlencoded({ extended: true }));
 
   const port = process.env.PORT ?? 3000;
 

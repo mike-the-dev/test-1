@@ -36,6 +36,7 @@
     "bullmq": "^5.76.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "twilio": "^6.0.1",
     "ulid": "^3.0.2",
     "uuid": "^11.1.0",
     "voyageai": "^0.2.1",

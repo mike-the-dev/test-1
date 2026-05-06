@@ -26,9 +26,17 @@ const configuration = () => ({
     replyDomain: process.env.SENDGRID_REPLY_DOMAIN || "",
     replyAccountId: process.env.SENDGRID_REPLY_ACCOUNT_ID || "",
   },
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID || "",
+    authToken: process.env.TWILIO_AUTH_TOKEN || "",
+    phoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
+    replyAccountId: process.env.TWILIO_REPLY_ACCOUNT_ID || "",
+    publicWebhookUrl: process.env.PUBLIC_WEBHOOK_URL || "",
+  },
   webChat: {
     corsAllowAll: process.env.WEB_CHAT_CORS_ALLOW_ALL === "true",
     domainGsiName: process.env.DYNAMODB_ACCOUNTS_DOMAIN_GSI_NAME || "GSI1",
+    phoneGsiName: process.env.DYNAMODB_PHONE_GSI_NAME || "GSI2",
     checkoutBaseUrlOverride: process.env.CHECKOUT_BASE_URL_OVERRIDE,
     widgetOrigins: (process.env.WEB_CHAT_WIDGET_ORIGINS || "")
       .split(",")

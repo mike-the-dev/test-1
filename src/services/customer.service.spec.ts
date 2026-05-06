@@ -14,6 +14,7 @@ const CUSTOMER_ULID = "01CUSTOMERULID0000000000000";
 const mockConfigService = {
   get: jest.fn((key: string) => {
     if (key === "webChat.domainGsiName") return "GSI1";
+    if (key === "webChat.phoneGsiName") return "GSI2";
     return undefined;
   }),
 };
@@ -261,6 +262,86 @@ describe("CustomerService", () => {
       const result = await service.lookupOrCreateCustomer(baseInput);
 
       expect(result.isError).toBe(true);
+    });
+  });
+
+  describe("queryCustomerIdByPhone", () => {
+    const PHONE = "+15551234567";
+
+    it("returns { customerUlid, latestSessionId: null } when GSI2 match found and no latest_session_id", async () => {
+      ddbMock.on(QueryCommand).resolves({
+        Items: [{ PK: `C#${CUSTOMER_ULID}`, SK: `C#${CUSTOMER_ULID}`, entity: "CUSTOMER" }],
+      });
+
+      const result = await service.queryCustomerIdByPhone(TABLE_NAME, ACCOUNT_ULID, PHONE);
+
+      expect(result).toEqual({ customerUlid: CUSTOMER_ULID, latestSessionId: null });
+
+      const queryCalls = ddbMock.commandCalls(QueryCommand);
+      expect(queryCalls).toHaveLength(1);
+
+      const queryInput = queryCalls[0].args[0].input;
+      expect(queryInput.IndexName).toBe("GSI2");
+      expect(queryInput.ExpressionAttributeValues?.[":pk"]).toBe(`ACCOUNT#${ACCOUNT_ULID}`);
+      expect(queryInput.ExpressionAttributeValues?.[":sk"]).toBe(`PHONE#${PHONE}`);
+    });
+
+    it("returns null when GSI2 returns empty items", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+
+      const result = await service.queryCustomerIdByPhone(TABLE_NAME, ACCOUNT_ULID, "+15559999999");
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("lookupOrCreateCustomer — GSI2 key writes", () => {
+    it("writes GSI2-PK and GSI2-SK on customer record when phone is non-null", async () => {
+      const PHONE = "+15551234567";
+
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+
+      const result = await service.lookupOrCreateCustomer({
+        tableName: TABLE_NAME,
+        accountUlid: ACCOUNT_ULID,
+        email: "sms@example.com",
+        firstName: "Sam",
+        lastName: "Smith",
+        phone: PHONE,
+      });
+
+      expect(result.isError).toBe(false);
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      expect(putCalls).toHaveLength(1);
+
+      const item = putCalls[0].args[0].input.Item;
+      expect(item?.["GSI2-PK"]).toBe(`ACCOUNT#${ACCOUNT_ULID}`);
+      expect(item?.["GSI2-SK"]).toBe(`PHONE#${PHONE}`);
+    });
+
+    it("omits GSI2-PK and GSI2-SK on customer record when phone is null", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+
+      const result = await service.lookupOrCreateCustomer({
+        tableName: TABLE_NAME,
+        accountUlid: ACCOUNT_ULID,
+        email: "web@example.com",
+        firstName: "Web",
+        lastName: "Visitor",
+        phone: null,
+      });
+
+      expect(result.isError).toBe(false);
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      expect(putCalls).toHaveLength(1);
+
+      const item = putCalls[0].args[0].input.Item;
+      expect(item?.["GSI2-PK"]).toBeUndefined();
+      expect(item?.["GSI2-SK"]).toBeUndefined();
     });
   });
 });

@@ -10,12 +10,14 @@ const CUSTOMER_PK_PREFIX = "C#";
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const ACCOUNT_PREFIX = "ACCOUNT#";
 const EMAIL_PREFIX = "EMAIL#";
+const PHONE_PREFIX = "PHONE#";
 const GENERIC_ERROR_STRING = "An unexpected error occurred. Please try again.";
 
 @Injectable()
 export class CustomerService {
   private readonly logger = new Logger(CustomerService.name);
   private readonly gsiName: string;
+  private readonly phoneGsiName: string;
 
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
@@ -23,6 +25,8 @@ export class CustomerService {
   ) {
     this.gsiName =
       this.configService.get<string>("webChat.domainGsiName", { infer: true }) ?? "GSI1";
+    this.phoneGsiName =
+      this.configService.get<string>("webChat.phoneGsiName", { infer: true }) ?? "GSI2";
   }
 
   /**
@@ -50,6 +54,63 @@ export class CustomerService {
         ExpressionAttributeValues: {
           ":pk": `${ACCOUNT_PREFIX}${accountUlid}`,
           ":sk": `${EMAIL_PREFIX}${email}`,
+          ":customer": "CUSTOMER",
+        },
+      }),
+    );
+
+    const items = result.Items ?? [];
+
+    if (items.length === 0) {
+      return null;
+    }
+
+    const pk = String(items[0].PK ?? "");
+
+    if (!pk.startsWith(CUSTOMER_PK_PREFIX)) {
+      return null;
+    }
+
+    // Defensive compat — old records store bare ULID; new records store CHAT_SESSION#<ulid>;
+    // strip the prefix so callers receive a bare ULID.
+    // Remove when old records cycle out.
+    const rawLatestSessionId = items[0].latest_session_id != null ? String(items[0].latest_session_id) : null;
+    let latestSessionId: string | null = null;
+
+    if (rawLatestSessionId !== null) {
+      latestSessionId = rawLatestSessionId.startsWith(CHAT_SESSION_PK_PREFIX)
+        ? rawLatestSessionId.slice(CHAT_SESSION_PK_PREFIX.length)
+        : rawLatestSessionId;
+    }
+
+    return { customerUlid: pk.slice(CUSTOMER_PK_PREFIX.length), latestSessionId };
+  }
+
+  /**
+   * Looks up a customer by phone number within a given account using GSI2.
+   * Returns { customerUlid, latestSessionId } on success, or null if not found.
+   * customerUlid is the bare ULID (no C# prefix).
+   * latestSessionId is the bare session ULID from customer.latest_session_id, or null if absent.
+   */
+  async queryCustomerIdByPhone(
+    tableName: string,
+    accountUlid: string,
+    phone: string,
+  ): Promise<{ customerUlid: string; latestSessionId: string | null } | null> {
+    const result = await this.dynamoDb.send(
+      new QueryCommand({
+        TableName: tableName,
+        IndexName: this.phoneGsiName,
+        KeyConditionExpression: "#gsi2pk = :pk AND #gsi2sk = :sk",
+        FilterExpression: "#entity = :customer",
+        ExpressionAttributeNames: {
+          "#gsi2pk": "GSI2-PK",
+          "#gsi2sk": "GSI2-SK",
+          "#entity": "entity",
+        },
+        ExpressionAttributeValues: {
+          ":pk": `${ACCOUNT_PREFIX}${accountUlid}`,
+          ":sk": `${PHONE_PREFIX}${phone}`,
           ":customer": "CUSTOMER",
         },
       }),
@@ -117,26 +178,33 @@ export class CustomerService {
     const newCustomerUlid = ulid();
     const now = new Date().toISOString();
 
-    const customerRecord: GuestCartCustomerRecord = {
+    // Write GSI2 keys only when phone is non-null so the sparse index captures SMS-originated customers.
+    const gsi2Fields =
+      input.phone !== null
+        ? { "GSI2-PK": `${ACCOUNT_PREFIX}${input.accountUlid}`, "GSI2-SK": `${PHONE_PREFIX}${input.phone}` }
+        : {};
+
+    const customerRecord = {
       PK: `${CUSTOMER_PK_PREFIX}${newCustomerUlid}`,
       SK: `${CUSTOMER_PK_PREFIX}${newCustomerUlid}`,
-      entity: "CUSTOMER",
+      entity: "CUSTOMER" as const,
       "GSI1-PK": `${ACCOUNT_PREFIX}${input.accountUlid}`,
       "GSI1-SK": `${EMAIL_PREFIX}${input.email}`,
+      ...gsi2Fields,
       email: input.email,
       first_name: input.firstName,
       last_name: input.lastName,
       phone: input.phone,
       billing_address: null,
       is_email_subscribed: false,
-      abandoned_carts: [],
+      abandoned_carts: [] as string[],
       total_abandoned_carts: 0,
       total_orders: 0,
       total_spent: 0,
       latest_session_id: null,
       _createdAt_: now,
       _lastUpdated_: now,
-    };
+    } satisfies GuestCartCustomerRecord;
 
     // Step C — PutCommand with attribute_not_exists(PK) ConditionExpression
     try {

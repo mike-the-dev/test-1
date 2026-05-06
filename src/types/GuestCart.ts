@@ -27,6 +27,8 @@ export interface GuestCartCustomerRecord {
   entity: "CUSTOMER";
   "GSI1-PK": string; // "ACCOUNT#<accountUlid>"
   "GSI1-SK": string; // "EMAIL#<email>"
+  "GSI2-PK"?: string; // "ACCOUNT#<accountUlid>" — set only when phone is non-null
+  "GSI2-SK"?: string; // "PHONE#<E.164phone>" — set only when phone is non-null
   email: string;
   first_name: string;
   last_name: string;

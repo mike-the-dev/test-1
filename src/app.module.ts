@@ -36,6 +36,10 @@ import { VerifyCodeTool } from "./tools/verify-code.tool";
 import { CheckActiveCartTool } from "./tools/check-active-cart.tool";
 import { CustomerService } from "./services/customer.service";
 import { EmailReplyService } from "./services/email-reply.service";
+import { TwilioConfigService } from "./services/twilio-config.service";
+import { SmsService } from "./services/sms.service";
+import { SmsReplyService } from "./services/sms-reply.service";
+import { TwilioWebhookController } from "./controllers/twilio-webhook.controller";
 import { KB_INGESTION_QUEUE_NAME } from "./utils/knowledge-base/constants";
 import { KnowledgeBaseController } from "./controllers/knowledge-base.controller";
 import { SendgridWebhookController } from "./controllers/sendgrid-webhook.controller";
@@ -81,7 +85,7 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
       name: KB_INGESTION_QUEUE_NAME,
     }),
   ],
-  controllers: [AppController, SendgridWebhookController, WebChatController, KnowledgeBaseController],
+  controllers: [AppController, SendgridWebhookController, TwilioWebhookController, WebChatController, KnowledgeBaseController],
   providers: [
     {
       provide: APP_FILTER,
@@ -123,6 +127,9 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     ShoppingAssistantAgent,
     AgentRegistryService,
     EmailReplyService,
+    TwilioConfigService,
+    SmsService,
+    SmsReplyService,
     OriginAllowlistService,
     KnowledgeBaseEnrichmentService,
     KnowledgeBaseIngestionService,
