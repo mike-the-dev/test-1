@@ -14,7 +14,6 @@ const CUSTOMER_ULID = "01CUSTOMERULID0000000000000";
 const mockConfigService = {
   get: jest.fn((key: string) => {
     if (key === "webChat.domainGsiName") return "GSI1";
-    if (key === "webChat.phoneGsiName") return "GSI2";
     return undefined;
   }),
 };

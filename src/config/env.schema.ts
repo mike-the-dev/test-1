@@ -19,7 +19,6 @@ export const envSchema = z
     TWILIO_PHONE_NUMBER: z.string().optional(),
     TWILIO_REPLY_ACCOUNT_ID: z.string().optional(),
     PUBLIC_WEBHOOK_URL: z.string().optional(),
-    DYNAMODB_PHONE_GSI_NAME: z.string().optional(),
     SENDGRID_REPLY_DOMAIN: z
       .string()
       .optional()

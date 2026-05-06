@@ -12,12 +12,12 @@ const ACCOUNT_PREFIX = "ACCOUNT#";
 const EMAIL_PREFIX = "EMAIL#";
 const PHONE_PREFIX = "PHONE#";
 const GENERIC_ERROR_STRING = "An unexpected error occurred. Please try again.";
+const PHONE_GSI_NAME = "GSI2";
 
 @Injectable()
 export class CustomerService {
   private readonly logger = new Logger(CustomerService.name);
   private readonly gsiName: string;
-  private readonly phoneGsiName: string;
 
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
@@ -25,8 +25,6 @@ export class CustomerService {
   ) {
     this.gsiName =
       this.configService.get<string>("webChat.domainGsiName", { infer: true }) ?? "GSI1";
-    this.phoneGsiName =
-      this.configService.get<string>("webChat.phoneGsiName", { infer: true }) ?? "GSI2";
   }
 
   /**
@@ -100,7 +98,7 @@ export class CustomerService {
     const result = await this.dynamoDb.send(
       new QueryCommand({
         TableName: tableName,
-        IndexName: this.phoneGsiName,
+        IndexName: PHONE_GSI_NAME,
         KeyConditionExpression: "#gsi2pk = :pk AND #gsi2sk = :sk",
         FilterExpression: "#entity = :customer",
         ExpressionAttributeNames: {
