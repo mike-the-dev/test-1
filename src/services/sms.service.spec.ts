@@ -31,8 +31,6 @@ const MESSAGE_SID = "SMabc123def456ghi789jkl012mno345pq";
 const mockTwilioConfig = {
   accountSid: ACCOUNT_SID,
   authToken: AUTH_TOKEN,
-  phoneNumber: FROM_NUMBER,
-  replyAccountId: "",
   publicWebhookUrl: "",
 };
 
@@ -59,6 +57,7 @@ describe("SmsService", () => {
     mockMessagesCreate.mockResolvedValue({ sid: MESSAGE_SID });
 
     const result = await service.send({
+      from: FROM_NUMBER,
       to: TO_NUMBER,
       body: "Hello from the assistant!",
       sessionUlid: SESSION_ULID,
@@ -73,20 +72,6 @@ describe("SmsService", () => {
     });
   });
 
-  it("send throws when TWILIO_PHONE_NUMBER is missing", async () => {
-    // Temporarily clear phoneNumber on the mock
-    const savedPhone = mockTwilioConfig.phoneNumber;
-    mockTwilioConfig.phoneNumber = "";
-
-    await expect(
-      service.send({ to: TO_NUMBER, body: "Test", sessionUlid: SESSION_ULID }),
-    ).rejects.toThrow("TWILIO_PHONE_NUMBER not configured");
-
-    expect(mockMessagesCreate).not.toHaveBeenCalled();
-
-    mockTwilioConfig.phoneNumber = savedPhone;
-  });
-
   it("send re-throws when Twilio SDK rejects", async () => {
     const sdkError = Object.assign(new Error("Twilio API error"), {
       code: 21211,
@@ -96,9 +81,25 @@ describe("SmsService", () => {
     mockMessagesCreate.mockRejectedValue(sdkError);
 
     await expect(
-      service.send({ to: TO_NUMBER, body: "Test", sessionUlid: SESSION_ULID }),
+      service.send({ from: FROM_NUMBER, to: TO_NUMBER, body: "Test", sessionUlid: SESSION_ULID }),
     ).rejects.toThrow("Twilio API error");
 
     expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("send uses the provided from number from params (not a config getter)", async () => {
+    mockMessagesCreate.mockResolvedValue({ sid: MESSAGE_SID });
+    const accountOwnedNumber = "+15559998888";
+
+    await service.send({
+      from: accountOwnedNumber,
+      to: TO_NUMBER,
+      body: "Test",
+      sessionUlid: SESSION_ULID,
+    });
+
+    expect(mockMessagesCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ from: accountOwnedNumber }),
+    );
   });
 });

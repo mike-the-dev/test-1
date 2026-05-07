@@ -23,8 +23,7 @@ export interface EmailReplyParsedInboundReply {
 
 export enum EmailReplyLocalPartClassification {
   SESSION_ULID = "SESSION_ULID",
-  ASSISTANT_ENTRY = "ASSISTANT_ENTRY",
-  UNRECOGNIZED = "UNRECOGNIZED",
+  DOMAIN_ROUTED = "DOMAIN_ROUTED",
 }
 
 export type EmailReplyInboundProcessOutcome =
@@ -33,11 +32,14 @@ export type EmailReplyInboundProcessOutcome =
   | "rejected_unknown_session"
   | "rejected_sender_mismatch"
   | "rejected_malformed"
-  | "rejected_unknown_account";
+  | "rejected_unknown_account"
+  | "rejected_unknown_local_part";
 
 export interface EmailReplyRecord {
   PK: string;
   SK: string;
-  processedAt: string;
+  processedAt: string; // ISO 8601 — when the inbound was first received and dedupe-locked
   sessionId: string | null; // "CHAT_SESSION#<sessionUlid>" or null
+  _createdAt_: string;
+  _lastUpdated_: string;
 }

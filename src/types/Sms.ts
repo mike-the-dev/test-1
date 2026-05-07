@@ -1,6 +1,7 @@
 export interface SmsSendParams {
   to: string; // E.164 recipient phone number
   body: string; // message text
+  from: string; // E.164 account-owned Twilio number (sourced from caller)
   sessionUlid?: string; // used for log tracing only
 }
 

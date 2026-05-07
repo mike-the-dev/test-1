@@ -2,7 +2,7 @@ import { Injectable, Logger } from "@nestjs/common";
 import sgMail from "@sendgrid/mail";
 
 import { SendGridConfigService } from "./sendgrid-config.service";
-import { EmailSendParams, EmailSendResult, EmailOutboundMessage } from "../types/Email";
+import { EmailSendParams, EmailSendResult, EmailOutboundMessage, EmailSendGridSdkError } from "../types/Email";
 
 @Injectable()
 export class EmailService {
@@ -13,19 +13,21 @@ export class EmailService {
   }
 
   async send(params: EmailSendParams): Promise<EmailSendResult> {
-    const replyDomain = this.sendGridConfig.replyDomain;
-    const fromEmail = replyDomain ? `${params.sessionUlid}@${replyDomain}` : this.sendGridConfig.fromEmail;
-
-    if (!replyDomain) {
+    if (!params.replyDomain) {
+      // Tool-originated send (no account context). Log a warn and send without a custom
+      // from address — SendGrid will use the account-level verified sender on the API key.
       this.logger.warn(
-        `SENDGRID_REPLY_DOMAIN not set — falling back to verified sender. Inbound reply routing is disabled until set. [sessionUlid=${params.sessionUlid}]`,
+        `[event=email_send_no_reply_domain sessionUlid=${params.sessionUlid}]`,
       );
     }
+
+    const fromEmail = params.replyDomain ? `${params.sessionUlid}@${params.replyDomain}` : "";
+    const fromName = params.replyDomain ? (params.fromName ?? "") : "";
 
     const message: EmailOutboundMessage = {
       from: {
         email: fromEmail,
-        name: this.sendGridConfig.fromName,
+        name: fromName,
       },
       to: params.to,
       subject: params.subject,
@@ -47,12 +49,16 @@ export class EmailService {
       this.logger.log(`Email sent successfully [messageId=${messageId}]`);
 
       return { messageId };
-    } catch (error) {
-      const errorRecord: { name?: unknown; code?: unknown; response?: { body?: unknown } } =
-        error !== null && error !== undefined ? error : {};
-      const errorName = String(errorRecord.name ?? "unknown");
-      const statusCode = String(errorRecord.code ?? "unknown");
-      const responseBody = errorRecord.response?.body ? JSON.stringify(errorRecord.response.body) : "none";
+    } catch (error: unknown) {
+      if (!(error instanceof Error)) {
+        this.logger.error("Email send failed [errorType=unknown]");
+        throw error;
+      }
+
+      const sdkError: EmailSendGridSdkError = error;
+      const errorName = sdkError.name;
+      const statusCode = String(sdkError.code ?? "unknown");
+      const responseBody = sdkError.response?.body ? JSON.stringify(sdkError.response.body) : "none";
 
       this.logger.error(`Email send failed [errorType=${errorName} statusCode=${statusCode} response=${responseBody}]`);
 

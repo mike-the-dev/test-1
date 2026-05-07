@@ -20,6 +20,8 @@ export type SmsReplyInboundProcessOutcome =
 export interface SmsReplyRecord {
   PK: string; // "SMS_INBOUND#<MessageSid>"
   SK: string; // "METADATA"
-  processedAt: string; // ISO 8601
-  sessionId: string | null; // "CHAT_SESSION#<sessionUlid>" or null
+  processedAt: string; // ISO 8601 — when the inbound was first received and dedupe-locked
+  sessionId: string | null; // "CHAT_SESSION#<sessionUlid>" or null (backfilled after routing)
+  _createdAt_: string;
+  _lastUpdated_: string;
 }

@@ -4,11 +4,12 @@ import { createHash } from "crypto";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
-import { SendGridConfigService } from "./sendgrid-config.service";
 import { EmailService } from "./email.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
+import { ChannelAddressService } from "./channel-address.service";
+import { ChannelAddressType } from "../types/AccountChannel";
 import {
   EmailReplySendGridInboundFormFields,
   EmailReplyInboundProcessOutcome,
@@ -26,7 +27,6 @@ const EMAIL_INBOUND_PK_PREFIX = "EMAIL_INBOUND#";
 const CONTACT_INFO_SK = "USER_CONTACT_INFO";
 const METADATA_SK = "METADATA";
 
-const ASSISTANT_ENTRY_LOCAL_PART = "assistant";
 // Fresh requires strictly less than 7 days. Exactly 7 days (ageMs === window) is stale.
 const EMAIL_CONTINUATION_FRESHNESS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -71,6 +71,32 @@ function buildRedactedSender(email: string): string {
   return `${firstChar}***@${domain}`;
 }
 
+/**
+ * Parses the first valid <localPart>@<domain> address from a comma-separated To: field.
+ * Returns { localPart, domain } for the first parseable address, or null if none found.
+ */
+function parseFirstToAddress(toField: string): { localPart: string; domain: string } | null {
+  const addresses = toField.split(",");
+
+  for (const address of addresses) {
+    const bare = EMAIL_ADDRESS_REGEX.exec(address.trim())?.[1] ?? address.trim();
+    const atIndex = bare.indexOf("@");
+
+    if (atIndex < 0) {
+      continue;
+    }
+
+    const localPart = bare.slice(0, atIndex);
+    const domain = bare.slice(atIndex + 1);
+
+    if (localPart.length > 0 && domain.length > 0) {
+      return { localPart, domain };
+    }
+  }
+
+  return null;
+}
+
 @Injectable()
 export class EmailReplyService {
   private readonly logger = new Logger(EmailReplyService.name);
@@ -78,21 +104,18 @@ export class EmailReplyService {
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
-    private readonly sendGridConfig: SendGridConfigService,
     private readonly emailService: EmailService,
     private readonly chatSessionService: ChatSessionService,
     private readonly customerService: CustomerService,
     private readonly sessionService: SessionService,
+    private readonly channelAddressService: ChannelAddressService,
   ) {}
 
   private classifyLocalPart(localPart: string): EmailReplyLocalPartClassification {
     if (ULID_REGEX.test(localPart)) {
       return EmailReplyLocalPartClassification.SESSION_ULID;
     }
-    if (localPart.trim().toLowerCase() === ASSISTANT_ENTRY_LOCAL_PART) {
-      return EmailReplyLocalPartClassification.ASSISTANT_ENTRY;
-    }
-    return EmailReplyLocalPartClassification.UNRECOGNIZED;
+    return EmailReplyLocalPartClassification.DOMAIN_ROUTED;
   }
 
   private async deduplicateInboundEmail(
@@ -112,19 +135,22 @@ export class EmailReplyService {
     }
 
     try {
+      const dedupeNow = new Date().toISOString();
       await this.dynamoDb.send(
         new PutCommand({
           TableName: table,
           Item: {
             PK: `${EMAIL_INBOUND_PK_PREFIX}${messageId}`,
             SK: METADATA_SK,
-            processedAt: new Date().toISOString(),
+            processedAt: dedupeNow,
             sessionId: sessionUlidForLog !== null ? `${CHAT_SESSION_PK_PREFIX}${sessionUlidForLog}` : null,
+            _createdAt_: dedupeNow,
+            _lastUpdated_: dedupeNow,
           } satisfies EmailReplyRecord,
           ConditionExpression: "attribute_not_exists(PK)",
         }),
       );
-    } catch (error) {
+    } catch (error: unknown) {
       if (isConditionalCheckFailed(error)) {
         this.logger.debug(`Duplicate inbound email detected [messageId=${messageId} outcome=duplicate]`);
         return "duplicate";
@@ -138,34 +164,17 @@ export class EmailReplyService {
 
   async processInboundReply(formFields: EmailReplySendGridInboundFormFields): Promise<EmailReplyInboundProcessOutcome> {
     const table = this.databaseConfig.conversationsTable;
-    const replyDomain = this.sendGridConfig.replyDomain;
 
-    // Only the first address matching the reply domain determines routing.
-    // CC/BCC addresses are ignored.
-    const addresses = formFields.to.split(",");
+    // Take the first parseable address from the To: field. In multi-address scenarios
+    // (CC/BCC), the first address determines routing.
+    const parsed = parseFirstToAddress(formFields.to);
 
-    let localPart: string | undefined;
-
-    for (const address of addresses) {
-      const bare = EMAIL_ADDRESS_REGEX.exec(address.trim())?.[1] ?? address.trim();
-      const atIndex = bare.indexOf("@");
-
-      if (atIndex < 0) {
-        continue;
-      }
-
-      const domain = bare.slice(atIndex + 1);
-
-      if (domain.toLowerCase() === replyDomain.toLowerCase()) {
-        localPart = bare.slice(0, atIndex);
-        break;
-      }
-    }
-
-    if (!localPart) {
-      this.logger.warn("Inbound email has no recipient matching reply domain [outcome=rejected_malformed]");
+    if (!parsed) {
+      this.logger.warn("Inbound email has no parseable recipient address [outcome=rejected_malformed]");
       return "rejected_malformed";
     }
+
+    const { localPart, domain } = parsed;
 
     const classification = this.classifyLocalPart(localPart);
 
@@ -173,13 +182,8 @@ export class EmailReplyService {
       return this.handleCase1SessionUlid(localPart, formFields, table);
     }
 
-    if (classification === EmailReplyLocalPartClassification.ASSISTANT_ENTRY) {
-      return this.handleAssistantEntry(formFields, table);
-    }
-
-    // UNRECOGNIZED
-    this.logger.warn("[event=email_inbound_unrecognized_local_part outcome=rejected_malformed]");
-    return "rejected_malformed";
+    // DOMAIN_ROUTED — look up account by domain, then validate local-part
+    return this.handleDomainRoutedEntry(formFields, localPart, domain, table);
   }
 
   private async handleCase1SessionUlid(
@@ -199,19 +203,22 @@ export class EmailReplyService {
     }
 
     try {
+      const dedupeNow = new Date().toISOString();
       await this.dynamoDb.send(
         new PutCommand({
           TableName: table,
           Item: {
             PK: `${EMAIL_INBOUND_PK_PREFIX}${messageId}`,
             SK: METADATA_SK,
-            processedAt: new Date().toISOString(),
+            processedAt: dedupeNow,
             sessionId: `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`,
+            _createdAt_: dedupeNow,
+            _lastUpdated_: dedupeNow,
           } satisfies EmailReplyRecord,
           ConditionExpression: "attribute_not_exists(PK)",
         }),
       );
-    } catch (error) {
+    } catch (error: unknown) {
       if (isConditionalCheckFailed(error)) {
         this.logger.debug(`Duplicate inbound email detected [messageId=${messageId} outcome=duplicate]`);
         return "duplicate";
@@ -271,16 +278,56 @@ export class EmailReplyService {
     return "processed";
   }
 
-  private async handleAssistantEntry(
+  private async handleDomainRoutedEntry(
     formFields: EmailReplySendGridInboundFormFields,
+    localPart: string,
+    domain: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
-    const accountId = this.sendGridConfig.replyAccountId;
+    // Step 1 — Resolve account by inbound reply domain
+    const lookup = await this.channelAddressService.getAccountByChannelAddress(
+      ChannelAddressType.EMAIL_REPLY_DOMAIN,
+      domain,
+    );
 
-    if (!accountId) {
-      this.logger.warn("[event=email_assistant_entry_no_account outcome=rejected_unknown_account]");
+    if (lookup === null) {
+      this.logger.warn(
+        `[event=email_inbound_unknown_domain domain=${domain} outcome=rejected_unknown_account]`,
+      );
       return "rejected_unknown_account";
     }
+
+    const accountUlid = lookup.accountId;
+
+    // Step 2 — GetItem the account record to validate status and read channels.email config
+    const accountResult = await this.dynamoDb.send(
+      new GetCommand({
+        TableName: table,
+        Key: { PK: `A#${accountUlid}`, SK: `A#${accountUlid}` },
+      }),
+    );
+
+    const account = accountResult.Item;
+
+    if (!account || account.entity !== "ACCOUNT" || account.status?.is_active !== true) {
+      this.logger.warn(
+        `[event=email_inbound_account_inactive accountUlid=${accountUlid} outcome=rejected_unknown_account]`,
+      );
+      return "rejected_unknown_account";
+    }
+
+    // Step 3 — Validate local-part against the account's configured reply_local_part
+    const expectedLocalPart: string = account.channels?.email?.reply_local_part ?? "assistant";
+
+    if (localPart.toLowerCase() !== expectedLocalPart.toLowerCase()) {
+      this.logger.warn(
+        `[event=email_inbound_unknown_local_part accountUlid=${accountUlid} outcome=rejected_unknown_local_part]`,
+      );
+      return "rejected_unknown_local_part";
+    }
+
+    const replyDomain = domain;
+    const fromName: string = account.channels?.email?.from_name ?? "";
 
     const dedupResult = await this.deduplicateInboundEmail(formFields, null, table);
 
@@ -292,11 +339,11 @@ export class EmailReplyService {
 
     const senderEmail = parseSenderEmail(formFields.from);
 
-    const customerResult = await this.customerService.queryCustomerIdByEmail(table, accountId, senderEmail);
+    const customerResult = await this.customerService.queryCustomerIdByEmail(table, accountUlid, senderEmail);
 
     if (customerResult === null) {
-      this.logger.log("[event=email_assistant_entry_new_visitor outcome=case2]");
-      return this.handleCase2NewSession(formFields, messageId, senderEmail, accountId, table);
+      this.logger.log("[event=email_domain_routed_new_visitor outcome=case2]");
+      return this.handleCase2NewSession(formFields, messageId, senderEmail, accountUlid, replyDomain, fromName, table);
     }
 
     const { customerUlid, latestSessionId } = customerResult;
@@ -312,7 +359,9 @@ export class EmailReplyService {
         formFields,
         messageId,
         senderEmail,
-        accountId,
+        accountUlid,
+        replyDomain,
+        fromName,
         table,
       );
     }
@@ -335,7 +384,9 @@ export class EmailReplyService {
         formFields,
         messageId,
         senderEmail,
-        accountId,
+        accountUlid,
+        replyDomain,
+        fromName,
         table,
       );
     }
@@ -351,7 +402,9 @@ export class EmailReplyService {
         formFields,
         messageId,
         senderEmail,
-        accountId,
+        accountUlid,
+        replyDomain,
+        fromName,
         table,
       );
     }
@@ -360,7 +413,7 @@ export class EmailReplyService {
 
     // Strictly less than 7 days = fresh. Exactly 7 days (ageMs === window) = stale.
     if (ageMs < EMAIL_CONTINUATION_FRESHNESS_WINDOW_MS) {
-      return this.handleCase3FreshAttach(capturedPriorLatestSessionId, formFields, messageId, senderEmail, table);
+      return this.handleCase3FreshAttach(capturedPriorLatestSessionId, formFields, messageId, senderEmail, replyDomain, fromName, table);
     }
 
     return this.handleCase3StaleNewSession(
@@ -369,7 +422,9 @@ export class EmailReplyService {
       formFields,
       messageId,
       senderEmail,
-      accountId,
+      accountUlid,
+      replyDomain,
+      fromName,
       table,
     );
   }
@@ -379,6 +434,8 @@ export class EmailReplyService {
     messageId: string,
     senderEmail: string,
     accountId: string,
+    replyDomain: string,
+    fromName: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
     const sessionResult = await this.sessionService.lookupOrCreateSession("email", null, "lead_capture", accountId);
@@ -399,7 +456,7 @@ export class EmailReplyService {
     const cleanBody = stripQuotedReply(formFields.text);
 
     if (cleanBody === "") {
-      this.logger.warn(`[event=email_assistant_entry_case2 sessionUlid=${sessionUlid} outcome=rejected_malformed reason=empty_after_strip]`);
+      this.logger.warn(`[event=email_domain_routed_case2 sessionUlid=${sessionUlid} outcome=rejected_malformed reason=empty_after_strip]`);
       return "rejected_malformed";
     }
 
@@ -413,11 +470,13 @@ export class EmailReplyService {
       subject: replySubject,
       body: wrapInHtml(assistantText),
       sessionUlid,
+      replyDomain,
+      fromName,
       inReplyToMessageId: messageId,
       referencesMessageId: messageId,
     });
 
-    this.logger.log(`[event=email_assistant_entry_case2 sessionUlid=${sessionUlid} outcome=processed]`);
+    this.logger.log(`[event=email_domain_routed_case2 sessionUlid=${sessionUlid} outcome=processed]`);
 
     return "processed";
   }
@@ -427,6 +486,8 @@ export class EmailReplyService {
     formFields: EmailReplySendGridInboundFormFields,
     messageId: string,
     senderEmail: string,
+    replyDomain: string,
+    fromName: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
     const contactResult = await this.dynamoDb.send(
@@ -441,7 +502,7 @@ export class EmailReplyService {
 
     if (!contactResult.Item) {
       this.logger.warn(
-        `[event=email_assistant_entry_case3_fresh sessionUlid=${existingSessionUlid} outcome=rejected_unknown_session]`,
+        `[event=email_domain_routed_case3_fresh sessionUlid=${existingSessionUlid} outcome=rejected_unknown_session]`,
       );
       return "rejected_unknown_session";
     }
@@ -451,7 +512,7 @@ export class EmailReplyService {
     if (storedEmail.toLowerCase() !== senderEmail) {
       const redacted = buildRedactedSender(senderEmail);
       this.logger.warn(
-        `[event=email_assistant_entry_case3_fresh sessionUlid=${existingSessionUlid} sender=${redacted} outcome=rejected_sender_mismatch]`,
+        `[event=email_domain_routed_case3_fresh sessionUlid=${existingSessionUlid} sender=${redacted} outcome=rejected_sender_mismatch]`,
       );
       return "rejected_sender_mismatch";
     }
@@ -460,7 +521,7 @@ export class EmailReplyService {
 
     if (cleanBody === "") {
       this.logger.warn(
-        `[event=email_assistant_entry_case3_fresh sessionUlid=${existingSessionUlid} outcome=rejected_malformed reason=empty_after_strip]`,
+        `[event=email_domain_routed_case3_fresh sessionUlid=${existingSessionUlid} outcome=rejected_malformed reason=empty_after_strip]`,
       );
       return "rejected_malformed";
     }
@@ -475,11 +536,13 @@ export class EmailReplyService {
       subject: replySubject,
       body: wrapInHtml(assistantText),
       sessionUlid: existingSessionUlid,
+      replyDomain,
+      fromName,
       inReplyToMessageId: messageId,
       referencesMessageId: messageId,
     });
 
-    this.logger.log(`[event=email_assistant_entry_case3_fresh sessionUlid=${existingSessionUlid} outcome=processed]`);
+    this.logger.log(`[event=email_domain_routed_case3_fresh sessionUlid=${existingSessionUlid} outcome=processed]`);
 
     return "processed";
   }
@@ -491,6 +554,8 @@ export class EmailReplyService {
     messageId: string,
     senderEmail: string,
     accountId: string,
+    replyDomain: string,
+    fromName: string,
     table: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
     const sessionResult = await this.sessionService.lookupOrCreateSession("email", null, "lead_capture", accountId);
@@ -529,7 +594,7 @@ export class EmailReplyService {
 
     if (cleanBody === "") {
       this.logger.warn(
-        `[event=email_assistant_entry_case3_stale sessionUlid=${newSessionUlid} outcome=rejected_malformed reason=empty_after_strip]`,
+        `[event=email_domain_routed_case3_stale sessionUlid=${newSessionUlid} outcome=rejected_malformed reason=empty_after_strip]`,
       );
       return "rejected_malformed";
     }
@@ -544,11 +609,13 @@ export class EmailReplyService {
       subject: replySubject,
       body: wrapInHtml(assistantText),
       sessionUlid: newSessionUlid,
+      replyDomain,
+      fromName,
       inReplyToMessageId: messageId,
       referencesMessageId: messageId,
     });
 
-    this.logger.log(`[event=email_assistant_entry_case3_stale sessionUlid=${newSessionUlid} outcome=processed]`);
+    this.logger.log(`[event=email_domain_routed_case3_stale sessionUlid=${newSessionUlid} outcome=processed]`);
 
     return "processed";
   }

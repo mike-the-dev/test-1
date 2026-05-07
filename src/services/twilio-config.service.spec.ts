@@ -46,20 +46,6 @@ describe("TwilioConfigService", () => {
     expect(mockConfigService.get).toHaveBeenCalledWith("twilio.authToken", { infer: true });
   });
 
-  it("phoneNumber returns value from ConfigService", () => {
-    mockConfigService.get.mockReturnValue("+15558675309");
-
-    expect(service.phoneNumber).toBe("+15558675309");
-    expect(mockConfigService.get).toHaveBeenCalledWith("twilio.phoneNumber", { infer: true });
-  });
-
-  it("replyAccountId returns value from ConfigService", () => {
-    mockConfigService.get.mockReturnValue("01ACCT000000000000000000000");
-
-    expect(service.replyAccountId).toBe("01ACCT000000000000000000000");
-    expect(mockConfigService.get).toHaveBeenCalledWith("twilio.replyAccountId", { infer: true });
-  });
-
   it("publicWebhookUrl returns value from ConfigService", () => {
     mockConfigService.get.mockReturnValue("https://api.example.com");
 

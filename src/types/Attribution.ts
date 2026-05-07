@@ -36,6 +36,7 @@ export interface AttributionRecord {
   status: "paid" | "refunded";
 
   _createdAt_: string;
+  _lastUpdated_: string;
 }
 
 export interface AttributionPointerRecord {
@@ -49,4 +50,5 @@ export interface AttributionPointerRecord {
   currency: string;
 
   _createdAt_: string;
+  _lastUpdated_: string;
 }

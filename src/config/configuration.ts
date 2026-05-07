@@ -21,16 +21,10 @@ const configuration = () => ({
   },
   sendgrid: {
     apiKey: process.env.SENDGRID_API_KEY || "",
-    fromEmail: process.env.SENDGRID_FROM_EMAIL || "",
-    fromName: process.env.SENDGRID_FROM_NAME || "",
-    replyDomain: process.env.SENDGRID_REPLY_DOMAIN || "",
-    replyAccountId: process.env.SENDGRID_REPLY_ACCOUNT_ID || "",
   },
   twilio: {
     accountSid: process.env.TWILIO_ACCOUNT_SID || "",
     authToken: process.env.TWILIO_AUTH_TOKEN || "",
-    phoneNumber: process.env.TWILIO_PHONE_NUMBER || "",
-    replyAccountId: process.env.TWILIO_REPLY_ACCOUNT_ID || "",
     publicWebhookUrl: process.env.PUBLIC_WEBHOOK_URL || "",
   },
   webChat: {

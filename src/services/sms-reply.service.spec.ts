@@ -11,6 +11,7 @@ import { SmsService } from "./sms.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
+import { ChannelAddressService } from "./channel-address.service";
 
 const TABLE_NAME = "test-conversations-table";
 const ACCOUNT_ID = "01BXACCNTACCT0000000000000";
@@ -18,25 +19,28 @@ const CUSTOMER_ULID = "01BXCSTMR00000000000000000";
 const PRIOR_SESSION_ULID = "01BXPRYRSESSN0000000000000";
 const NEW_SESSION_ULID = "01BXNEWSESSN00000000000000";
 const SENDER_PHONE = "+15551234567";
+const INBOUND_TO_NUMBER = "+15558675309";
 const MESSAGE_SID = "SMabc123def456ghi789jkl012mno345pq";
 
 const VALID_FORM_FIELDS = {
   MessageSid: MESSAGE_SID,
   AccountSid: "ACfakeaccountsid",
   From: SENDER_PHONE,
-  To: "+15558675309",
+  To: INBOUND_TO_NUMBER,
   Body: "Hello, I need help.",
 };
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
-
-// twilioConfig is mutable so tests can change replyAccountId
-const mockTwilioConfig = { replyAccountId: ACCOUNT_ID, phoneNumber: "+15558675309", authToken: "", accountSid: "", publicWebhookUrl: "" };
-
+const mockTwilioConfig = { authToken: "", accountSid: "", publicWebhookUrl: "" };
 const mockSmsService = { send: jest.fn() };
 const mockChatSessionService = { handleMessage: jest.fn() };
 const mockCustomerService = { queryCustomerIdByPhone: jest.fn() };
 const mockSessionService = { lookupOrCreateSession: jest.fn() };
+
+// mutable so tests can override the return value
+const mockChannelAddressService = {
+  getAccountByChannelAddress: jest.fn(),
+};
 
 describe("SmsReplyService", () => {
   let service: SmsReplyService;
@@ -46,8 +50,8 @@ describe("SmsReplyService", () => {
     ddbMock.reset();
     jest.clearAllMocks();
 
-    // Reset replyAccountId to populated default
-    mockTwilioConfig.replyAccountId = ACCOUNT_ID;
+    // Default: channel address resolves to ACCOUNT_ID
+    mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue({ accountId: ACCOUNT_ID });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,20 +66,32 @@ describe("SmsReplyService", () => {
         { provide: ChatSessionService, useValue: mockChatSessionService },
         { provide: CustomerService, useValue: mockCustomerService },
         { provide: SessionService, useValue: mockSessionService },
+        { provide: ChannelAddressService, useValue: mockChannelAddressService },
       ],
     }).compile();
 
     service = module.get<SmsReplyService>(SmsReplyService);
   });
 
-  it("returns rejected_unknown_account when replyAccountId is missing", async () => {
-    mockTwilioConfig.replyAccountId = "";
+  it("returns rejected_unknown_account when channel address lookup returns null", async () => {
+    mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue(null);
 
     const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
     expect(result).toBe("rejected_unknown_account");
     expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
     expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+  });
+
+  it("queries channel address service with TWILIO_NUMBER type and the inbound To number", async () => {
+    mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue(null);
+
+    await service.processInboundMessage(VALID_FORM_FIELDS);
+
+    expect(mockChannelAddressService.getAccountByChannelAddress).toHaveBeenCalledWith(
+      "twilio_number",
+      INBOUND_TO_NUMBER,
+    );
   });
 
   it("returns rejected_malformed when From phone is not E.164", async () => {
@@ -109,7 +125,7 @@ describe("SmsReplyService", () => {
   });
 
   describe("Case 2 — cold entry (phone unknown to account)", () => {
-    it("mints new session, stamps phone with if_not_exists, calls handleMessage, sends SMS, returns processed", async () => {
+    it("mints new session, stamps phone with if_not_exists, calls handleMessage, sends SMS with from=formFields.To, returns processed", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByPhone.mockResolvedValue(null);
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
@@ -130,6 +146,7 @@ describe("SmsReplyService", () => {
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, VALID_FORM_FIELDS.Body);
       expect(mockSmsService.send).toHaveBeenCalledWith({
         to: SENDER_PHONE,
+        from: INBOUND_TO_NUMBER,
         body: "Welcome!",
         sessionUlid: NEW_SESSION_ULID,
       });
@@ -156,7 +173,7 @@ describe("SmsReplyService", () => {
   });
 
   describe("Case 3 fresh — known sender, recent session", () => {
-    it("attaches to existing session, stamps phone with if_not_exists, calls handleMessage, returns processed", async () => {
+    it("attaches to existing session, stamps phone with if_not_exists, calls handleMessage, sends with from=formFields.To, returns processed", async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
       ddbMock.on(PutCommand).resolves({});
@@ -175,6 +192,9 @@ describe("SmsReplyService", () => {
       // Existing session must be used — no new session created
       expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, VALID_FORM_FIELDS.Body);
+      expect(mockSmsService.send).toHaveBeenCalledWith(
+        expect.objectContaining({ from: INBOUND_TO_NUMBER }),
+      );
 
       // USER_CONTACT_INFO update must use if_not_exists
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
@@ -223,6 +243,9 @@ describe("SmsReplyService", () => {
       expect(result).toBe("processed");
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("sms", null, "lead_capture", ACCOUNT_ID);
       expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, VALID_FORM_FIELDS.Body);
+      expect(mockSmsService.send).toHaveBeenCalledWith(
+        expect.objectContaining({ from: INBOUND_TO_NUMBER }),
+      );
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find(

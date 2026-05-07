@@ -12,20 +12,9 @@ export const envSchema = z
     VOYAGE_API_KEY: z.string().optional(),
     VOYAGE_MODEL: z.string().optional(),
     SENDGRID_API_KEY: z.string().optional(),
-    SENDGRID_FROM_EMAIL: z.string().optional(),
-    SENDGRID_FROM_NAME: z.string().optional(),
     TWILIO_ACCOUNT_SID: z.string().optional(),
     TWILIO_AUTH_TOKEN: z.string().optional(),
-    TWILIO_PHONE_NUMBER: z.string().optional(),
-    TWILIO_REPLY_ACCOUNT_ID: z.string().optional(),
     PUBLIC_WEBHOOK_URL: z.string().optional(),
-    SENDGRID_REPLY_DOMAIN: z
-      .string()
-      .optional()
-      .transform((value) => (value ? value.replace(/^@/, "") : value))
-      .refine((value) => value === undefined || value === "" || /^[^\s@]+\.[^\s@]+$/.test(value), {
-        message: "SENDGRID_REPLY_DOMAIN must be a valid domain (e.g. reply.example.com), not an email address",
-      }),
     DYNAMODB_ACCOUNTS_DOMAIN_GSI_NAME: z.string().default("GSI1"),
     // z.preprocess runs before type-checking so the "true"/"false" string coercion
     // is unambiguous regardless of .default() placement. When the env var is absent,

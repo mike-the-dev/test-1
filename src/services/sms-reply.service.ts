@@ -8,6 +8,8 @@ import { SmsService } from "./sms.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
+import { ChannelAddressService } from "./channel-address.service";
+import { ChannelAddressType } from "../types/AccountChannel";
 import { SmsReplyTwilioInboundFormFields, SmsReplyInboundProcessOutcome, SmsReplyRecord } from "../types/SmsReply";
 
 const SMS_INBOUND_PK_PREFIX = "SMS_INBOUND#";
@@ -54,6 +56,7 @@ export class SmsReplyService {
     private readonly chatSessionService: ChatSessionService,
     private readonly customerService: CustomerService,
     private readonly sessionService: SessionService,
+    private readonly channelAddressService: ChannelAddressService,
   ) {}
 
   async processInboundMessage(
@@ -61,13 +64,21 @@ export class SmsReplyService {
   ): Promise<SmsReplyInboundProcessOutcome> {
     const table = this.databaseConfig.conversationsTable;
 
-    // Phase 1 — Account guard
-    const accountId = this.twilioConfig.replyAccountId;
+    // Phase 1 — Resolve account by inbound Twilio number
+    const lookup = await this.channelAddressService.getAccountByChannelAddress(
+      ChannelAddressType.TWILIO_NUMBER,
+      formFields.To,
+    );
 
-    if (!accountId) {
-      this.logger.warn("[event=sms_inbound_no_account outcome=rejected_unknown_account]");
+    if (lookup === null) {
+      const redactedNumber = buildRedactedPhone(formFields.To);
+      this.logger.warn(
+        `[event=sms_inbound_unknown_number twilioNumber=${redactedNumber} outcome=rejected_unknown_account]`,
+      );
       return "rejected_unknown_account";
     }
+
+    const accountId = lookup.accountId;
 
     // Phase 2 — Phone format guard
     if (!E164_REGEX.test(formFields.From)) {
@@ -81,11 +92,14 @@ export class SmsReplyService {
     }
 
     // Phase 3 — Dedupe via MessageSid
+    const dedupeNow = new Date().toISOString();
     const dedupeItem = {
       PK: `${SMS_INBOUND_PK_PREFIX}${formFields.MessageSid}`,
       SK: METADATA_SK,
-      processedAt: new Date().toISOString(),
+      processedAt: dedupeNow,
       sessionId: null,
+      _createdAt_: dedupeNow,
+      _lastUpdated_: dedupeNow,
     } satisfies SmsReplyRecord;
 
     try {
@@ -174,9 +188,11 @@ export class SmsReplyService {
       new UpdateCommand({
         TableName: table,
         Key: { PK: `${SMS_INBOUND_PK_PREFIX}${formFields.MessageSid}`, SK: METADATA_SK },
-        UpdateExpression: "SET sessionId = :sessionId",
+        UpdateExpression: "SET sessionId = :sessionId, #lastUpdated = :now",
+        ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
         ExpressionAttributeValues: {
           ":sessionId": `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`,
+          ":now": new Date().toISOString(),
         },
       }),
     );
@@ -204,7 +220,7 @@ export class SmsReplyService {
       formFields.Body,
     );
 
-    await this.smsService.send({ to: formFields.From, body: assistantText, sessionUlid });
+    await this.smsService.send({ to: formFields.From, from: formFields.To, body: assistantText, sessionUlid });
 
     this.logger.log(
       `[event=sms_assistant_entry_case2 sessionUlid=${sessionUlid} outcome=processed]`,
@@ -225,9 +241,11 @@ export class SmsReplyService {
       new UpdateCommand({
         TableName: table,
         Key: { PK: `${SMS_INBOUND_PK_PREFIX}${formFields.MessageSid}`, SK: METADATA_SK },
-        UpdateExpression: "SET sessionId = :sessionId",
+        UpdateExpression: "SET sessionId = :sessionId, #lastUpdated = :now",
+        ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
         ExpressionAttributeValues: {
           ":sessionId": `${CHAT_SESSION_PK_PREFIX}${existingSessionUlid}`,
+          ":now": new Date().toISOString(),
         },
       }),
     );
@@ -255,7 +273,7 @@ export class SmsReplyService {
       formFields.Body,
     );
 
-    await this.smsService.send({ to: formFields.From, body: assistantText, sessionUlid: existingSessionUlid });
+    await this.smsService.send({ to: formFields.From, from: formFields.To, body: assistantText, sessionUlid: existingSessionUlid });
 
     this.logger.log(
       `[event=sms_assistant_entry_case3_fresh sessionUlid=${existingSessionUlid} sender=${redacted} outcome=processed]`,
@@ -279,9 +297,11 @@ export class SmsReplyService {
       new UpdateCommand({
         TableName: table,
         Key: { PK: `${SMS_INBOUND_PK_PREFIX}${formFields.MessageSid}`, SK: METADATA_SK },
-        UpdateExpression: "SET sessionId = :sessionId",
+        UpdateExpression: "SET sessionId = :sessionId, #lastUpdated = :now",
+        ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
         ExpressionAttributeValues: {
           ":sessionId": `${CHAT_SESSION_PK_PREFIX}${newSessionUlid}`,
+          ":now": new Date().toISOString(),
         },
       }),
     );
@@ -331,7 +351,7 @@ export class SmsReplyService {
       formFields.Body,
     );
 
-    await this.smsService.send({ to: formFields.From, body: assistantText, sessionUlid: newSessionUlid });
+    await this.smsService.send({ to: formFields.From, from: formFields.To, body: assistantText, sessionUlid: newSessionUlid });
 
     this.logger.log(
       `[event=sms_assistant_entry_case3_stale sessionUlid=${newSessionUlid} outcome=processed]`,

@@ -21,18 +21,9 @@ export class SmsService {
   }
 
   async send(params: SmsSendParams): Promise<SmsSendResult> {
-    const fromNumber = this.twilioConfig.phoneNumber;
-
-    if (!fromNumber) {
-      this.logger.error(
-        `TWILIO_PHONE_NUMBER not set — cannot send SMS [sessionUlid=${params.sessionUlid ?? "n/a"}]`,
-      );
-      throw new Error("TWILIO_PHONE_NUMBER not configured");
-    }
-
     try {
       const message = await this.client.messages.create({
-        from: fromNumber,
+        from: params.from,
         to: params.to,
         body: params.body,
       });

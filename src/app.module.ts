@@ -50,6 +50,7 @@ import { KnowledgeBaseConfigModule } from "./services/knowledge-base-config.modu
 import { KnowledgeBaseConfigService } from "./services/knowledge-base-config.service";
 import { KnowledgeBaseIngestionProcessor } from "./processors/knowledge-base-ingestion.processor";
 import { OriginAllowlistService } from "./services/origin-allowlist.service";
+import { ChannelAddressService } from "./services/channel-address.service";
 import { SentryConfigService } from "./services/sentry-config.service";
 import { SentryService } from "./services/sentry.service";
 import { SlackAlertConfigService } from "./services/slack-alert-config.service";
@@ -131,6 +132,7 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     SmsService,
     SmsReplyService,
     OriginAllowlistService,
+    ChannelAddressService,
     KnowledgeBaseEnrichmentService,
     KnowledgeBaseIngestionService,
     KnowledgeBaseIngestionProcessor,
