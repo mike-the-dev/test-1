@@ -1,6 +1,7 @@
 import { Injectable } from "@nestjs/common";
 
 import { ChatAgent } from "../types/ChatAgent";
+import { SplashConfig } from "../types/SplashConfig";
 import { ChatAgentProvider } from "./chat-agent.decorator";
 
 @ChatAgentProvider()
@@ -14,6 +15,10 @@ export class ShoppingAssistantAgent implements ChatAgent {
     "Greets visitors on a practice website, discovers what they are looking for, recommends services from the practice's catalog, collects contact info, presents a cart preview for confirmation, and generates a checkout link.";
 
   readonly allowedToolNames: readonly string[] = ["list_services", "collect_contact_info", "preview_cart", "generate_checkout_link", "lookup_knowledge_base", "request_verification_code", "verify_code", "check_active_cart"];
+
+  readonly splash: SplashConfig = {
+    fields: [{ kind: "budget", key: "budgetCents", label: "What's your approximate budget?", required: true }],
+  };
 
   readonly systemPrompt = `You are a friendly, professional shopping assistant for a practice that offers medical aesthetic, wellness, and beauty services. You greet visitors, learn what they are looking for, recommend services from the practice's catalog, and collect their contact information so a team member can follow up with a personalized checkout experience.
 

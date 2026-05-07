@@ -5,7 +5,7 @@ export interface ChatSessionUpdateOnboardingResult {
   sessionUlid: string;
   onboardingCompletedAt: string;
   kickoffCompletedAt: string | null;
-  budgetCents: number;
+  onboardingData: Record<string, unknown>;
 }
 
 /** Return type for SessionService.lookupOrCreateSession(). */
@@ -13,7 +13,7 @@ export interface ChatSessionLookupOrCreateResult {
   sessionUlid: string;
   onboardingCompletedAt: string | null;
   kickoffCompletedAt: string | null;
-  budgetCents: number | null;
+  onboardingData: Record<string, unknown> | null;
   wasCreated: boolean;
 }
 
@@ -67,7 +67,7 @@ export interface ChatSessionMetadataRecord {
   // so the frontend can decide whether to dispatch the kickoff auto-greeting.
   // Set via UpdateCommand with if_not_exists so it is write-once — never clobbered.
   kickoff_completed_at?: string;
-  budget_cents?: number;
+  onboarding_data?: Record<string, unknown>;
   // Cart state — set by preview_cart on first call in the session, reused on
   // subsequent preview_cart calls (idempotent stable IDs via if_not_exists)
   // and read by generate_checkout_link to build the checkout URL.

@@ -100,7 +100,13 @@ export class ChatSessionService {
         accountUlid = rawAccountId.startsWith("A#") ? rawAccountId.slice(2) : rawAccountId;
       }
 
-      const budgetCents: number | undefined = metadataResult.Item?.budget_cents;
+      const onboardingData: Record<string, unknown> | undefined = metadataResult.Item?.onboarding_data;
+      const rawBudget = onboardingData?.budgetCents;
+      // Number(null) === 0, so null must be excluded explicitly — otherwise a missing budget would coerce to a $0 budget context.
+      const budgetCents =
+        rawBudget !== undefined && rawBudget !== null && !Number.isNaN(Number(rawBudget))
+          ? Number(rawBudget)
+          : undefined;
       const customerId: string | null = metadataResult.Item?.customer_id ?? null;
 
       const isKickoff = userMessage === SESSION_KICKOFF_MARKER;

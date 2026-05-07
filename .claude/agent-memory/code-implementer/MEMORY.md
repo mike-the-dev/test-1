@@ -8,3 +8,4 @@
 - [crypto createHash spy in Jest](feedback_crypto_spy_pattern.md) — Dynamic import or spy on named crypto imports doesn't work in Jest; assert observable behavior instead
 - [jest.mock factory hoisting](feedback_jest_mock_hoisting.md) — Don't reference outer `const mockFn = jest.fn()` inside jest.mock factory; create inside factory, retrieve via jest.requireMock after
 - [aws-sdk-client-mock GetCommand chaining](feedback_ddbmock_getcommand_chaining.md) — Chain all resolvesOnce on ONE .on(GetCommand) call; separate calls override each other
+- [Zod v4 API differences](feedback_zod_v4_api.md) — `z.AnyZodObject` gone; `z.record` needs 2 args; project uses Zod 4.3.6

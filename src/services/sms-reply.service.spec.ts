@@ -132,7 +132,7 @@ describe("SmsReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -231,7 +231,7 @@ describe("SmsReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -287,7 +287,7 @@ describe("SmsReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -334,7 +334,7 @@ describe("SmsReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -358,7 +358,7 @@ describe("SmsReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});

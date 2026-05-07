@@ -48,7 +48,7 @@ describe("SessionService", () => {
         Item: {
           onboarding_completed_at: "2026-04-19T20:00:00.000Z",
           kickoff_completed_at: null,
-          budget_cents: 50_000,
+          onboarding_data: { budgetCents: 50_000 },
         },
       });
 
@@ -57,7 +57,7 @@ describe("SessionService", () => {
       expect(result.sessionUlid).toBe(VALID_SESSION_ULID);
       expect(result.wasCreated).toBe(false);
       expect(result.onboardingCompletedAt).toBe("2026-04-19T20:00:00.000Z");
-      expect(result.budgetCents).toBe(50_000);
+      expect(result.onboardingData).toEqual({ budgetCents: 50_000 });
       expect(ddbMock.commandCalls(GetCommand)).toHaveLength(1);
       expect(ddbMock.commandCalls(UpdateCommand)).toHaveLength(0);
       expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
@@ -195,11 +195,11 @@ describe("SessionService", () => {
   describe("updateOnboarding", () => {
     const SESSION_ULID = "01TESTSESSION0000000000000";
 
-    it("writes onboarding_completed_at and budget_cents to the METADATA record", async () => {
+    it("writes onboarding_completed_at and onboarding_data to the METADATA record", async () => {
       ddbMock.on(UpdateCommand).resolves({});
       ddbMock.on(GetCommand).resolves({ Item: undefined });
 
-      const result = await service.updateOnboarding(SESSION_ULID, 100_000);
+      const result = await service.updateOnboarding(SESSION_ULID, { budgetCents: 100_000 });
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       expect(updateCalls).toHaveLength(1);
@@ -208,8 +208,8 @@ describe("SessionService", () => {
       expect(input.Key?.PK).toBe(`CHAT_SESSION#${SESSION_ULID}`);
       expect(input.Key?.SK).toBe("METADATA");
       expect(input.UpdateExpression).toContain("onboarding_completed_at = :now");
-      expect(input.UpdateExpression).toContain("budget_cents = :cents");
-      expect(input.ExpressionAttributeValues?.[":cents"]).toBe(100_000);
+      expect(input.UpdateExpression).toContain("onboarding_data = :data");
+      expect(input.ExpressionAttributeValues?.[":data"]).toEqual({ budgetCents: 100_000 });
       expect(input.ConditionExpression).toBe("attribute_exists(PK)");
 
       const metadataGets = ddbMock
@@ -218,7 +218,7 @@ describe("SessionService", () => {
       expect(metadataGets).toHaveLength(1);
 
       expect(result.sessionUlid).toBe(SESSION_ULID);
-      expect(result.budgetCents).toBe(100_000);
+      expect(result.onboardingData).toEqual({ budgetCents: 100_000 });
       expect(typeof result.onboardingCompletedAt).toBe("string");
       expect(result.onboardingCompletedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
       expect(result.kickoffCompletedAt).toBeNull();
@@ -234,7 +234,7 @@ describe("SessionService", () => {
         },
       });
 
-      const result = await service.updateOnboarding(SESSION_ULID, 100_000);
+      const result = await service.updateOnboarding(SESSION_ULID, { budgetCents: 100_000 });
 
       const getCalls = ddbMock.commandCalls(GetCommand);
       expect(getCalls).toHaveLength(1);
@@ -251,9 +251,48 @@ describe("SessionService", () => {
 
       ddbMock.on(UpdateCommand).rejects(conditionalError);
 
-      await expect(service.updateOnboarding(SESSION_ULID, 50_000)).rejects.toMatchObject({
+      await expect(service.updateOnboarding(SESSION_ULID, { budgetCents: 50_000 })).rejects.toMatchObject({
         name: "ConditionalCheckFailedException",
       });
+    });
+  });
+
+  describe("getSessionMetadata", () => {
+    const SESSION_ULID = "01TESTSESSION0000000000000";
+
+    it("returns agentName when METADATA record exists", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: {
+          PK: `CHAT_SESSION#${SESSION_ULID}`,
+          SK: "METADATA",
+          agent_name: "shopping_assistant",
+        },
+      });
+
+      const result = await service.getSessionMetadata(SESSION_ULID);
+
+      expect(result).toEqual({ agentName: "shopping_assistant" });
+    });
+
+    it("returns null when METADATA record does not exist", async () => {
+      ddbMock.on(GetCommand).resolves({ Item: undefined });
+
+      const result = await service.getSessionMetadata(SESSION_ULID);
+
+      expect(result).toBeNull();
+    });
+
+    it("issues GetCommand with correct PK and SK", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { agent_name: "lead_capture" },
+      });
+
+      await service.getSessionMetadata(SESSION_ULID);
+
+      const getCalls = ddbMock.commandCalls(GetCommand);
+      expect(getCalls).toHaveLength(1);
+      expect(getCalls[0].args[0].input.Key?.PK).toBe(`CHAT_SESSION#${SESSION_ULID}`);
+      expect(getCalls[0].args[0].input.Key?.SK).toBe("METADATA");
     });
   });
 });

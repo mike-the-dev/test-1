@@ -60,13 +60,13 @@ export class SessionService {
       if (metadataResult.Item) {
         const onboardingCompletedAt = metadataResult.Item.onboarding_completed_at ?? null;
         const kickoffCompletedAt = metadataResult.Item.kickoff_completed_at ?? null;
-        const budgetCents = metadataResult.Item.budget_cents ?? null;
+        const onboardingData: Record<string, unknown> | null = metadataResult.Item.onboarding_data ?? null;
 
         this.logger.debug(
           `Resumed existing session [sessionUlid=${sessionId} accountUlid=${accountUlid ?? "<none>"}]`,
         );
 
-        return { sessionUlid: sessionId, onboardingCompletedAt, kickoffCompletedAt, budgetCents, wasCreated: false };
+        return { sessionUlid: sessionId, onboardingCompletedAt, kickoffCompletedAt, onboardingData, wasCreated: false };
       }
 
       // sessionId provided but not found — fall through to mint a new session
@@ -147,10 +147,10 @@ export class SessionService {
       }
     }
 
-    return { sessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true };
+    return { sessionUlid, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true };
   }
 
-  async updateOnboarding(sessionUlid: string, budgetCents: number): Promise<ChatSessionUpdateOnboardingResult> {
+  async updateOnboarding(sessionUlid: string, onboardingData: Record<string, unknown>): Promise<ChatSessionUpdateOnboardingResult> {
     const table = this.databaseConfig.conversationsTable;
     const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
     const now = new Date().toISOString();
@@ -159,14 +159,14 @@ export class SessionService {
       new UpdateCommand({
         TableName: table,
         Key: { PK: sessionPk, SK: METADATA_SK },
-        UpdateExpression: "SET onboarding_completed_at = :now, budget_cents = :cents, #lastUpdated = :now",
+        UpdateExpression: "SET onboarding_completed_at = :now, onboarding_data = :data, #lastUpdated = :now",
         ConditionExpression: "attribute_exists(PK)",
         ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-        ExpressionAttributeValues: { ":now": now, ":cents": budgetCents },
+        ExpressionAttributeValues: { ":now": now, ":data": onboardingData },
       }),
     );
 
-    this.logger.debug(`Onboarding recorded [sessionUlid=${sessionUlid} budgetCents=${budgetCents}]`);
+    this.logger.debug(`Onboarding recorded [sessionUlid=${sessionUlid}]`);
 
     const metadataResult = await this.dynamoDb.send(
       new GetCommand({
@@ -177,6 +177,30 @@ export class SessionService {
 
     const kickoffCompletedAt = metadataResult.Item?.kickoff_completed_at ?? null;
 
-    return { sessionUlid, onboardingCompletedAt: now, kickoffCompletedAt, budgetCents };
+    return { sessionUlid, onboardingCompletedAt: now, kickoffCompletedAt, onboardingData };
+  }
+
+  async getSessionMetadata(sessionUlid: string): Promise<{ agentName: string } | null> {
+    const table = this.databaseConfig.conversationsTable;
+    const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
+
+    const result = await this.dynamoDb.send(
+      new GetCommand({
+        TableName: table,
+        Key: { PK: sessionPk, SK: METADATA_SK },
+      }),
+    );
+
+    if (!result.Item) {
+      return null;
+    }
+
+    const agentName: string | undefined = result.Item.agent_name;
+
+    if (!agentName) {
+      return null;
+    }
+
+    return { agentName };
   }
 }

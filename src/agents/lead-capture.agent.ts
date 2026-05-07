@@ -168,4 +168,6 @@ Tool refusal guard:
     "request_verification_code",
     "verify_code",
   ];
+
+  readonly splash = null;
 }

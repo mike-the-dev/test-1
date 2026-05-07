@@ -10,11 +10,12 @@ import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import {
   createSessionSchema,
   embedAuthorizeSchema,
-  onboardingSchema,
+  onboardingBodyWrapperSchema,
   sendMessageSchema,
   sessionIdParamSchema,
 } from "../validation/web-chat.schema";
 import { WebChatHistoryMessage } from "../types/WebChat";
+import { SplashConfig } from "../types/SplashConfig";
 import { WebChatController } from "./web-chat.controller";
 
 const VALID_SESSION_ULID = "01BX5ZZKBKACTAV9WEVGEMMVS1";
@@ -22,9 +23,14 @@ const VALID_ACCOUNT_ULID = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 const VALID_ACCOUNT_ULID_WITH_PREFIX = `A#${VALID_ACCOUNT_ULID}`;
 const AGENT_NAME = "lead_capture";
 
+const SHOPPING_ASSISTANT_SPLASH = {
+  fields: [{ kind: "budget", key: "budgetCents", label: "What's your approximate budget?", required: true }],
+} satisfies SplashConfig;
+
 const mockSessionService = {
   lookupOrCreateSession: jest.fn(),
   updateOnboarding: jest.fn(),
+  getSessionMetadata: jest.fn(),
 };
 
 const mockChatSessionService = {
@@ -59,7 +65,7 @@ describe("WebChatController", () => {
       sessionUlid: VALID_SESSION_ULID,
       onboardingCompletedAt: null,
       kickoffCompletedAt: null,
-      budgetCents: null,
+      onboardingData: null,
       wasCreated: true,
     });
 
@@ -92,7 +98,7 @@ describe("WebChatController", () => {
     });
 
     it("returns sessionId, displayName, and onboarding nulls for a new session (no sessionId sent)", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "Lead Capture Assistant" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "Lead Capture Assistant", splash: null });
 
       const result = await controller.createSession({
         agentName: AGENT_NAME,
@@ -104,13 +110,14 @@ describe("WebChatController", () => {
         displayName: "Lead Capture Assistant",
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        splash: null,
+        onboardingData: null,
       });
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("web", null, AGENT_NAME, VALID_ACCOUNT_ULID);
     });
 
     it("falls back to agent.name when displayName is not set", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: undefined });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: undefined, splash: null });
 
       const result = await controller.createSession({
         agentName: AGENT_NAME,
@@ -121,7 +128,7 @@ describe("WebChatController", () => {
     });
 
     it("strips the A# prefix from body.accountUlid before calling verifyAccountActive", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X", splash: null });
 
       await controller.createSession({
         agentName: AGENT_NAME,
@@ -133,7 +140,7 @@ describe("WebChatController", () => {
     });
 
     it("throws InternalServerErrorException when verifyAccountActive returns null", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X", splash: null });
       mockOriginAllowlistService.verifyAccountActive.mockResolvedValue(null);
 
       await expect(
@@ -147,7 +154,7 @@ describe("WebChatController", () => {
     });
 
     it("fires notifyConversationStarted when wasCreated is true (new session)", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X", splash: null });
 
       await controller.createSession({
         agentName: AGENT_NAME,
@@ -161,12 +168,12 @@ describe("WebChatController", () => {
     });
 
     it("does NOT fire slack alert when an existing session is resumed (wasCreated: false)", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X", splash: null });
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
         sessionUlid: VALID_SESSION_ULID,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
         kickoffCompletedAt: null,
-        budgetCents: 50_000,
+        onboardingData: { budgetCents: 50_000 },
         wasCreated: false,
       });
 
@@ -180,7 +187,7 @@ describe("WebChatController", () => {
     });
 
     it("returns the session response even when notifyConversationStarted rejects", async () => {
-      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: AGENT_NAME, displayName: "X", splash: null });
       mockSlackAlertService.notifyConversationStarted.mockRejectedValue(new Error("Slack down"));
 
       const result = await controller.createSession({
@@ -189,6 +196,37 @@ describe("WebChatController", () => {
       });
 
       expect(result.sessionId).toBe(VALID_SESSION_ULID);
+    });
+
+    it("returns splash config for shopping_assistant agent", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "shopping_assistant",
+        displayName: "Shopping Assistant",
+        splash: SHOPPING_ASSISTANT_SPLASH,
+      });
+
+      const result = await controller.createSession({
+        agentName: "shopping_assistant",
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(result.splash).toEqual(SHOPPING_ASSISTANT_SPLASH);
+      expect(result.onboardingData).toBeNull();
+    });
+
+    it("returns splash: null for lead_capture agent", async () => {
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "lead_capture",
+        displayName: "Lead Capture Assistant",
+        splash: null,
+      });
+
+      const result = await controller.createSession({
+        agentName: "lead_capture",
+        accountUlid: VALID_ACCOUNT_ULID_WITH_PREFIX,
+      });
+
+      expect(result.splash).toBeNull();
     });
 
     it("pipe rejects body missing accountUlid", () => {
@@ -237,27 +275,40 @@ describe("WebChatController", () => {
   });
 
   describe("POST /sessions/:sessionId/onboarding — completeOnboarding", () => {
-    it("calls SessionService.updateOnboarding with the ULID and budgetCents", async () => {
+    it("calls SessionService.updateOnboarding with the ULID and onboardingData", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "shopping_assistant" });
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "shopping_assistant",
+        splash: SHOPPING_ASSISTANT_SPLASH,
+      });
       mockSessionService.updateOnboarding.mockResolvedValue({
         sessionUlid: VALID_SESSION_ULID,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
         kickoffCompletedAt: null,
-        budgetCents: 100_000,
+        onboardingData: { budgetCents: 100_000 },
       });
 
-      const result = await controller.completeOnboarding(VALID_SESSION_ULID, { budgetCents: 100_000 });
+      const result = await controller.completeOnboarding(VALID_SESSION_ULID, {
+        onboardingData: { budgetCents: 100_000 },
+      });
 
       expect(result).toEqual({
         sessionId: VALID_SESSION_ULID,
         onboardingCompletedAt: "2026-04-19T20:00:00.000Z",
         kickoffCompletedAt: null,
-        budgetCents: 100_000,
+        onboardingData: { budgetCents: 100_000 },
       });
 
-      expect(mockSessionService.updateOnboarding).toHaveBeenCalledWith(VALID_SESSION_ULID, 100_000);
+      expect(mockSessionService.updateOnboarding).toHaveBeenCalledWith(VALID_SESSION_ULID, { budgetCents: 100_000 });
     });
 
     it("maps ConditionalCheckFailedException to a 404 NotFoundException", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "shopping_assistant" });
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "shopping_assistant",
+        splash: SHOPPING_ASSISTANT_SPLASH,
+      });
+
       const conditionalError = Object.assign(new Error("Condition failed"), {
         name: "ConditionalCheckFailedException",
       });
@@ -265,32 +316,101 @@ describe("WebChatController", () => {
       mockSessionService.updateOnboarding.mockRejectedValue(conditionalError);
 
       await expect(
-        controller.completeOnboarding(VALID_SESSION_ULID, { budgetCents: 50_000 }),
+        controller.completeOnboarding(VALID_SESSION_ULID, { onboardingData: { budgetCents: 50_000 } }),
       ).rejects.toThrow(NotFoundException);
     });
 
     it("maps other DynamoDB errors to a 500 InternalServerErrorException", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "shopping_assistant" });
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "shopping_assistant",
+        splash: SHOPPING_ASSISTANT_SPLASH,
+      });
       mockSessionService.updateOnboarding.mockRejectedValue(new Error("unexpected"));
 
       await expect(
-        controller.completeOnboarding(VALID_SESSION_ULID, { budgetCents: 50_000 }),
+        controller.completeOnboarding(VALID_SESSION_ULID, { onboardingData: { budgetCents: 50_000 } }),
       ).rejects.toThrow(InternalServerErrorException);
     });
 
-    it("pipe rejects non-integer budgetCents", () => {
-      const pipe = new ZodValidationPipe(onboardingSchema);
-      expect(() => pipe.transform({ budgetCents: 1.5 })).toThrow(BadRequestException);
+    it("returns 404 when getSessionMetadata returns null", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue(null);
+
+      await expect(
+        controller.completeOnboarding(VALID_SESSION_ULID, { onboardingData: { budgetCents: 50_000 } }),
+      ).rejects.toThrow(NotFoundException);
+
+      expect(mockSessionService.updateOnboarding).not.toHaveBeenCalled();
     });
 
-    it("pipe rejects zero or negative budgetCents", () => {
-      const pipe = new ZodValidationPipe(onboardingSchema);
-      expect(() => pipe.transform({ budgetCents: 0 })).toThrow(BadRequestException);
-      expect(() => pipe.transform({ budgetCents: -100 })).toThrow(BadRequestException);
+    it("returns 400 when the session agent has splash: null", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "lead_capture" });
+      mockAgentRegistry.getByName.mockReturnValue({ name: "lead_capture", splash: null });
+
+      await expect(
+        controller.completeOnboarding(VALID_SESSION_ULID, { onboardingData: {} }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockSessionService.updateOnboarding).not.toHaveBeenCalled();
     });
 
-    it("pipe rejects budgetCents over the $1M cap", () => {
-      const pipe = new ZodValidationPipe(onboardingSchema);
-      expect(() => pipe.transform({ budgetCents: 100_000_001 })).toThrow(BadRequestException);
+    it("returns 400 for an unknown agent stored on session metadata", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "ghost_agent" });
+      mockAgentRegistry.getByName.mockReturnValue(null);
+
+      await expect(
+        controller.completeOnboarding(VALID_SESSION_ULID, { onboardingData: { budgetCents: 50_000 } }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it("rejects invalid budget via the dynamic schema", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "shopping_assistant" });
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "shopping_assistant",
+        splash: SHOPPING_ASSISTANT_SPLASH,
+      });
+
+      await expect(
+        controller.completeOnboarding(VALID_SESSION_ULID, { onboardingData: { budgetCents: -500 } }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockSessionService.updateOnboarding).not.toHaveBeenCalled();
+    });
+
+    it("validates and stores onboardingData for a shopping_assistant splash (happy path)", async () => {
+      mockSessionService.getSessionMetadata.mockResolvedValue({ agentName: "shopping_assistant" });
+      mockAgentRegistry.getByName.mockReturnValue({
+        name: "shopping_assistant",
+        splash: SHOPPING_ASSISTANT_SPLASH,
+      });
+      mockSessionService.updateOnboarding.mockResolvedValue({
+        sessionUlid: VALID_SESSION_ULID,
+        onboardingCompletedAt: "2026-05-07T00:00:00.000Z",
+        kickoffCompletedAt: null,
+        onboardingData: { budgetCents: 75_000 },
+      });
+
+      const result = await controller.completeOnboarding(VALID_SESSION_ULID, {
+        onboardingData: { budgetCents: 75_000 },
+      });
+
+      expect(result.onboardingData).toEqual({ budgetCents: 75_000 });
+      expect(mockSessionService.updateOnboarding).toHaveBeenCalledWith(VALID_SESSION_ULID, { budgetCents: 75_000 });
+    });
+
+    it("pipe rejects body missing onboardingData wrapper", () => {
+      const pipe = new ZodValidationPipe(onboardingBodyWrapperSchema);
+      expect(() => pipe.transform({})).toThrow(BadRequestException);
+    });
+
+    it("pipe rejects onboardingData that is not an object", () => {
+      const pipe = new ZodValidationPipe(onboardingBodyWrapperSchema);
+      expect(() => pipe.transform({ onboardingData: "not-an-object" })).toThrow(BadRequestException);
+    });
+
+    it("pipe accepts an empty onboardingData object", () => {
+      const pipe = new ZodValidationPipe(onboardingBodyWrapperSchema);
+      expect(() => pipe.transform({ onboardingData: {} })).not.toThrow();
     });
 
     it("param pipe rejects invalid sessionId", () => {

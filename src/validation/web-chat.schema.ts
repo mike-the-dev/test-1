@@ -15,10 +15,6 @@ const accountUlidRegex = /^A#[0-9A-HJKMNP-TV-Z]{26}$/;
 const parentDomainRegex =
   /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$/;
 
-// Generous upper bound: 100,000,000 cents = $1,000,000. Rejects obvious abuse
-// without constraining legit medical-spa budgets.
-const MAX_BUDGET_CENTS = 100_000_000;
-
 export const createSessionSchema = z.object({
   agentName: z.string().min(1),
   sessionId: z.string().regex(ulidRegex, "sessionId must be a valid 26-character ULID").optional(),
@@ -32,12 +28,8 @@ export const sendMessageSchema = z.object({
   message: z.string().min(1, "message must not be empty"),
 });
 
-export const onboardingSchema = z.object({
-  budgetCents: z
-    .number()
-    .int("budgetCents must be an integer")
-    .positive("budgetCents must be positive")
-    .max(MAX_BUDGET_CENTS, "budgetCents exceeds the maximum allowed value"),
+export const onboardingBodyWrapperSchema = z.object({
+  onboardingData: z.record(z.string(), z.unknown()),
 });
 
 export const sessionIdParamSchema = z
@@ -55,5 +47,5 @@ export const embedAuthorizeSchema = z.object({
 
 export type CreateSessionBody = z.infer<typeof createSessionSchema>;
 export type SendMessageBody = z.infer<typeof sendMessageSchema>;
-export type OnboardingBody = z.infer<typeof onboardingSchema>;
+export type OnboardingBodyWrapper = z.infer<typeof onboardingBodyWrapperSchema>;
 export type EmbedAuthorizeBody = z.infer<typeof embedAuthorizeSchema>;

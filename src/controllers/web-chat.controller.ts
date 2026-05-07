@@ -26,11 +26,15 @@ import {
 import {
   createSessionSchema,
   embedAuthorizeSchema,
-  onboardingSchema,
+  onboardingBodyWrapperSchema,
   sendMessageSchema,
   sessionIdParamSchema,
+  type CreateSessionBody,
+  type EmbedAuthorizeBody,
+  type OnboardingBodyWrapper,
+  type SendMessageBody,
 } from "../validation/web-chat.schema";
-import type { CreateSessionBody, EmbedAuthorizeBody, OnboardingBody, SendMessageBody } from "../validation/web-chat.schema";
+import { buildOnboardingSchema } from "../validation/buildOnboardingSchema";
 
 @Controller("chat/web")
 export class WebChatController {
@@ -86,25 +90,51 @@ export class WebChatController {
       displayName,
       onboardingCompletedAt: sessionResult.onboardingCompletedAt,
       kickoffCompletedAt: sessionResult.kickoffCompletedAt,
-      budgetCents: sessionResult.budgetCents,
+      splash: agent.splash,
+      onboardingData: sessionResult.onboardingData,
     };
   }
 
   @Post("sessions/:sessionId/onboarding")
   async completeOnboarding(
     @Param("sessionId", new ZodValidationPipe(sessionIdParamSchema)) sessionUlid: string,
-    @Body(new ZodValidationPipe(onboardingSchema)) body: OnboardingBody,
+    @Body(new ZodValidationPipe(onboardingBodyWrapperSchema)) body: OnboardingBodyWrapper,
   ): Promise<WebChatOnboardingResponse> {
-    try {
-      const result = await this.sessionService.updateOnboarding(sessionUlid, body.budgetCents);
+    const metadata = await this.sessionService.getSessionMetadata(sessionUlid);
 
-      this.logger.debug(`Onboarding completed [sessionUlid=${sessionUlid} budgetCents=${body.budgetCents}]`);
+    if (metadata === null) {
+      throw new NotFoundException(`Session not found: ${sessionUlid}`);
+    }
+
+    const agent = this.agentRegistry.getByName(metadata.agentName);
+
+    if (agent === null) {
+      throw new BadRequestException(`Session agent '${metadata.agentName}' is not registered.`);
+    }
+
+    if (agent.splash === null) {
+      throw new BadRequestException("this agent has no onboarding");
+    }
+
+    const schema = buildOnboardingSchema(agent.splash.fields);
+    const parseResult = schema.safeParse(body.onboardingData);
+
+    if (!parseResult.success) {
+      const firstIssue = parseResult.error.issues[0];
+      const reason = firstIssue?.message ?? "Invalid onboarding data";
+      throw new BadRequestException(reason);
+    }
+
+    try {
+      const result = await this.sessionService.updateOnboarding(sessionUlid, parseResult.data);
+
+      this.logger.debug(`Onboarding completed [sessionUlid=${sessionUlid}]`);
 
       return {
         sessionId: result.sessionUlid,
         onboardingCompletedAt: result.onboardingCompletedAt,
         kickoffCompletedAt: result.kickoffCompletedAt,
-        budgetCents: result.budgetCents,
+        onboardingData: result.onboardingData,
       };
     } catch (error: unknown) {
       const errorName = error instanceof Error ? error.name : "UnknownError";

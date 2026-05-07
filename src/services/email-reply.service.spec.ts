@@ -302,7 +302,7 @@ describe("EmailReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -332,7 +332,7 @@ describe("EmailReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -430,7 +430,7 @@ describe("EmailReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -458,7 +458,7 @@ describe("EmailReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -485,7 +485,7 @@ describe("EmailReplyService", () => {
         sessionUlid: NEW_SESSION_ULID,
         onboardingCompletedAt: null,
         kickoffCompletedAt: null,
-        budgetCents: null,
+        onboardingData: null,
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
@@ -509,7 +509,7 @@ describe("EmailReplyService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -557,7 +557,7 @@ describe("EmailReplyService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
 
       const allQuotedFields = {
@@ -681,7 +681,7 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Good to see you again!", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -722,7 +722,7 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -748,7 +748,7 @@ describe("EmailReplyService", () => {
       });
 
       // No GetCommand for prior metadata needed (latestSessionId is null — skip freshness check)
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -783,7 +783,7 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -813,7 +813,7 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -848,7 +848,7 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -901,7 +901,7 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});
@@ -923,7 +923,7 @@ describe("EmailReplyService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, budgetCents: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
       ddbMock.on(UpdateCommand).resolves({});
       mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
       mockEmailService.send.mockResolvedValue({});

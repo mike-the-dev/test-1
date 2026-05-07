@@ -774,9 +774,9 @@ describe("ChatSessionService", () => {
       expect(factOutputs).toHaveLength(1);
     });
 
-    it("passes a dynamic system context with budget when budget_cents is set on METADATA", async () => {
+    it("passes a dynamic system context with budget when onboarding_data.budgetCents is set on METADATA", async () => {
       ddbMock.on(GetCommand).resolves({
-        Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", budget_cents: 100_000 },
+        Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", onboarding_data: { budgetCents: 100_000 } },
       });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
@@ -790,7 +790,23 @@ describe("ChatSessionService", () => {
       expect(call[3]).toBe("User context: shopping budget is approximately $1000.");
     });
 
-    it("omits the dynamic system context when budget_cents is not set", async () => {
+    it("omits the dynamic system context when onboarding_data is not set", async () => {
+      ddbMock.on(QueryCommand).resolves({ Items: [] });
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      mockAnthropicService.sendMessage.mockResolvedValue(END_TURN_RESPONSE);
+
+      await service.handleMessage("01TESTSESSION0000000000000", "Hi");
+
+      const call = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(call[3]).toBeUndefined();
+    });
+
+    it("omits the dynamic system context when onboarding_data is present but has no budgetCents key", async () => {
+      ddbMock.on(GetCommand).resolves({
+        Item: { agent_name: "lead_capture", account_id: "A#01ACCOUNTULID00000000000000", onboarding_data: { industry: "healthcare" } },
+      });
       ddbMock.on(QueryCommand).resolves({ Items: [] });
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(UpdateCommand).resolves({});

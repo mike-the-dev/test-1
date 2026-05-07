@@ -1,3 +1,5 @@
+import { SplashConfig } from "./SplashConfig";
+
 export interface WebChatCreateSessionRequest {
   agentName: string;
   sessionId?: string;
@@ -14,7 +16,8 @@ export interface WebChatCreateSessionResponse {
   displayName: string;
   onboardingCompletedAt: string | null;
   kickoffCompletedAt: string | null;
-  budgetCents: number | null;
+  splash: SplashConfig | null;
+  onboardingData: Record<string, unknown> | null;
 }
 
 export interface WebChatToolOutput {
@@ -31,14 +34,14 @@ export interface WebChatSendMessageResponse {
 }
 
 export interface WebChatOnboardingRequest {
-  budgetCents: number;
+  onboardingData: Record<string, unknown>;
 }
 
 export interface WebChatOnboardingResponse {
   sessionId: string;
   onboardingCompletedAt: string;
   kickoffCompletedAt: string | null;
-  budgetCents: number;
+  onboardingData: Record<string, unknown>;
 }
 
 export interface WebChatHistoryMessage {
