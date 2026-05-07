@@ -77,6 +77,13 @@ export class CollectContactInfoTool implements ChatTool {
 
     const validated = parseResult.data;
 
+    // Object(input) safely coerces any value to an object so we can probe .phone without casting
+    if (Object(input).phone && validated.phone === undefined) {
+      this.logger.warn(
+        `[event=collect_contact_info_phone_normalization_failed sessionUlid=${context.sessionUlid}]`,
+      );
+    }
+
     const definedEntries = FIELD_ENTRIES.filter(([field]) => validated[field] !== undefined);
     const providedFields = definedEntries.map(([field]) => field);
 

@@ -34,6 +34,7 @@
     "@sendgrid/mail": "^8.1.6",
     "@sentry/nestjs": "10.50.0",
     "bullmq": "^5.76.2",
+    "libphonenumber-js": "^1.12.42",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "twilio": "^6.0.1",

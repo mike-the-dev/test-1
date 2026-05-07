@@ -36,6 +36,35 @@ At the end of a working session — or after shipping a meaningful milestone —
 
 ---
 
+## 2026-05-06 — E.164 phone normalization in `collect_contact_info`: cross-channel identity hole closed
+
+**Goal:** Normalize LLM-supplied phone numbers to canonical E.164 form before they reach DynamoDB or the customer GSI2 lookup key. Pre-fix, an LLM-collected phone like `(415) 555-1234` would be written raw to `USER_CONTACT_INFO` and to the customer record; on a later inbound SMS Twilio supplies the same number as `+14155551234`, so the GSI2 `PHONE#<phone>` lookup misses, a duplicate customer is created, and the cross-channel identity link breaks. The bug was deliberately deferred during the prior multi-tenant routing phase; closing it now finishes the lookup loop end-to-end.
+
+**What changed:**
+- New pure helper `src/utils/phone/normalizeToE164.ts` (~13 lines) wrapping `parsePhoneNumberFromString` from `libphonenumber-js/min` (~75 KB). Signature `(input: string, defaultRegion: CountryCode = "US") => string | null`. Trims, parses, returns the E.164 form or `null` on invalid input. Default region is hardcoded `"US"` per user direction — non-US support is a future concern.
+- `collectContactInfoInputSchema` in `src/validation/tool.schema.ts` gained a `.transform()` on the `phone` field. Single chokepoint: any value reaching `safeParse` is normalized to E.164 or dropped to `undefined`. Tool body, customer service, and GSI2 key construction all consume the normalized form by transitive guarantee.
+- `collect-contact-info.tool.ts` got one new behavior: when the raw input had a `phone` but the validated output dropped it, log `[event=collect_contact_info_phone_normalization_failed sessionUlid=...]` at warn level. The Zod transform can't access the logger (no DI inside schemas), so the detection lives in the tool body. Guard pattern is `Object(input).phone && validated.phone === undefined` — coerces any unknown value to an object so `.phone` access is safe without a TypeScript cast. One-line comment documents the pattern.
+- `customer.service.ts` got a 2-line contract comment above the `gsi2Fields` build site documenting that callers must supply phone in canonical E.164 form. No logic change — the service stays a dumb pass-through.
+- 7 helper unit tests + 6 new tool spec cases (16–21). Fixed one pre-existing test (case 10) whose fixture used an unparseable 7-digit number; updated to a valid 10-digit (`4155551234` → `+14155551234`).
+- Test suite: 680 / 44 suites / 0 failures (was 667 / 43 pre-phase, +13 tests).
+
+**Decisions worth remembering:**
+- **Normalization belongs in the Zod schema, not the tool body.** The schema is the contract; placing the transform there guarantees every consumer of `collectContactInfoInputSchema` gets normalized output without needing to remember to call the helper. Future tools or services that adopt the schema get the behavior for free.
+- **Unparseable phones are silently dropped, not errored.** The trio gate (firstName + lastName + email) is what unblocks customer linking — phone is only a secondary identifier. Returning `isError: true` would discard a valid name/email collected in the same call. The warn log gives ops a grep target if the LLM starts producing garbage at scale.
+- **Default region is hardcoded `"US"` in the helper signature, not threaded from per-account config.** Confirmed acceptable for current account base. When non-US accounts arrive, the helper signature already accepts an optional second argument; the schema/tool layer would need to thread an account-level region through.
+- **`customer.service.ts` stays a pass-through.** No normalization in the service. Putting it in the schema means there's only one place phone normalization can live, which prevents the hidden-coupling failure mode where service callers and schema callers normalize differently.
+- **Backfill of pre-existing un-normalized phones is out of scope.** Window of exposure is narrow: customer records only get a phone after the trio gate, which means firstName + lastName + email all had to be supplied in the same session before any LLM-collected phone reached a customer record. Historical exposure is small. A targeted DDB scan + update is the right mechanism if needed and belongs as a separate operational item.
+
+**Next:**
+- **No user-side prerequisites.** This phase is code-only. No env var changes, no account record changes, no DDB migration required for the fix to take effect on new sessions.
+- **Pre-existing follow-ups still queued:**
+  - Architecture diagrams (Mermaid in `docs/reference/architecture-diagrams.md`) — overdue. Two major phases have shipped since the original request (multi-tenant routing, then this).
+  - Per-agent onboarding configuration — splash/budget collection is forced on every agent today; needs to become agent-driven before non-commerce agents ship to prod.
+  - Attribution ecommerce-backend follow-up: `aiSessionId` is being emitted from this codebase but the e-commerce store side hasn't been extended to close the loop.
+  - SendGrid webhook signature verification (parity with Twilio).
+
+---
+
 ## 2026-05-06 — Multi-tenant channel routing: account-aware email + SMS, 6 single-tenant env vars deleted
 
 **Goal:** Replace all single-tenant routing env vars (`SENDGRID_REPLY_ACCOUNT_ID`, `SENDGRID_REPLY_DOMAIN`, `SENDGRID_FROM_EMAIL`, `SENDGRID_FROM_NAME`, `TWILIO_REPLY_ACCOUNT_ID`, `TWILIO_PHONE_NUMBER`) with dynamic per-account channel configuration sourced from the account record + new index records under each account's PK. After this phase, both email cold-entry (`assistant@<reply-domain>`) and SMS inbound work for any number of customer accounts concurrently — the architectural prerequisite for deploying SMS to more than one production tenant. It also retroactively unblocks email cold-entry, which was deployed but functionally unreachable in production because `SENDGRID_REPLY_ACCOUNT_ID` was never set.

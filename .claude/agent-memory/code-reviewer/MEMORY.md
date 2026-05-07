@@ -11,3 +11,4 @@
 - [check_active_cart tool review](project_check_active_cart_review.md) — Approved with SHOULD-FIX: line 91 wrong log event name (current vs prior metadata); prompt ordering tension in agent; no test for missing accountUlid path
 - [SMS channel phase review](project_sms_channel_review.md) — READY TO SHIP with should-fix: inline const annotation in sms.service.ts; dedupe sessionId never updated; trailing-slash risk in publicWebhookUrl construction
 - [Multi-tenant channel routing phase review](project_multi_tenant_channel_routing_review.md) — READY TO SHIP with should-fix: inline const annotation in channel-address.service.ts; deprovision hardcodes array[0]; dead UNRECOGNIZED enum value; missing bad-pk branch test
+- [E.164 phone normalization review](project_e164_normalization_review.md) — Must-fix: case 10 fixture ("555-0100") breaks under new transform; should-fix: Object(input).phone guard readability; all GSI2 paths confirmed safe

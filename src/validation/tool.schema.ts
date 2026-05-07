@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeToE164 } from "../utils/phone/normalizeToE164";
 
 export const saveUserFactInputSchema = z.object({
   key: z.string().min(1),
@@ -12,7 +13,11 @@ export const collectContactInfoInputSchema = z
     firstName: z.string().min(1).optional(),
     lastName: z.string().min(1).optional(),
     email: z.string().email().optional(),
-    phone: z.string().min(1).optional(),
+    phone: z
+      .string()
+      .min(1)
+      .optional()
+      .transform((value) => (value === undefined ? undefined : (normalizeToE164(value) ?? undefined))),
     company: z.string().min(1).optional(),
   })
   .refine(

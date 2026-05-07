@@ -342,12 +342,12 @@ describe("CollectContactInfoTool", () => {
         ddbMock.on(UpdateCommand).resolves({});
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
-          .resolves({ Item: makeContactInfoItem({ phone: "555-0100" }) });
+          .resolves({ Item: makeContactInfoItem({ phone: "+14155551234" }) });
         ddbMock
           .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
           .resolves({ Item: makeMetadataItem() });
 
-        const result = await tool.execute({ phone: "555-0100" }, TEST_CONTEXT);
+        const result = await tool.execute({ phone: "4155551234" }, TEST_CONTEXT);
 
         expect(result.isError).toBeUndefined();
         const parsed = JSON.parse(result.result);
@@ -478,6 +478,152 @@ describe("CollectContactInfoTool", () => {
           `C#${CUSTOMER_ULID}`,
         );
         expect(metadataUpdate!.args[0].input.UpdateExpression).toContain("if_not_exists(#customer_id");
+      });
+    });
+
+    describe("16 — phone: raw 10-digit US input is normalized to E.164 before DDB write", () => {
+      it("USER_CONTACT_INFO UpdateCommand ExpressionAttributeValues contains ':ph' as '+14155551234'", async () => {
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({ Item: makeContactInfoItem({ phone: "+14155551234" }) });
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        await tool.execute({ phone: "4155551234" }, TEST_CONTEXT);
+
+        const contactInfoUpdate = ddbMock.commandCalls(UpdateCommand).find(
+          (call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO",
+        );
+        expect(contactInfoUpdate).toBeDefined();
+        expect(contactInfoUpdate!.args[0].input.ExpressionAttributeValues?.[":ph"]).toBe("+14155551234");
+      });
+    });
+
+    describe("17 — phone: pretty-formatted US input is normalized to E.164 before DDB write", () => {
+      it("USER_CONTACT_INFO UpdateCommand ExpressionAttributeValues contains ':ph' as '+14155551234'", async () => {
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({ Item: makeContactInfoItem({ phone: "+14155551234" }) });
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        await tool.execute({ phone: "(415) 555-1234" }, TEST_CONTEXT);
+
+        const contactInfoUpdate = ddbMock.commandCalls(UpdateCommand).find(
+          (call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO",
+        );
+        expect(contactInfoUpdate).toBeDefined();
+        expect(contactInfoUpdate!.args[0].input.ExpressionAttributeValues?.[":ph"]).toBe("+14155551234");
+      });
+    });
+
+    describe("18 — phone: already-E.164 input passes through unchanged", () => {
+      it("USER_CONTACT_INFO UpdateCommand ExpressionAttributeValues contains ':ph' as '+14155551234'", async () => {
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({ Item: makeContactInfoItem({ phone: "+14155551234" }) });
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        await tool.execute({ phone: "+14155551234" }, TEST_CONTEXT);
+
+        const contactInfoUpdate = ddbMock.commandCalls(UpdateCommand).find(
+          (call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO",
+        );
+        expect(contactInfoUpdate).toBeDefined();
+        expect(contactInfoUpdate!.args[0].input.ExpressionAttributeValues?.[":ph"]).toBe("+14155551234");
+      });
+    });
+
+    describe("19 — phone: normalized E.164 value is passed to CustomerService when trio completes", () => {
+      it("CustomerService.lookupOrCreateCustomer called with phone: '+14155551234'", async () => {
+        mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
+          isError: false,
+          customerUlid: CUSTOMER_ULID,
+          created: false,
+        });
+
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({
+            Item: makeContactInfoItem({
+              email: "j@x.com",
+              first_name: "Jane",
+              last_name: "Doe",
+              phone: "+14155551234",
+            }),
+          });
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        await tool.execute(
+          { phone: "(415) 555-1234", firstName: "Jane", lastName: "Doe", email: "j@x.com" },
+          TEST_CONTEXT,
+        );
+
+        expect(mockCustomerService.lookupOrCreateCustomer).toHaveBeenCalledWith(
+          expect.objectContaining({ phone: "+14155551234" }),
+        );
+      });
+    });
+
+    describe("20 — phone: unparseable phone is silently dropped; save succeeds with remaining fields", () => {
+      it("returns { saved: true } without isError; USER_CONTACT_INFO UpdateCommand does NOT include ':ph'; CustomerService NOT called", async () => {
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({ Item: makeContactInfoItem({ first_name: "Jane" }) });
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        const result = await tool.execute({ phone: "not-a-phone", firstName: "Jane" }, TEST_CONTEXT);
+
+        expect(result.isError).toBeUndefined();
+        const parsed = JSON.parse(result.result);
+        expect(parsed.saved).toBe(true);
+
+        const contactInfoUpdate = ddbMock.commandCalls(UpdateCommand).find(
+          (call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO",
+        );
+        expect(contactInfoUpdate).toBeDefined();
+        expect(contactInfoUpdate!.args[0].input.ExpressionAttributeValues).not.toHaveProperty(":ph");
+
+        expect(mockCustomerService.lookupOrCreateCustomer).not.toHaveBeenCalled();
+      });
+    });
+
+    describe("21 — phone: unparseable phone dropped but trio already complete; CustomerService called with phone: null", () => {
+      it("CustomerService.lookupOrCreateCustomer is called with phone: null", async () => {
+        mockCustomerService.lookupOrCreateCustomer.mockResolvedValue({
+          isError: false,
+          customerUlid: CUSTOMER_ULID,
+          created: false,
+        });
+
+        ddbMock.on(UpdateCommand).resolves({});
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "USER_CONTACT_INFO" } })
+          .resolves({
+            Item: makeContactInfoItem({ email: "j@x.com", first_name: "Jane", last_name: "Doe" }),
+          });
+        ddbMock
+          .on(GetCommand, { Key: { PK: `CHAT_SESSION#${SESSION_ULID}`, SK: "METADATA" } })
+          .resolves({ Item: makeMetadataItem() });
+
+        await tool.execute({ phone: "not-a-phone", email: "j@x.com" }, TEST_CONTEXT);
+
+        expect(mockCustomerService.lookupOrCreateCustomer).toHaveBeenCalledWith(
+          expect.objectContaining({ phone: null }),
+        );
       });
     });
   });

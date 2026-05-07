@@ -176,6 +176,8 @@ export class CustomerService {
     const newCustomerUlid = ulid();
     const now = new Date().toISOString();
 
+    // Callers must supply phone in canonical E.164 form (e.g. "+14155551234").
+    // The sparse GSI2 index is keyed on this value; non-E.164 input will miss on Twilio-inbound lookups.
     // Write GSI2 keys only when phone is non-null so the sparse index captures SMS-originated customers.
     const gsi2Fields =
       input.phone !== null
