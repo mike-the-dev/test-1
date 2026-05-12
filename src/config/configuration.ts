@@ -56,6 +56,19 @@ const configuration = () => ({
   internalApiAuth: {
     key: process.env.KB_INTERNAL_API_KEY,
   },
+  emailDebounce: {
+    enabled: process.env.EMAIL_DEBOUNCE_ENABLED === "true",
+    windowSeconds: Number(process.env.EMAIL_DEBOUNCE_WINDOW_SECONDS ?? 90),
+  },
+  internalFlush: {
+    secret: process.env.INTERNAL_FLUSH_SECRET,
+    url: process.env.INTERNAL_FLUSH_URL ?? "",
+  },
+  scheduler: {
+    backend: process.env.SCHEDULER_BACKEND ?? "fake",
+    roleArn: process.env.SCHEDULER_ROLE_ARN ?? "",
+    apiDestinationArn: process.env.SCHEDULER_API_DESTINATION_ARN ?? "",
+  },
 });
 
 export default configuration;

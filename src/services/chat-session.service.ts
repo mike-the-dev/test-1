@@ -1,35 +1,17 @@
 import { Injectable, Inject, Logger } from "@nestjs/common";
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ulid } from "ulid";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
-import { AnthropicService } from "./anthropic.service";
 import { DatabaseConfigService } from "./database-config.service";
-import { ToolRegistryService } from "../tools/tool-registry.service";
-import { AgentRegistryService } from "../agents/agent-registry.service";
-import { ChatSessionContinuationProfile, ChatSessionMessageRecord, ChatSessionNewMessage } from "../types/ChatSession";
-import { ChatContentBlock, ChatToolResultContentBlock, ChatToolUseContentBlock } from "../types/ChatContent";
-import { WebChatHistoryMessage, WebChatToolOutput } from "../types/WebChat";
+import { ChatSessionMessageRecord } from "../types/ChatSession";
+import { ChatContentBlock } from "../types/ChatContent";
+import { WebChatHistoryMessage } from "../types/WebChat";
 
-const MAX_TOOL_LOOP_ITERATIONS = 10;
 const MAX_HISTORY_MESSAGES = 50;
-const PRIOR_HISTORY_MESSAGE_LIMIT = 20;
 const CHAT_SESSION_PK_PREFIX = "CHAT_SESSION#";
 const MESSAGE_SK_PREFIX = "MESSAGE#";
 const METADATA_SK = "METADATA";
-const DEFAULT_AGENT_NAME = "lead_capture";
-
-function buildContinuationContextBlock(profile: ChatSessionContinuationProfile): string {
-  const phone = profile.phone ?? "not provided";
-  return [
-    "The visitor you're talking to is a returning customer:",
-    `- Name: ${profile.firstName} ${profile.lastName}`,
-    `- Email: ${profile.email}`,
-    `- Phone: ${phone}`,
-    "",
-    "They were just verified. The conversation messages below begin with their prior session, then continue with today's session. Briefly acknowledge what you were working on together before answering their current question.",
-  ].join("\n");
-}
 
 // Shared convention between frontend and backend: the frontend auto-sends this
 // exact string as a user message after onboarding completes so the agent can
@@ -39,602 +21,72 @@ function buildContinuationContextBlock(profile: ChatSessionContinuationProfile):
 // string without a coordinated frontend update.
 const SESSION_KICKOFF_MARKER = "__SESSION_KICKOFF__";
 
-function buildUserTextMessage(text: string): ChatSessionNewMessage {
-  return { role: "user", content: [{ type: "text", text }] };
-}
-
-function buildAssistantMessage(content: ChatContentBlock[]): ChatSessionNewMessage {
-  return { role: "assistant", content };
-}
-
-function buildToolResultMessage(toolResultBlocks: ChatToolResultContentBlock[]): ChatSessionNewMessage {
-  return { role: "user", content: toolResultBlocks };
-}
-
-function buildToolResultBlock(toolUseId: string, content: string, isError?: boolean): ChatToolResultContentBlock {
-  if (isError) {
-    return { type: "tool_result", tool_use_id: toolUseId, content, is_error: true };
-  }
-
-  return { type: "tool_result", tool_use_id: toolUseId, content };
-}
-
 @Injectable()
 export class ChatSessionService {
   private readonly logger = new Logger(ChatSessionService.name);
 
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
-    private readonly anthropicService: AnthropicService,
     private readonly databaseConfig: DatabaseConfigService,
-    private readonly toolRegistry: ToolRegistryService,
-    private readonly agentRegistry: AgentRegistryService,
   ) {}
 
-  async handleMessage(
+  async appendUserMessage(
     sessionUlid: string,
-    userMessage: string,
-  ): Promise<{ reply: string; toolOutputs: WebChatToolOutput[] }> {
-    try {
-      const table = this.databaseConfig.conversationsTable;
-      const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
-
-      this.logger.debug(`Handling message [sessionUlid=${sessionUlid}]`);
-
-      const metadataResult = await this.dynamoDb.send(
-        new GetCommand({
-          TableName: table,
-          Key: { PK: sessionPk, SK: METADATA_SK },
-        }),
-      );
-
-      const rawAgentName: string | undefined = metadataResult.Item?.agent_name;
-      const storedAgentName = rawAgentName || DEFAULT_AGENT_NAME;
-      // Defensive compat — old records store bare ULID; new records store A#<ulid>;
-      // strip the prefix so all downstream code receives a bare ULID.
-      // Remove when old records cycle out.
-      const rawAccountId: string | undefined = metadataResult.Item?.account_id;
-      let accountUlid: string | undefined;
-
-      if (rawAccountId !== undefined) {
-        accountUlid = rawAccountId.startsWith("A#") ? rawAccountId.slice(2) : rawAccountId;
-      }
-
-      const onboardingData: Record<string, unknown> | undefined = metadataResult.Item?.onboarding_data;
-      const rawBudget = onboardingData?.budgetCents;
-      // Number(null) === 0, so null must be excluded explicitly — otherwise a missing budget would coerce to a $0 budget context.
-      const budgetCents =
-        rawBudget !== undefined && rawBudget !== null && !Number.isNaN(Number(rawBudget))
-          ? Number(rawBudget)
-          : undefined;
-      const customerId: string | null = metadataResult.Item?.customer_id ?? null;
-
-      const isKickoff = userMessage === SESSION_KICKOFF_MARKER;
-      const existingKickoffCompletedAt: string | undefined = metadataResult.Item?.kickoff_completed_at;
-
-      let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
-
-      if (resolvedAgent === null) {
-        this.logger.warn(`Agent not found, falling back to default [sessionUlid=${sessionUlid} agentName=${storedAgentName}]`);
-
-        resolvedAgent = this.agentRegistry.getByName(DEFAULT_AGENT_NAME);
-      }
-
-      if (resolvedAgent === null) {
-        throw new Error("AgentRegistryService has no lead_capture agent registered. This is a misconfiguration.");
-      }
-
-      const agent = resolvedAgent;
-
-      const allDefinitions = this.toolRegistry.getDefinitions();
-
-      const filteredDefinitions = allDefinitions.filter((def) => {
-        return agent.allowedToolNames.includes(def.name);
-      });
-
-      this.logger.log(`Agent resolved [sessionUlid=${sessionUlid} agentName=${agent.name} toolCount=${filteredDefinitions.length}]`);
-
-      if (isKickoff && existingKickoffCompletedAt) {
-        const replayItems = (await this.dynamoDb.send(
-          new QueryCommand({
-            TableName: table,
-            KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
-            ExpressionAttributeValues: { ":pk": sessionPk, ":skPrefix": MESSAGE_SK_PREFIX },
-            ScanIndexForward: true,
-          }),
-        )).Items ?? [];
-
-        const kickoffUserIndex = replayItems.findIndex((messageItem) => {
-          if (messageItem.role !== "user") return false;
-          try {
-            const blocks: ChatContentBlock[] = JSON.parse(messageItem.content);
-            return blocks.some((block) => block.type === "text" && block.text === SESSION_KICKOFF_MARKER);
-          } catch {
-            return messageItem.content === SESSION_KICKOFF_MARKER;
-          }
-        });
-
-        const storedWelcome = kickoffUserIndex !== -1
-          ? replayItems.slice(kickoffUserIndex + 1).find((messageItem) => messageItem.role === "assistant")
-          : undefined;
-
-        if (!storedWelcome) {
-          this.logger.warn(
-            `Kickoff replay found no stored welcome [sessionUlid=${sessionUlid}]`,
-          );
-          return { reply: "", toolOutputs: [] };
-        }
-
-        let welcomeBlocks: ChatContentBlock[];
-        try {
-          welcomeBlocks = JSON.parse(storedWelcome.content);
-        } catch {
-          welcomeBlocks = [{ type: "text", text: storedWelcome.content }];
-        }
-
-        const replayTextParts: string[] = [];
-
-        for (const block of welcomeBlocks) {
-          if (block.type === "text" && block.text) {
-            replayTextParts.push(block.text);
-          }
-        }
-
-        const replayText = replayTextParts.join("\n\n").trim();
-
-        this.logger.debug(
-          `Kickoff replay served from history [sessionUlid=${sessionUlid} kickoffCompletedAt=${existingKickoffCompletedAt}]`,
-        );
-
-        return { reply: replayText, toolOutputs: [] };
-      }
-
-      const historyResult = await this.dynamoDb.send(
-        new QueryCommand({
-          TableName: table,
-          KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
-          ExpressionAttributeValues: {
-            ":pk": sessionPk,
-            ":skPrefix": MESSAGE_SK_PREFIX,
-          },
-          ScanIndexForward: false,
-          Limit: MAX_HISTORY_MESSAGES,
-        }),
-      );
-
-      const items = historyResult.Items ?? [];
-
-      this.logger.debug(`Loaded history [sessionUlid=${sessionUlid} count=${items.length}]`);
-
-      const reversedItems = [...items].reverse();
-
-      const history = reversedItems.map((item): ChatSessionNewMessage => {
-        const rawContent = item.content;
-        const role = item.role;
-
-        try {
-          const parsed: ChatContentBlock[] = JSON.parse(rawContent);
-          return { role, content: parsed };
-        } catch {
-          this.logger.debug(`Legacy plain-string content detected [sessionUlid=${sessionUlid}]`);
-          return { role, content: [{ type: "text", text: rawContent }] };
-        }
-      });
-
-      const newUserMessage = buildUserTextMessage(userMessage);
-
-      const messages = [...history, newUserMessage];
-
-      const newMessages = [newUserMessage];
-
-      // Build the base budget context string (lifted out of the while loop so the
-      // prior-history loader can extend it before the first Anthropic call).
-      const budgetContext =
-        budgetCents !== undefined && budgetCents !== null
-          ? `User context: shopping budget is approximately $${Math.floor(budgetCents / 100)}.`
-          : undefined;
-
-      let dynamicSystemContext = budgetContext;
-
-      // Prior-history loader — fires AT MOST ONCE per session.
-      // Gate: continuation_from_session_id is non-null AND continuation_loaded_at is null.
-      // Both must hold. Verified sessions where the loader has already fired are short-circuited.
-      const continuationFromSessionId: string | null =
-        metadataResult.Item?.continuation_from_session_id ?? null;
-      const continuationLoadedAt: string | null =
-        metadataResult.Item?.continuation_loaded_at ?? null;
-
-      const shouldLoadContinuation =
-        continuationFromSessionId !== null && continuationLoadedAt === null;
-
-      if (shouldLoadContinuation) {
-        try {
-          // Defensive compat — old records store bare ULID; new records store CHAT_SESSION#<ulid>;
-          // guard against double-prefix if value is already prefixed.
-          // Remove when old records cycle out.
-          const priorSessionPk = continuationFromSessionId!.startsWith(CHAT_SESSION_PK_PREFIX)
-            ? continuationFromSessionId!
-            : `${CHAT_SESSION_PK_PREFIX}${continuationFromSessionId}`;
-
-          // customerId is guaranteed non-null here: continuation_from_session_id is only set
-          // by verify_code on success, which also sets customer_id atomically in Write A.
-          const rawCustomerId = customerId ?? "";
-          const customerKey = rawCustomerId.startsWith("C#") ? rawCustomerId : `C#${rawCustomerId}`;
-
-          // Issue both DDB reads in parallel — they are independent.
-          const [customerResult, priorHistoryResult] = await Promise.all([
-            this.dynamoDb.send(
-              new GetCommand({
-                TableName: table,
-                Key: { PK: customerKey, SK: customerKey },
-              }),
-            ),
-            this.dynamoDb.send(
-              new QueryCommand({
-                TableName: table,
-                KeyConditionExpression: "PK = :pk AND begins_with(SK, :skPrefix)",
-                ExpressionAttributeValues: {
-                  ":pk": priorSessionPk,
-                  ":skPrefix": MESSAGE_SK_PREFIX,
-                },
-                ScanIndexForward: false,
-                Limit: PRIOR_HISTORY_MESSAGE_LIMIT,
-              }),
-            ),
-          ]);
-
-          if (!customerResult.Item) {
-            this.logger.warn(
-              `[event=continuation_loader_customer_not_found sessionUlid=${sessionUlid}]`,
-            );
-          }
-
-          if (customerResult.Item) {
-            const customerProfile = customerResult.Item;
-
-            // Reverse prior messages from descending to chronological order (oldest first).
-            const priorItems = priorHistoryResult.Items ?? [];
-            const priorItemsChronological = [...priorItems].reverse();
-
-            const priorMessagesChronological = priorItemsChronological.map((item): ChatSessionNewMessage => {
-              const rawContent = item.content;
-              const role = item.role;
-              try {
-                const parsed: ChatContentBlock[] = JSON.parse(rawContent);
-                return { role, content: parsed };
-              } catch {
-                return { role, content: [{ type: "text", text: rawContent }] };
-              }
-            });
-
-            // Prepend prior session turns to the messages array:
-            // [prior_turn_1, ..., prior_turn_N, currentHistory_turn_1, ..., newUserMessage]
-            // Two parallel turns may both run the loader — they both splice their local
-            // messages array (no shared state). The if_not_exists on continuation_loaded_at
-            // ensures only the first writer's timestamp is persisted.
-            messages.unshift(...priorMessagesChronological);
-
-            // Build the dynamic context string combining visitor profile and framing.
-            const continuationContextBlock = buildContinuationContextBlock({
-              firstName: String(customerProfile.first_name ?? ""),
-              lastName: String(customerProfile.last_name ?? ""),
-              email: String(customerProfile.email ?? ""),
-              phone: customerProfile.phone != null ? String(customerProfile.phone) : null,
-            });
-
-            dynamicSystemContext = budgetContext
-              ? `${budgetContext}\n\n${continuationContextBlock}`
-              : continuationContextBlock;
-
-            this.logger.log(
-              `[event=continuation_loaded sessionUlid=${sessionUlid} priorCount=${priorMessagesChronological.length}]`,
-            );
-
-            // Stamp continuation_loaded_at with if_not_exists to handle races between parallel turns.
-            // Best-effort: failure here is non-fatal — worst case the loader fires again next turn
-            // (idempotent in effect) but continuation_loaded_at not being set means it could re-run.
-            const loaderTimestamp = new Date().toISOString();
-            try {
-              await this.dynamoDb.send(
-                new UpdateCommand({
-                  TableName: table,
-                  Key: { PK: sessionPk, SK: METADATA_SK },
-                  UpdateExpression:
-                    "SET continuation_loaded_at = if_not_exists(continuation_loaded_at, :now), #lastUpdated = :now",
-                  ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-                  ExpressionAttributeValues: { ":now": loaderTimestamp },
-                }),
-              );
-            } catch (flagError: unknown) {
-              const errorName = flagError instanceof Error ? flagError.name : "UnknownError";
-              this.logger.warn(
-                `[event=continuation_flag_write_failed errorType=${errorName} sessionUlid=${sessionUlid}]`,
-              );
-            }
-          }
-        } catch (loaderError: unknown) {
-          const errorName = loaderError instanceof Error ? loaderError.name : "UnknownError";
-          this.logger.warn(
-            `[event=continuation_load_failed errorType=${errorName} sessionUlid=${sessionUlid}]`,
-          );
-          // Non-fatal: messages and dynamicSystemContext stay at their pre-loader state.
-          // continuation_loaded_at is NOT set — the loader will retry on the next turn.
-        }
-      }
-
-      let iteration = 0;
-
-      while (iteration < MAX_TOOL_LOOP_ITERATIONS) {
-        iteration++;
-
-        this.logger.log(
-          `Calling Anthropic [sessionUlid=${sessionUlid} iteration=${iteration} historySize=${messages.length}]`,
-        );
-
-        const response = await this.anthropicService.sendMessage(
-          [...messages],
-          filteredDefinitions,
-          agent.systemPrompt,
-          dynamicSystemContext,
-        );
-
-        const assistantMessage = buildAssistantMessage(response.content);
-
-        messages.push(assistantMessage);
-        newMessages.push(assistantMessage);
-
-        if (response.stop_reason === "end_turn") {
-          this.logger.log(`Tool loop complete [sessionUlid=${sessionUlid} iterations=${iteration}]`);
-          break;
-        }
-
-        if (response.stop_reason !== "tool_use") {
-          this.logger.warn(`Unexpected stop_reason [sessionUlid=${sessionUlid} stop_reason=${response.stop_reason}]`);
-          break;
-        }
-
-        const toolUseBlocks: ChatToolUseContentBlock[] = [];
-
-        for (const block of response.content) {
-          if (block.type === "tool_use") {
-            toolUseBlocks.push(block);
-          }
-        }
-
-        this.logger.log(`Tool use detected [sessionUlid=${sessionUlid} count=${toolUseBlocks.length}]`);
-
-        const toolResultBlocks = await Promise.all(
-          toolUseBlocks.map(async (block) => {
-            if (!agent.allowedToolNames.includes(block.name)) {
-              this.logger.warn(`Tool not in agent allowlist [sessionUlid=${sessionUlid} agentName=${agent.name} toolName=${block.name}]`);
-
-              return buildToolResultBlock(block.id, `Tool not available for this agent: ${block.name}`, true);
-            }
-
-            const executionResult = await this.toolRegistry.execute(block.name, block.input, { sessionUlid, accountUlid });
-
-            return buildToolResultBlock(block.id, executionResult.result, executionResult.isError);
-          }),
-        );
-
-        const toolResultMessage = buildToolResultMessage(toolResultBlocks);
-
-        messages.push(toolResultMessage);
-        newMessages.push(toolResultMessage);
-      }
-
-      if (iteration >= MAX_TOOL_LOOP_ITERATIONS) {
-        this.logger.warn(`Tool loop max iterations reached [sessionUlid=${sessionUlid}]`);
-      }
-
-      const now = new Date().toISOString();
-
-      for (const message of newMessages) {
-        await this.dynamoDb.send(
-          new PutCommand({
-            TableName: table,
-            Item: {
-              PK: sessionPk,
-              SK: `${MESSAGE_SK_PREFIX}${ulid()}`,
-              role: message.role,
-              content: JSON.stringify(message.content),
-              _createdAt_: now,
-            } satisfies ChatSessionMessageRecord,
-          }),
-        );
-      }
-
+    channel: "web" | "sms" | "email",
+    text: string,
+    emailContext?: { messageId: string; subject: string; replyDomain: string; fromName: string },
+  ): Promise<void> {
+    const table = this.databaseConfig.conversationsTable;
+    const sessionPk = `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`;
+    const now = new Date().toISOString();
+
+    await this.dynamoDb.send(
+      new PutCommand({
+        TableName: table,
+        Item: {
+          PK: sessionPk,
+          SK: `${MESSAGE_SK_PREFIX}${ulid()}`,
+          role: "user",
+          content: JSON.stringify([{ type: "text", text }]),
+          channel,
+          _createdAt_: now,
+        } satisfies ChatSessionMessageRecord,
+      }),
+    );
+
+    if (emailContext) {
       await this.dynamoDb.send(
         new UpdateCommand({
           TableName: table,
           Key: { PK: sessionPk, SK: METADATA_SK },
-          UpdateExpression: "SET #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now",
-          ExpressionAttributeNames: { "#createdAt": "_createdAt_", "#lastUpdated": "_lastUpdated_" },
-          ExpressionAttributeValues: { ":now": now },
+          UpdateExpression:
+            "SET #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now, last_inbound_email_message_id = :mid, last_inbound_email_subject = :sub, reply_domain = :rd, from_name = :fn",
+          ExpressionAttributeNames: {
+            "#createdAt": "_createdAt_",
+            "#lastUpdated": "_lastUpdated_",
+          },
+          ExpressionAttributeValues: {
+            ":now": now,
+            ":mid": emailContext.messageId,
+            ":sub": emailContext.subject,
+            ":rd": emailContext.replyDomain,
+            ":fn": emailContext.fromName,
+          },
         }),
       );
 
-      if (isKickoff) {
-        try {
-          await this.dynamoDb.send(
-            new UpdateCommand({
-              TableName: table,
-              Key: { PK: sessionPk, SK: METADATA_SK },
-              UpdateExpression: "SET kickoff_completed_at = if_not_exists(kickoff_completed_at, :now)",
-              ExpressionAttributeValues: { ":now": now },
-            }),
-          );
-        } catch (stampError) {
-          const errorName = stampError instanceof Error ? stampError.name : "UnknownError";
-          this.logger.warn(
-            `Failed to stamp kickoff_completed_at [errorType=${errorName} sessionUlid=${sessionUlid}]`,
-          );
-        }
-      }
-
-      // Also update _lastUpdated_ on the account-scoped session pointer so
-      // per-account "sessions sorted by recency" queries stay accurate. The
-      // condition guards against creating a partial pointer for legacy
-      // sessions that never got one; if the pointer does not exist, this
-      // quietly no-ops. Best-effort: pointer-sync failures do not break
-      // message handling.
-      if (accountUlid) {
-        try {
-          await this.dynamoDb.send(
-            new UpdateCommand({
-              TableName: table,
-              Key: { PK: `A#${accountUlid}`, SK: sessionPk },
-              UpdateExpression: "SET #lastUpdated = :now",
-              ConditionExpression: "attribute_exists(PK)",
-              ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-              ExpressionAttributeValues: { ":now": now },
-            }),
-          );
-        } catch (pointerError) {
-          const errorName = pointerError instanceof Error ? pointerError.name : "UnknownError";
-
-          if (errorName !== "ConditionalCheckFailedException") {
-            this.logger.warn(
-              `Session pointer lastMessageAt update failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
-            );
-          }
-        }
-      }
-
-      // Best-effort: latest_session_id update — fires only when this session is linked
-      // to a known customer. Guards at the call site so unverified sessions pay zero
-      // DDB cost. Failure is non-propagating.
-      if (customerId !== null) {
-        try {
-          const customerKey = customerId.startsWith("C#") ? customerId : `C#${customerId}`;
-          await this.dynamoDb.send(
-            new UpdateCommand({
-              TableName: table,
-              Key: { PK: customerKey, SK: customerKey },
-              UpdateExpression: "SET latest_session_id = :sessionUlid, #lastUpdated = :now",
-              ConditionExpression: "attribute_exists(PK)",
-              ExpressionAttributeNames: { "#lastUpdated": "_lastUpdated_" },
-              ExpressionAttributeValues: { ":sessionUlid": `${CHAT_SESSION_PK_PREFIX}${sessionUlid}`, ":now": now },
-            }),
-          );
-        } catch (latestSessionError) {
-          const errorName = latestSessionError instanceof Error ? latestSessionError.name : "UnknownError";
-          if (errorName !== "ConditionalCheckFailedException") {
-            this.logger.warn(
-              `latest_session_id update failed [errorType=${errorName} sessionUlid=${sessionUlid}]`,
-            );
-          }
-        }
-      }
-
-      this.logger.log(`Stored messages [sessionUlid=${sessionUlid} count=${newMessages.length}]`);
-
-      // Concatenate text from every assistant message emitted during this turn.
-      // Handles the case where Claude speaks text alongside an inline tool_use in an
-      // earlier iteration and then returns an empty end_turn message after the tool
-      // result — the text belongs to the user-facing reply even though it is not in
-      // the final assistant message.
-      const assistantMessagesThisTurn = newMessages.filter((message) => message.role === "assistant");
-
-      const textParts: string[] = [];
-
-      for (const assistantMessage of assistantMessagesThisTurn) {
-        for (const block of assistantMessage.content) {
-          if (block.type === "text" && block.text) {
-            textParts.push(block.text);
-          }
-        }
-      }
-
-      const finalText = textParts.join("\n\n").trim();
-
-      if (!finalText) {
-        this.logger.warn(`No text blocks across any assistant messages this turn [sessionUlid=${sessionUlid}]`);
-      }
-
-      // Collect structured tool outputs from this turn so the frontend can
-      // render typed components (cart card, etc.) keyed by tool name. Agent-
-      // agnostic: every tool result flows through; renderers live frontend-side
-      // and ignore tools they don't know.
-      const toolUseNamesById = new Map<string, string>();
-
-      for (const assistantMessage of assistantMessagesThisTurn) {
-        for (const block of assistantMessage.content) {
-          if (block.type === "tool_use") {
-            toolUseNamesById.set(block.id, block.name);
-          }
-        }
-      }
-
-      const collected: WebChatToolOutput[] = [];
-
-      for (const message of newMessages) {
-        if (message.role !== "user") {
-          continue;
-        }
-
-        for (const block of message.content) {
-          if (block.type !== "tool_result") {
-            continue;
-          }
-
-          const toolName = toolUseNamesById.get(block.tool_use_id);
-
-          if (!toolName) {
-            continue;
-          }
-
-          if (typeof block.content !== "string") {
-            continue;
-          }
-
-          collected.push({
-            call_id: block.tool_use_id,
-            tool_name: toolName,
-            content: block.content,
-            ...(block.is_error === true ? { is_error: true } : {}),
-          });
-        }
-      }
-
-      // Dedupe "latest-only" tools: if a tool's result describes mutable state
-      // (e.g., preview_cart replaces the cart record — earlier previews in the
-      // same turn describe data that no longer exists), keep only the final
-      // entry per tool_name. Other tools emit-all (e.g., save_user_fact called
-      // twice in parallel produces two legitimate events).
-      const latestOnlyNames = new Set(
-        this.toolRegistry
-          .getAll()
-          .filter((tool) => tool.emitLatestOnly === true)
-          .map((tool) => tool.name),
-      );
-
-      const toolOutputs: WebChatToolOutput[] =
-        latestOnlyNames.size === 0
-          ? collected
-          : (() => {
-              const lastIndexByName = new Map<string, number>();
-
-              collected.forEach((output, index) => {
-                if (latestOnlyNames.has(output.tool_name)) {
-                  lastIndexByName.set(output.tool_name, index);
-                }
-              });
-
-              return collected.filter((output, index) => {
-                if (!latestOnlyNames.has(output.tool_name)) {
-                  return true;
-                }
-
-                return lastIndexByName.get(output.tool_name) === index;
-              });
-            })();
-
-      return { reply: finalText, toolOutputs };
-    } catch (error) {
-      this.logger.error(`Failed to handle message [sessionUlid=${sessionUlid}]`, error);
-      throw error;
+      return;
     }
+
+    await this.dynamoDb.send(
+      new UpdateCommand({
+        TableName: table,
+        Key: { PK: sessionPk, SK: METADATA_SK },
+        UpdateExpression: "SET #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now",
+        ExpressionAttributeNames: { "#createdAt": "_createdAt_", "#lastUpdated": "_lastUpdated_" },
+        ExpressionAttributeValues: { ":now": now },
+      }),
+    );
   }
 
   async getHistoryForClient(sessionUlid: string): Promise<WebChatHistoryMessage[]> {

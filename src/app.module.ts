@@ -58,6 +58,14 @@ import { SlackAlertService } from "./services/slack-alert.service";
 import { InternalApiAuthConfigService } from "./services/internal-api-auth-config.service";
 import { InternalApiKeyGuard } from "./guards/internal-api-key.guard";
 import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
+import { EmailDebounceConfigService } from "./services/email-debounce-config.service";
+import { InternalFlushConfigService } from "./services/internal-flush-config.service";
+import { SchedulerConfigService } from "./services/scheduler-config.service";
+import { SchedulerService, SCHEDULER_SERVICE } from "./services/scheduler.service";
+import { SchedulerFakeService } from "./services/scheduler-fake.service";
+import { ReplyOrchestratorService } from "./services/reply-orchestrator.service";
+import { InternalAuthGuard } from "./guards/internal-auth.guard";
+import { InternalEmailFlushController } from "./controllers/internal-email-flush.controller";
 
 @Module({
   imports: [
@@ -86,7 +94,7 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
       name: KB_INGESTION_QUEUE_NAME,
     }),
   ],
-  controllers: [AppController, SendgridWebhookController, TwilioWebhookController, WebChatController, KnowledgeBaseController],
+  controllers: [AppController, SendgridWebhookController, TwilioWebhookController, WebChatController, KnowledgeBaseController, InternalEmailFlushController],
   providers: [
     {
       provide: APP_FILTER,
@@ -136,6 +144,24 @@ import { VoyageDimGuardService } from "./services/voyage-dim-guard.service";
     KnowledgeBaseEnrichmentService,
     KnowledgeBaseIngestionService,
     KnowledgeBaseIngestionProcessor,
+    EmailDebounceConfigService,
+    InternalFlushConfigService,
+    SchedulerConfigService,
+    SchedulerService,
+    SchedulerFakeService,
+    {
+      provide: SCHEDULER_SERVICE,
+      inject: [SchedulerConfigService, SchedulerService, SchedulerFakeService],
+      useFactory: (
+        schedulerConfig: SchedulerConfigService,
+        real: SchedulerService,
+        fake: SchedulerFakeService,
+      ) => {
+        return schedulerConfig.backend === "real" ? real : fake;
+      },
+    },
+    ReplyOrchestratorService,
+    InternalAuthGuard,
   ],
 })
 export class AppModule {}

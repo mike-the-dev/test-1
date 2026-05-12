@@ -50,6 +50,7 @@ export interface ChatSessionMessageRecord {
   role: ChatSessionRole;
   content: string;
   _createdAt_: string;
+  channel?: "web" | "sms" | "email";
 }
 
 export interface ChatSessionMetadataRecord {
@@ -61,11 +62,12 @@ export interface ChatSessionMetadataRecord {
   agent_name?: string;
   account_id?: string; // stored as "A#<accountUlid>"
   onboarding_completed_at?: string;
-  // Stamped by ChatSessionService.handleMessage the first time the session's
-  // kickoff marker message commits successfully. Read by the web-chat controller
-  // and SessionService.updateOnboarding to expose kickoffCompletedAt on the wire
-  // so the frontend can decide whether to dispatch the kickoff auto-greeting.
-  // Set via UpdateCommand with if_not_exists so it is write-once — never clobbered.
+  // Stamped by ReplyOrchestratorService.generateAndSendReply the first time the
+  // session's kickoff marker message commits successfully. Read by the web-chat
+  // controller and SessionService.updateOnboarding to expose kickoffCompletedAt
+  // on the wire so the frontend can decide whether to dispatch the kickoff
+  // auto-greeting. Set via UpdateCommand with if_not_exists so it is write-once
+  // — never clobbered.
   kickoff_completed_at?: string;
   onboarding_data?: Record<string, unknown>;
   // Cart state — set by preview_cart on first call in the session, reused on
@@ -85,6 +87,16 @@ export interface ChatSessionMetadataRecord {
   // Absent on creation — set by the continuation loader on first fire.
   continuation_loaded_at?: string | null;
   customer_email?: string;
+  // Stamped on every inbound email; read by ReplyOrchestratorService at flush time
+  // to set In-Reply-To / References threading headers on outbound email reply.
+  last_inbound_email_message_id?: string;
+  last_inbound_email_subject?: string;
+  // Stamped on every inbound email alongside the threading fields; read by
+  // ReplyOrchestratorService at flush time to set the outbound From address and
+  // display name. Both come from the account's channels.email config at webhook
+  // time and are persisted so they survive the debounce window.
+  reply_domain?: string;
+  from_name?: string;
 }
 
 /**

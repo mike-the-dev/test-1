@@ -7,11 +7,11 @@ import { SmsReplyService } from "./sms-reply.service";
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
 import { TwilioConfigService } from "./twilio-config.service";
-import { SmsService } from "./sms.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
 import { ChannelAddressService } from "./channel-address.service";
+import { ReplyOrchestratorService } from "./reply-orchestrator.service";
 
 const TABLE_NAME = "test-conversations-table";
 const ACCOUNT_ID = "01BXACCNTACCT0000000000000";
@@ -32,12 +32,14 @@ const VALID_FORM_FIELDS = {
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
 const mockTwilioConfig = { authToken: "", accountSid: "", publicWebhookUrl: "" };
-const mockSmsService = { send: jest.fn() };
-const mockChatSessionService = { handleMessage: jest.fn() };
+
+const mockChatSessionService = { appendUserMessage: jest.fn() };
 const mockCustomerService = { queryCustomerIdByPhone: jest.fn() };
 const mockSessionService = { lookupOrCreateSession: jest.fn() };
+const mockReplyOrchestratorService = {
+  generateAndSendReply: jest.fn(),
+};
 
-// mutable so tests can override the return value
 const mockChannelAddressService = {
   getAccountByChannelAddress: jest.fn(),
 };
@@ -50,8 +52,13 @@ describe("SmsReplyService", () => {
     ddbMock.reset();
     jest.clearAllMocks();
 
-    // Default: channel address resolves to ACCOUNT_ID
     mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue({ accountId: ACCOUNT_ID });
+    mockChatSessionService.appendUserMessage.mockResolvedValue(undefined);
+    mockReplyOrchestratorService.generateAndSendReply.mockResolvedValue({
+      outcome: "replied",
+      reply: "Welcome!",
+      toolOutputs: [],
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -62,16 +69,20 @@ describe("SmsReplyService", () => {
         },
         { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
         { provide: TwilioConfigService, useValue: mockTwilioConfig },
-        { provide: SmsService, useValue: mockSmsService },
         { provide: ChatSessionService, useValue: mockChatSessionService },
         { provide: CustomerService, useValue: mockCustomerService },
         { provide: SessionService, useValue: mockSessionService },
         { provide: ChannelAddressService, useValue: mockChannelAddressService },
+        { provide: ReplyOrchestratorService, useValue: mockReplyOrchestratorService },
       ],
     }).compile();
 
     service = module.get<SmsReplyService>(SmsReplyService);
   });
+
+  // ---------------------------------------------------------------------------
+  // Guard / rejection cases
+  // ---------------------------------------------------------------------------
 
   it("returns rejected_unknown_account when channel address lookup returns null", async () => {
     mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue(null);
@@ -80,7 +91,7 @@ describe("SmsReplyService", () => {
 
     expect(result).toBe("rejected_unknown_account");
     expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
-    expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+    expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
   });
 
   it("queries channel address service with TWILIO_NUMBER type and the inbound To number", async () => {
@@ -112,7 +123,7 @@ describe("SmsReplyService", () => {
     expect(ddbMock.commandCalls(PutCommand)).toHaveLength(0);
   });
 
-  it("returns duplicate on ConditionalCheckFailedException and does not call handleMessage", async () => {
+  it("returns duplicate on ConditionalCheckFailedException and does not call appendUserMessage", async () => {
     const conditionalError = Object.assign(new Error("Conditional check failed"), {
       name: "ConditionalCheckFailedException",
     });
@@ -121,11 +132,15 @@ describe("SmsReplyService", () => {
     const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
     expect(result).toBe("duplicate");
-    expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+    expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
   });
 
+  // ---------------------------------------------------------------------------
+  // Case 2 — cold entry (phone unknown to account)
+  // ---------------------------------------------------------------------------
+
   describe("Case 2 — cold entry (phone unknown to account)", () => {
-    it("mints new session, stamps phone with if_not_exists, calls handleMessage, sends SMS with from=formFields.To, returns processed", async () => {
+    it("mints new session, stamps phone with if_not_exists, calls appendUserMessage with sms channel, calls generateAndSendReply, returns processed", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByPhone.mockResolvedValue(null);
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
@@ -136,20 +151,21 @@ describe("SmsReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
-      mockSmsService.send.mockResolvedValue({ messageSid: "SMout1" });
 
       const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
       expect(result).toBe("processed");
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("sms", null, "lead_capture", ACCOUNT_ID);
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, VALID_FORM_FIELDS.Body);
-      expect(mockSmsService.send).toHaveBeenCalledWith({
-        to: SENDER_PHONE,
-        from: INBOUND_TO_NUMBER,
-        body: "Welcome!",
-        sessionUlid: NEW_SESSION_ULID,
-      });
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "sms",
+        VALID_FORM_FIELDS.Body,
+      );
+      expect(mockReplyOrchestratorService.generateAndSendReply).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "sms",
+        { sms: { to: SENDER_PHONE, from: INBOUND_TO_NUMBER } },
+      );
 
       // USER_CONTACT_INFO update must use if_not_exists
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
@@ -170,10 +186,33 @@ describe("SmsReplyService", () => {
         `CHAT_SESSION#${NEW_SESSION_ULID}`,
       );
     });
+
+    it("appendUserMessage is called with no emailContext argument for sms channel", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      mockCustomerService.queryCustomerIdByPhone.mockResolvedValue(null);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.processInboundMessage(VALID_FORM_FIELDS);
+
+      // Only 3 positional args — no emailContext
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "sms",
+        VALID_FORM_FIELDS.Body,
+      );
+      expect(mockChatSessionService.appendUserMessage.mock.calls[0]).toHaveLength(3);
+    });
   });
 
+  // ---------------------------------------------------------------------------
+  // Case 3 fresh — known sender, recent session
+  // ---------------------------------------------------------------------------
+
   describe("Case 3 fresh — known sender, recent session", () => {
-    it("attaches to existing session, stamps phone with if_not_exists, calls handleMessage, sends with from=formFields.To, returns processed", async () => {
+    it("attaches to existing session, stamps phone with if_not_exists, calls appendUserMessage, calls generateAndSendReply with sms context", async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
       ddbMock.on(PutCommand).resolves({});
@@ -183,17 +222,21 @@ describe("SmsReplyService", () => {
       });
       ddbMock.on(GetCommand).resolvesOnce({ Item: { _lastUpdated_: twoHoursAgo } });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome back!", toolOutputs: [] });
-      mockSmsService.send.mockResolvedValue({ messageSid: "SMout2" });
 
       const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
       expect(result).toBe("processed");
       // Existing session must be used — no new session created
       expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, VALID_FORM_FIELDS.Body);
-      expect(mockSmsService.send).toHaveBeenCalledWith(
-        expect.objectContaining({ from: INBOUND_TO_NUMBER }),
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        PRIOR_SESSION_ULID,
+        "sms",
+        VALID_FORM_FIELDS.Body,
+      );
+      expect(mockReplyOrchestratorService.generateAndSendReply).toHaveBeenCalledWith(
+        PRIOR_SESSION_ULID,
+        "sms",
+        { sms: { to: SENDER_PHONE, from: INBOUND_TO_NUMBER } },
       );
 
       // USER_CONTACT_INFO update must use if_not_exists
@@ -217,10 +260,14 @@ describe("SmsReplyService", () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Case 3 stale — known sender, old session
+  // ---------------------------------------------------------------------------
+
   describe("Case 3 stale — known sender, old session", () => {
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
 
-    it("creates new linked session with customer_id and continuation_from_session_id but NOT continuation_loaded_at", async () => {
+    it("creates new linked session with customer_id and continuation_from_session_id, calls appendUserMessage, calls generateAndSendReply", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByPhone.mockResolvedValue({
         customerUlid: CUSTOMER_ULID,
@@ -235,16 +282,20 @@ describe("SmsReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Good to see you again!", toolOutputs: [] });
-      mockSmsService.send.mockResolvedValue({ messageSid: "SMout3" });
 
       const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
       expect(result).toBe("processed");
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("sms", null, "lead_capture", ACCOUNT_ID);
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, VALID_FORM_FIELDS.Body);
-      expect(mockSmsService.send).toHaveBeenCalledWith(
-        expect.objectContaining({ from: INBOUND_TO_NUMBER }),
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "sms",
+        VALID_FORM_FIELDS.Body,
+      );
+      expect(mockReplyOrchestratorService.generateAndSendReply).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "sms",
+        { sms: { to: SENDER_PHONE, from: INBOUND_TO_NUMBER } },
       );
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
@@ -276,7 +327,7 @@ describe("SmsReplyService", () => {
       );
     });
 
-    it("Case 3 stale with null latestSessionId calls handleCase3StaleNewSession with null", async () => {
+    it("Case 3 stale with null latestSessionId calls stale path with null", async () => {
       ddbMock.on(PutCommand).resolves({});
       mockCustomerService.queryCustomerIdByPhone.mockResolvedValue({
         customerUlid: CUSTOMER_ULID,
@@ -291,8 +342,6 @@ describe("SmsReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi!", toolOutputs: [] });
-      mockSmsService.send.mockResolvedValue({ messageSid: "SMout4" });
 
       const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
@@ -338,8 +387,6 @@ describe("SmsReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi!", toolOutputs: [] });
-      mockSmsService.send.mockResolvedValue({ messageSid: "SMout5" });
 
       const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 
@@ -362,8 +409,6 @@ describe("SmsReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi!", toolOutputs: [] });
-      mockSmsService.send.mockResolvedValue({ messageSid: "SMout6" });
 
       const result = await service.processInboundMessage(VALID_FORM_FIELDS);
 

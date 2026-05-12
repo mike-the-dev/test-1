@@ -11,6 +11,9 @@ import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
 import { ChannelAddressService } from "./channel-address.service";
+import { EmailDebounceConfigService } from "./email-debounce-config.service";
+import { ReplyOrchestratorService } from "./reply-orchestrator.service";
+import { SCHEDULER_SERVICE } from "./scheduler.service";
 
 const TABLE_NAME = "test-conversations-table";
 const REPLY_DOMAIN = "reply.example.com";
@@ -45,15 +48,19 @@ const DOMAIN_ROUTED_FORM_FIELDS = {
 
 const mockDatabaseConfig = { conversationsTable: TABLE_NAME };
 
-// mutable so tests can override
 const mockChannelAddressService = {
   getAccountByChannelAddress: jest.fn(),
 };
 
 const mockEmailService = { send: jest.fn() };
-const mockChatSessionService = { handleMessage: jest.fn() };
+const mockChatSessionService = { appendUserMessage: jest.fn() };
 const mockCustomerService = { queryCustomerIdByEmail: jest.fn() };
 const mockSessionService = { lookupOrCreateSession: jest.fn() };
+const mockReplyOrchestratorService = { generateAndSendReply: jest.fn() };
+const mockSchedulerService = { createOrResetEmailFlush: jest.fn(), cancelEmailFlush: jest.fn(), getEmailFlushFireTime: jest.fn() };
+
+// Default: debounce disabled (synchronous path)
+let mockEmailDebounceConfig = { enabled: false, windowSeconds: 90 };
 
 function makeActiveAccountItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -78,8 +85,11 @@ describe("EmailReplyService", () => {
     ddbMock.reset();
     jest.clearAllMocks();
 
-    // Default: domain lookup resolves to ACCOUNT_ULID
+    mockEmailDebounceConfig = { enabled: false, windowSeconds: 90 };
     mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue({ accountId: ACCOUNT_ULID });
+    mockChatSessionService.appendUserMessage.mockResolvedValue(undefined);
+    mockReplyOrchestratorService.generateAndSendReply.mockResolvedValue({ outcome: "replied", reply: "Hello!", toolOutputs: [] });
+    mockSchedulerService.createOrResetEmailFlush.mockResolvedValue(undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -88,30 +98,15 @@ describe("EmailReplyService", () => {
           provide: DYNAMO_DB_CLIENT,
           useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })),
         },
-        {
-          provide: DatabaseConfigService,
-          useValue: mockDatabaseConfig,
-        },
-        {
-          provide: EmailService,
-          useValue: mockEmailService,
-        },
-        {
-          provide: ChatSessionService,
-          useValue: mockChatSessionService,
-        },
-        {
-          provide: CustomerService,
-          useValue: mockCustomerService,
-        },
-        {
-          provide: SessionService,
-          useValue: mockSessionService,
-        },
-        {
-          provide: ChannelAddressService,
-          useValue: mockChannelAddressService,
-        },
+        { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
+        { provide: EmailService, useValue: mockEmailService },
+        { provide: ChatSessionService, useValue: mockChatSessionService },
+        { provide: CustomerService, useValue: mockCustomerService },
+        { provide: SessionService, useValue: mockSessionService },
+        { provide: ChannelAddressService, useValue: mockChannelAddressService },
+        { provide: EmailDebounceConfigService, useValue: mockEmailDebounceConfig },
+        { provide: SCHEDULER_SERVICE, useValue: mockSchedulerService },
+        { provide: ReplyOrchestratorService, useValue: mockReplyOrchestratorService },
       ],
     }).compile();
 
@@ -119,47 +114,28 @@ describe("EmailReplyService", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Case 1 — SESSION_ULID local-part (unchanged behavior)
+  // Case 1 — SESSION_ULID local-part (debounce DISABLED — synchronous path)
   // -------------------------------------------------------------------------
 
-  describe("processInboundReply — Case 1 (SESSION_ULID local-part)", () => {
-    it("returns 'processed' on happy path and calls handleMessage and send once each", async () => {
+  describe("processInboundReply — Case 1 (SESSION_ULID local-part) — debounce DISABLED", () => {
+    it("calls appendUserMessage with emailContext and generateAndSendReply; does NOT call createOrResetEmailFlush", async () => {
       ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolves({
-        Item: { email: SENDER_EMAIL },
-      });
-
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hello from the assistant.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({ messageId: "outbound-id" });
+      ddbMock.on(GetCommand).resolves({ Item: { email: SENDER_EMAIL } });
 
       const result = await service.processInboundReply(VALID_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledTimes(1);
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(SESSION_ULID, "My new message.");
-      expect(mockEmailService.send).toHaveBeenCalledTimes(1);
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        SESSION_ULID,
+        "email",
+        "My new message.",
+        { messageId: INBOUND_MESSAGE_ID, subject: "Hello there", replyDomain: REPLY_DOMAIN, fromName: "" },
+      );
+      expect(mockReplyOrchestratorService.generateAndSendReply).toHaveBeenCalledWith(SESSION_ULID, "email");
+      expect(mockSchedulerService.createOrResetEmailFlush).not.toHaveBeenCalled();
     });
 
-    it("passes correct threading headers and sessionUlid to EmailService.send on happy path", async () => {
-      ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolves({
-        Item: { email: SENDER_EMAIL },
-      });
-
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Reply text.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({ messageId: "outbound-id" });
-
-      await service.processInboundReply(VALID_FORM_FIELDS);
-
-      const sendCall = mockEmailService.send.mock.calls[0][0];
-
-      expect(sendCall.sessionUlid).toBe(SESSION_ULID);
-      expect(sendCall.inReplyToMessageId).toBe(INBOUND_MESSAGE_ID);
-      expect(sendCall.referencesMessageId).toBe(INBOUND_MESSAGE_ID);
-      expect(sendCall.subject).toBe("Re: Hello there");
-    });
-
-    it("returns 'duplicate' on ConditionalCheckFailedException and does not call handleMessage", async () => {
+    it("returns 'duplicate' on ConditionalCheckFailedException and does not call appendUserMessage", async () => {
       const conditionalError = Object.assign(new Error("Conditional check failed"), {
         name: "ConditionalCheckFailedException",
       });
@@ -169,7 +145,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(VALID_FORM_FIELDS);
 
       expect(result).toBe("duplicate");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("returns 'rejected_unknown_session' when no USER_CONTACT_INFO record exists", async () => {
@@ -179,26 +155,22 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(VALID_FORM_FIELDS);
 
       expect(result).toBe("rejected_unknown_session");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("returns 'rejected_sender_mismatch' when from email does not match stored email", async () => {
       ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolves({
-        Item: { email: "different@example.com" },
-      });
+      ddbMock.on(GetCommand).resolves({ Item: { email: "different@example.com" } });
 
       const result = await service.processInboundReply(VALID_FORM_FIELDS);
 
       expect(result).toBe("rejected_sender_mismatch");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("returns 'rejected_malformed' when body is empty after stripping quoted history", async () => {
       ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolves({
-        Item: { email: SENDER_EMAIL },
-      });
+      ddbMock.on(GetCommand).resolves({ Item: { email: SENDER_EMAIL } });
 
       const allQuotedFields = {
         ...VALID_FORM_FIELDS,
@@ -208,30 +180,21 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(allQuotedFields);
 
       expect(result).toBe("rejected_malformed");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
-    it("propagates throws from ChatSessionService without catching", async () => {
+    it("propagates throws from replyOrchestratorService without catching", async () => {
       ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolves({
-        Item: { email: SENDER_EMAIL },
-      });
+      ddbMock.on(GetCommand).resolves({ Item: { email: SENDER_EMAIL } });
 
-      const serviceError = new Error("Anthropic API failure");
-
-      mockChatSessionService.handleMessage.mockRejectedValue(serviceError);
+      mockReplyOrchestratorService.generateAndSendReply.mockRejectedValue(new Error("Anthropic API failure"));
 
       await expect(service.processInboundReply(VALID_FORM_FIELDS)).rejects.toThrow("Anthropic API failure");
     });
 
     it("extracts bare email from display-name 'from' field format", async () => {
       ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolves({
-        Item: { email: "john@example.com" },
-      });
-
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi John.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({ messageId: "out-id" });
+      ddbMock.on(GetCommand).resolves({ Item: { email: "john@example.com" } });
 
       const displayNameFields = {
         ...VALID_FORM_FIELDS,
@@ -241,9 +204,6 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(displayNameFields);
 
       expect(result).toBe("processed");
-
-      const sendCall = mockEmailService.send.mock.calls[0][0];
-      expect(sendCall.to).toBe("john@example.com");
     });
 
     it("falls back to SHA-256 hash when Message-ID header is absent and still handles idempotency on second call", async () => {
@@ -265,6 +225,164 @@ describe("EmailReplyService", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Case 1 — EMAIL_DEBOUNCE_ENABLED=true (debounce path)
+  // -------------------------------------------------------------------------
+
+  describe("processInboundReply — Case 1 (SESSION_ULID local-part) — debounce ENABLED", () => {
+    beforeEach(() => {
+      // Rebuild service with debounce enabled
+      mockEmailDebounceConfig = { enabled: true, windowSeconds: 90 };
+    });
+
+    it("calls appendUserMessage with emailContext and createOrResetEmailFlush; does NOT call generateAndSendReply", async () => {
+      // Rebuild module with debounce enabled
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          EmailReplyService,
+          {
+            provide: DYNAMO_DB_CLIENT,
+            useValue: DynamoDBDocumentClient.from(new DynamoDBClient({ region: "us-east-1" })),
+          },
+          { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
+          { provide: EmailService, useValue: mockEmailService },
+          { provide: ChatSessionService, useValue: mockChatSessionService },
+          { provide: CustomerService, useValue: mockCustomerService },
+          { provide: SessionService, useValue: mockSessionService },
+          { provide: ChannelAddressService, useValue: mockChannelAddressService },
+          { provide: EmailDebounceConfigService, useValue: { enabled: true, windowSeconds: 90 } },
+          { provide: SCHEDULER_SERVICE, useValue: mockSchedulerService },
+          { provide: ReplyOrchestratorService, useValue: mockReplyOrchestratorService },
+        ],
+      }).compile();
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(GetCommand).resolves({ Item: { email: SENDER_EMAIL } });
+
+      const debounceService = module.get<EmailReplyService>(EmailReplyService);
+      const result = await debounceService.processInboundReply(VALID_FORM_FIELDS);
+
+      expect(result).toBe("processed");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        SESSION_ULID,
+        "email",
+        "My new message.",
+        { messageId: INBOUND_MESSAGE_ID, subject: "Hello there", replyDomain: REPLY_DOMAIN, fromName: "" },
+      );
+      expect(mockSchedulerService.createOrResetEmailFlush).toHaveBeenCalledWith(
+        SESSION_ULID,
+        expect.any(Number),
+      );
+      // The fire time should be approximately now + 90s
+      const fireAt = mockSchedulerService.createOrResetEmailFlush.mock.calls[0][1];
+      expect(fireAt).toBeGreaterThan(Date.now() + 80_000);
+      expect(fireAt).toBeLessThan(Date.now() + 100_000);
+
+      expect(mockReplyOrchestratorService.generateAndSendReply).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Email context — appendUserMessage receives messageId + subject
+  // -------------------------------------------------------------------------
+
+  describe("emailContext passed to appendUserMessage (ADDENDUM)", () => {
+    it("Case 1: passes { messageId, subject, replyDomain, fromName } to appendUserMessage", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(GetCommand).resolves({ Item: { email: SENDER_EMAIL } });
+
+      await service.processInboundReply(VALID_FORM_FIELDS);
+
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        SESSION_ULID,
+        "email",
+        expect.any(String),
+        { messageId: INBOUND_MESSAGE_ID, subject: "Hello there", replyDomain: REPLY_DOMAIN, fromName: "" },
+      );
+    });
+
+    it("Case 2 (new session): passes { messageId, subject, replyDomain, fromName } to appendUserMessage", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
+      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID,
+        onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
+        onboardingData: null,
+        wasCreated: true,
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
+
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "email",
+        expect.any(String),
+        { messageId: INBOUND_MESSAGE_ID, subject: "Hello assistant", replyDomain: REPLY_DOMAIN, fromName: FROM_NAME },
+      );
+    });
+
+    it("Case 3 fresh: passes { messageId, subject, replyDomain, fromName } to appendUserMessage", async () => {
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({ Item: makeActiveAccountItem() })
+        .resolvesOnce({ Item: { _lastUpdated_: twoHoursAgo } })
+        .resolvesOnce({ Item: { email: SENDER_EMAIL } });
+
+      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({
+        customerUlid: CUSTOMER_ULID,
+        latestSessionId: PRIOR_SESSION_ULID,
+      });
+
+      await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
+
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        PRIOR_SESSION_ULID,
+        "email",
+        expect.any(String),
+        { messageId: INBOUND_MESSAGE_ID, subject: "Hello assistant", replyDomain: REPLY_DOMAIN, fromName: FROM_NAME },
+      );
+    });
+
+    it("Case 3 stale: passes { messageId, subject, replyDomain, fromName } to appendUserMessage", async () => {
+      const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock
+        .on(GetCommand)
+        .resolvesOnce({ Item: makeActiveAccountItem() })
+        .resolvesOnce({ Item: { _lastUpdated_: eightDaysAgo } });
+
+      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({
+        customerUlid: CUSTOMER_ULID,
+        latestSessionId: PRIOR_SESSION_ULID,
+      });
+
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID,
+        onboardingCompletedAt: null,
+        kickoffCompletedAt: null,
+        onboardingData: null,
+        wasCreated: true,
+      });
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
+
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(
+        NEW_SESSION_ULID,
+        "email",
+        expect.any(String),
+        { messageId: INBOUND_MESSAGE_ID, subject: "Hello assistant", replyDomain: REPLY_DOMAIN, fromName: FROM_NAME },
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Address parsing
   // -------------------------------------------------------------------------
 
@@ -281,21 +399,16 @@ describe("EmailReplyService", () => {
     it("26-char Crockford ULID local-part routes to Case 1 (SESSION_ULID)", async () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolves({ Item: { email: SENDER_EMAIL } });
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(VALID_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(SESSION_ULID, "My new message.");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(SESSION_ULID, "email", "My new message.", expect.any(Object));
     });
 
     it("multi-address To: field uses the first parseable address for domain lookup", async () => {
-      const secondDomain = "other.example.com";
-
       mockChannelAddressService.getAccountByChannelAddress.mockResolvedValue({ accountId: ACCOUNT_ULID });
       ddbMock.on(PutCommand).resolves({});
-      // Account GetCommand
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
@@ -306,18 +419,15 @@ describe("EmailReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const multiToFields = {
         ...DOMAIN_ROUTED_FORM_FIELDS,
-        to: `assistant@${REPLY_DOMAIN}, other@${secondDomain}`,
+        to: `assistant@${REPLY_DOMAIN}, other@other.example.com`,
       };
 
       const result = await service.processInboundReply(multiToFields);
 
       expect(result).toBe("processed");
-      // Must be called with the FIRST address's domain (REPLY_DOMAIN), not the second
       expect(mockChannelAddressService.getAccountByChannelAddress).toHaveBeenCalledWith(
         "email_reply_domain",
         REPLY_DOMAIN,
@@ -336,8 +446,6 @@ describe("EmailReplyService", () => {
         wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
@@ -357,7 +465,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("rejected_unknown_account");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("calls channel address service with EMAIL_REPLY_DOMAIN and the inbound domain", async () => {
@@ -372,25 +480,21 @@ describe("EmailReplyService", () => {
     });
 
     it("returns 'rejected_unknown_account' when account record has status.is_active === false", async () => {
-      ddbMock.on(GetCommand).resolvesOnce({
-        Item: makeActiveAccountItem({ status: { is_active: false } }),
-      });
+      ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem({ status: { is_active: false } }) });
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("rejected_unknown_account");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("returns 'rejected_unknown_account' when account record has entity !== ACCOUNT", async () => {
-      ddbMock.on(GetCommand).resolvesOnce({
-        Item: makeActiveAccountItem({ entity: "SOMETHING_ELSE" }),
-      });
+      ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem({ entity: "SOMETHING_ELSE" }) });
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("rejected_unknown_account");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("returns 'rejected_unknown_account' when account GetItem returns no item", async () => {
@@ -399,27 +503,20 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("rejected_unknown_account");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("returns 'rejected_unknown_local_part' when local-part does not match account's reply_local_part", async () => {
       ddbMock.on(GetCommand).resolvesOnce({
         Item: makeActiveAccountItem({
-          channels: {
-            email: {
-              reply_domains: [REPLY_DOMAIN],
-              reply_local_part: "concierge",
-              from_name: FROM_NAME,
-            },
-          },
+          channels: { email: { reply_domains: [REPLY_DOMAIN], reply_local_part: "concierge", from_name: FROM_NAME } },
         }),
       });
 
-      // to: "assistant@reply.example.com" but account expects "concierge"
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("rejected_unknown_local_part");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("local-part validation is case-insensitive", async () => {
@@ -427,17 +524,10 @@ describe("EmailReplyService", () => {
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
-        sessionUlid: NEW_SESSION_ULID,
-        onboardingCompletedAt: null,
-        kickoffCompletedAt: null,
-        onboardingData: null,
-        wasCreated: true,
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
-      // "ASSISTANT" uppercase should still match "assistant" config
       const upperFields = { ...DOMAIN_ROUTED_FORM_FIELDS, to: `ASSISTANT@${REPLY_DOMAIN}` };
       const result = await service.processInboundReply(upperFields);
 
@@ -446,26 +536,13 @@ describe("EmailReplyService", () => {
 
     it("defaults reply_local_part to 'assistant' when account has no channels config", async () => {
       ddbMock.on(PutCommand).resolves({});
-      ddbMock.on(GetCommand).resolvesOnce({
-        Item: {
-          entity: "ACCOUNT",
-          status: { is_active: true },
-          // no channels field
-        },
-      });
+      ddbMock.on(GetCommand).resolvesOnce({ Item: { entity: "ACCOUNT", status: { is_active: true } } });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
-        sessionUlid: NEW_SESSION_ULID,
-        onboardingCompletedAt: null,
-        kickoffCompletedAt: null,
-        onboardingData: null,
-        wasCreated: true,
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
-      // "assistant" local-part should match default
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
@@ -477,26 +554,20 @@ describe("EmailReplyService", () => {
   // -------------------------------------------------------------------------
 
   describe("handleDomainRoutedEntry — per-account branding on outbound send", () => {
-    it("passes account's replyDomain and fromName to emailService.send (Case 2)", async () => {
+    it("passes account's replyDomain and fromName to generateAndSendReply path (Case 2)", async () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
       mockSessionService.lookupOrCreateSession.mockResolvedValue({
-        sessionUlid: NEW_SESSION_ULID,
-        onboardingCompletedAt: null,
-        kickoffCompletedAt: null,
-        onboardingData: null,
-        wasCreated: true,
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
       });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
-      await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
+      const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
-      const sendCall = mockEmailService.send.mock.calls[0][0];
-      expect(sendCall.replyDomain).toBe(REPLY_DOMAIN);
-      expect(sendCall.fromName).toBe(FROM_NAME);
+      expect(result).toBe("processed");
+      // In the synchronous path, the orchestrator handles sending — no direct emailService.send call
+      expect(mockReplyOrchestratorService.generateAndSendReply).toHaveBeenCalledWith(NEW_SESSION_ULID, "email");
     });
   });
 
@@ -505,70 +576,59 @@ describe("EmailReplyService", () => {
   // -------------------------------------------------------------------------
 
   describe("Case 2 — unknown sender (domain-routed)", () => {
-    it("unknown sender creates new session without customer_id and returns processed", async () => {
+    it("unknown sender creates new session, calls appendUserMessage, calls generateAndSendReply", async () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ULID);
 
-      // USER_CONTACT_INFO UpdateCommand should be called
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
-      const contactInfoUpdate = updateCalls.find((call) =>
-        call.args[0].input.Key?.SK === "USER_CONTACT_INFO",
-      );
+      const contactInfoUpdate = updateCalls.find((call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO");
       expect(contactInfoUpdate).toBeDefined();
       expect(contactInfoUpdate!.args[0].input.UpdateExpression).toContain("if_not_exists(email");
 
-      // handleMessage called with new session
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "My new message.");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "email", "My new message.", expect.any(Object));
 
-      // No METADATA customer_id UpdateCommand (only USER_CONTACT_INFO)
       const metadataUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("customer_id"),
+        (call) => call.args[0].input.Key?.SK === "METADATA" && call.args[0].input.UpdateExpression?.includes("customer_id"),
       );
       expect(metadataUpdate).toBeUndefined();
     });
 
     it("dedup: second identical domain-routed email returns duplicate", async () => {
-      const conditionalError = Object.assign(new Error("Conditional check failed"), {
-        name: "ConditionalCheckFailedException",
-      });
-      // First GetCommand = account record, then PutCommand fails with conditional error
+      const conditionalError = Object.assign(new Error("Conditional check failed"), { name: "ConditionalCheckFailedException" });
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       ddbMock.on(PutCommand).rejects(conditionalError);
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("duplicate");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("Case 2 empty body after strip returns rejected_malformed", async () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
 
-      const allQuotedFields = {
-        ...DOMAIN_ROUTED_FORM_FIELDS,
-        text: "> Entirely quoted content\n> Nothing new here",
-      };
+      const allQuotedFields = { ...DOMAIN_ROUTED_FORM_FIELDS, text: "> Entirely quoted content\n> Nothing new here" };
 
       const result = await service.processInboundReply(allQuotedFields);
 
       expect(result).toBe("rejected_malformed");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
   });
 
@@ -577,11 +637,10 @@ describe("EmailReplyService", () => {
   // -------------------------------------------------------------------------
 
   describe("Case 3 fresh — known sender, recent session (domain-routed)", () => {
-    it("known sender with session < 7 days old appends to existing session", async () => {
+    it("known sender with session < 7 days old calls appendUserMessage with existing session", async () => {
       const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
       ddbMock.on(PutCommand).resolves({});
-      // GetCommand sequence: account record, prior session METADATA, USER_CONTACT_INFO
       ddbMock
         .on(GetCommand)
         .resolvesOnce({ Item: makeActiveAccountItem() })
@@ -593,22 +652,15 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome back!", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
-
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      // handleMessage must be called with the EXISTING session, not a new one
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, "My new message.");
-      // No session creation
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, "email", "My new message.", expect.any(Object));
       expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
-      // No METADATA customer_id UpdateCommand
+
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataCustomerIdUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("customer_id"),
+        (call) => call.args[0].input.Key?.SK === "METADATA" && call.args[0].input.UpdateExpression?.includes("customer_id"),
       );
       expect(metadataCustomerIdUpdate).toBeUndefined();
     });
@@ -631,7 +683,7 @@ describe("EmailReplyService", () => {
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("rejected_sender_mismatch");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
 
     it("Case 3 fresh: empty body after strip returns rejected_malformed", async () => {
@@ -649,15 +701,12 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      const allQuotedFields = {
-        ...DOMAIN_ROUTED_FORM_FIELDS,
-        text: "> Entirely quoted content\n> Nothing new here",
-      };
+      const allQuotedFields = { ...DOMAIN_ROUTED_FORM_FIELDS, text: "> Entirely quoted content\n> Nothing new here" };
 
       const result = await service.processInboundReply(allQuotedFields);
 
       expect(result).toBe("rejected_malformed");
-      expect(mockChatSessionService.handleMessage).not.toHaveBeenCalled();
+      expect(mockChatSessionService.appendUserMessage).not.toHaveBeenCalled();
     });
   });
 
@@ -668,9 +717,8 @@ describe("EmailReplyService", () => {
   describe("Case 3 stale — known sender, old session (domain-routed)", () => {
     const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
 
-    it("known sender with session >= 7 days old creates new linked session with customer_id and continuation_from_session_id fields", async () => {
+    it("known sender with session >= 7 days old creates new linked session and calls appendUserMessage", async () => {
       ddbMock.on(PutCommand).resolves({});
-      // GetCommand sequence: account record, prior session METADATA (stale)
       ddbMock
         .on(GetCommand)
         .resolvesOnce({ Item: makeActiveAccountItem() })
@@ -681,61 +729,28 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Good to see you again!", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ULID);
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "My new message.");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "email", "My new message.", expect.any(Object));
 
-      // Verify the METADATA UpdateCommand writes customer_id and continuation_from_session_id
-      // but does NOT pre-initialize continuation_loaded_at.
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("customer_id"),
+        (call) => call.args[0].input.Key?.SK === "METADATA" && call.args[0].input.UpdateExpression?.includes("customer_id"),
       );
-
       expect(metadataUpdate).toBeDefined();
       const expr = metadataUpdate!.args[0].input.UpdateExpression!;
       const values = metadataUpdate!.args[0].input.ExpressionAttributeValues!;
       expect(values[":customerId"]).toBe(`C#${CUSTOMER_ULID}`);
       expect(values[":contFrom"]).toBe(`CHAT_SESSION#${PRIOR_SESSION_ULID}`);
-      // Inverse assertions: continuation_loaded_at must NOT be pre-initialized to null
       expect(expr).not.toContain("continuation_loaded_at");
       expect(values).not.toHaveProperty(":contAt");
-    });
-
-    it("continuation_from_session_id is the CAPTURED prior latestSessionId, not re-fetched", async () => {
-      ddbMock.on(PutCommand).resolves({});
-      ddbMock
-        .on(GetCommand)
-        .resolvesOnce({ Item: makeActiveAccountItem() })
-        .resolvesOnce({ Item: { _lastUpdated_: eightDaysAgo } });
-
-      mockCustomerService.queryCustomerIdByEmail.mockResolvedValue({
-        customerUlid: CUSTOMER_ULID,
-        latestSessionId: PRIOR_SESSION_ULID,
-      });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
-      ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
-
-      await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
-
-      const updateCalls = ddbMock.commandCalls(UpdateCommand);
-      const metadataUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("continuation_from_session_id"),
-      );
-      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues![":contFrom"]).toBe(`CHAT_SESSION#${PRIOR_SESSION_ULID}`);
     });
 
     it("Case 3 stale with null latestSessionId writes continuation_from_session_id = null", async () => {
@@ -747,11 +762,10 @@ describe("EmailReplyService", () => {
         latestSessionId: null,
       });
 
-      // No GetCommand for prior metadata needed (latestSessionId is null — skip freshness check)
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
@@ -759,20 +773,14 @@ describe("EmailReplyService", () => {
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("customer_id"),
+        (call) => call.args[0].input.Key?.SK === "METADATA" && call.args[0].input.UpdateExpression?.includes("customer_id"),
       );
-
       expect(metadataUpdate).toBeDefined();
-      const values = metadataUpdate!.args[0].input.ExpressionAttributeValues!;
-      expect(values[":customerId"]).toBe(`C#${CUSTOMER_ULID}`);
-      expect(values[":contFrom"]).toBeNull();
+      expect(metadataUpdate!.args[0].input.ExpressionAttributeValues![":contFrom"]).toBeNull();
     });
 
     it("Case 3 stale: prior session METADATA not found treats as stale and creates new linked session", async () => {
       ddbMock.on(PutCommand).resolves({});
-      // GetCommand sequence: account record, prior session METADATA (not found)
       ddbMock
         .on(GetCommand)
         .resolvesOnce({ Item: makeActiveAccountItem() })
@@ -783,23 +791,15 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
-
-      const updateCalls = ddbMock.commandCalls(UpdateCommand);
-      const metadataUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("customer_id"),
-      );
-      expect(metadataUpdate).toBeDefined();
     });
 
     it("Case 3 stale: USER_CONTACT_INFO write uses if_not_exists", async () => {
@@ -813,18 +813,15 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
-      const contactInfoUpdate = updateCalls.find(
-        (call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO",
-      );
-
+      const contactInfoUpdate = updateCalls.find((call) => call.args[0].input.Key?.SK === "USER_CONTACT_INFO");
       expect(contactInfoUpdate).toBeDefined();
       expect(contactInfoUpdate!.args[0].input.UpdateExpression).toContain("if_not_exists(email");
     });
@@ -848,25 +845,22 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      // Stale path: new session created
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
-      // handleMessage called with NEW session (stale path)
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "My new message.");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(NEW_SESSION_ULID, "email", "My new message.", expect.any(Object));
     });
 
     it("one hour under 7 days is FRESH — appends to existing session", async () => {
       const justUnder7Days = new Date(Date.now() - (7 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000)).toISOString();
 
       ddbMock.on(PutCommand).resolves({});
-      // GetCommand sequence: account record, prior session METADATA (fresh), USER_CONTACT_INFO
       ddbMock
         .on(GetCommand)
         .resolvesOnce({ Item: makeActiveAccountItem() })
@@ -878,16 +872,11 @@ describe("EmailReplyService", () => {
         latestSessionId: PRIOR_SESSION_ULID,
       });
 
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
-
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      // Fresh path: no new session created
       expect(mockSessionService.lookupOrCreateSession).not.toHaveBeenCalled();
-      // handleMessage called with EXISTING session (fresh path)
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, "My new message.");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(PRIOR_SESSION_ULID, "email", "My new message.", expect.any(Object));
     });
 
     it("unparseable _lastUpdated_ timestamp treats as stale", async () => {
@@ -901,15 +890,14 @@ describe("EmailReplyService", () => {
         customerUlid: CUSTOMER_ULID,
         latestSessionId: PRIOR_SESSION_ULID,
       });
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Hi.", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      // Stale path taken due to unparseable timestamp
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalled();
     });
   });
@@ -923,23 +911,19 @@ describe("EmailReplyService", () => {
       ddbMock.on(PutCommand).resolves({});
       ddbMock.on(GetCommand).resolvesOnce({ Item: makeActiveAccountItem() });
       mockCustomerService.queryCustomerIdByEmail.mockResolvedValue(null);
-      mockSessionService.lookupOrCreateSession.mockResolvedValue({ sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true });
+      mockSessionService.lookupOrCreateSession.mockResolvedValue({
+        sessionUlid: NEW_SESSION_ULID, onboardingCompletedAt: null, kickoffCompletedAt: null, onboardingData: null, wasCreated: true,
+      });
       ddbMock.on(UpdateCommand).resolves({});
-      mockChatSessionService.handleMessage.mockResolvedValue({ reply: "Welcome!", toolOutputs: [] });
-      mockEmailService.send.mockResolvedValue({});
 
       const result = await service.processInboundReply(DOMAIN_ROUTED_FORM_FIELDS);
 
       expect(result).toBe("processed");
-      // New session created (Case 2)
       expect(mockSessionService.lookupOrCreateSession).toHaveBeenCalledWith("email", null, "lead_capture", ACCOUNT_ULID);
 
-      // No METADATA customer_id UpdateCommand written
       const updateCalls = ddbMock.commandCalls(UpdateCommand);
       const metadataCustomerIdUpdate = updateCalls.find(
-        (call) =>
-          call.args[0].input.Key?.SK === "METADATA" &&
-          call.args[0].input.UpdateExpression?.includes("customer_id"),
+        (call) => call.args[0].input.Key?.SK === "METADATA" && call.args[0].input.UpdateExpression?.includes("customer_id"),
       );
       expect(metadataCustomerIdUpdate).toBeUndefined();
     });

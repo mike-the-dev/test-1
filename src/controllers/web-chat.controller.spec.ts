@@ -6,6 +6,7 @@ import { ChatSessionService } from "../services/chat-session.service";
 import { SessionService } from "../services/session.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import { SlackAlertService } from "../services/slack-alert.service";
+import { ReplyOrchestratorService } from "../services/reply-orchestrator.service";
 import { ZodValidationPipe } from "../pipes/webChatValidation.pipe";
 import {
   createSessionSchema,
@@ -34,8 +35,12 @@ const mockSessionService = {
 };
 
 const mockChatSessionService = {
-  handleMessage: jest.fn(),
+  appendUserMessage: jest.fn(),
   getHistoryForClient: jest.fn(),
+};
+
+const mockReplyOrchestratorService = {
+  generateAndSendReply: jest.fn(),
 };
 
 const mockAgentRegistry = {
@@ -77,6 +82,7 @@ describe("WebChatController", () => {
         { provide: AgentRegistryService, useValue: mockAgentRegistry },
         { provide: OriginAllowlistService, useValue: mockOriginAllowlistService },
         { provide: SlackAlertService, useValue: mockSlackAlertService },
+        { provide: ReplyOrchestratorService, useValue: mockReplyOrchestratorService },
       ],
     }).compile();
 
@@ -444,8 +450,13 @@ describe("WebChatController", () => {
   });
 
   describe("POST /messages — sendMessage", () => {
-    it("returns reply on valid request when no tools fired", async () => {
-      mockChatSessionService.handleMessage.mockResolvedValue({
+    beforeEach(() => {
+      mockChatSessionService.appendUserMessage.mockResolvedValue(undefined);
+    });
+
+    it("calls appendUserMessage then generateAndSendReply and returns reply when no tools fired", async () => {
+      mockReplyOrchestratorService.generateAndSendReply.mockResolvedValue({
+        outcome: "replied",
         reply: "Hello from the assistant.",
         toolOutputs: [],
       });
@@ -454,11 +465,13 @@ describe("WebChatController", () => {
 
       expect(result).toEqual({ reply: "Hello from the assistant." });
       expect(result).not.toHaveProperty("tool_outputs");
-      expect(mockChatSessionService.handleMessage).toHaveBeenCalledWith(VALID_SESSION_ULID, "Hi there");
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(VALID_SESSION_ULID, "web", "Hi there");
+      expect(mockReplyOrchestratorService.generateAndSendReply).toHaveBeenCalledWith(VALID_SESSION_ULID, "web");
     });
 
     it("includes tool_outputs on the wire when tools fired during the turn", async () => {
-      mockChatSessionService.handleMessage.mockResolvedValue({
+      mockReplyOrchestratorService.generateAndSendReply.mockResolvedValue({
+        outcome: "replied",
         reply: "Here's your cart.",
         toolOutputs: [
           { call_id: "toulu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
@@ -473,6 +486,26 @@ describe("WebChatController", () => {
           { call_id: "toulu_01", tool_name: "preview_cart", content: '{"cart_id":"01CARTULID0000000000000000","item_count":1,"currency":"usd","cart_total":22500,"lines":[]}' },
         ],
       });
+    });
+
+    it("returns { reply: '' } when generateAndSendReply returns no_op_nothing_outstanding", async () => {
+      mockReplyOrchestratorService.generateAndSendReply.mockResolvedValue({
+        outcome: "no_op_nothing_outstanding",
+      });
+
+      const result = await controller.sendMessage({ sessionId: VALID_SESSION_ULID, message: "Hi" });
+
+      expect(result).toEqual({ reply: "" });
+    });
+
+    it("still calls appendUserMessage before generateAndSendReply on no_op path", async () => {
+      mockReplyOrchestratorService.generateAndSendReply.mockResolvedValue({
+        outcome: "no_op_nothing_outstanding",
+      });
+
+      await controller.sendMessage({ sessionId: VALID_SESSION_ULID, message: "Hi" });
+
+      expect(mockChatSessionService.appendUserMessage).toHaveBeenCalledWith(VALID_SESSION_ULID, "web", "Hi");
     });
 
     it("throws BadRequestException for empty message (pipe)", () => {

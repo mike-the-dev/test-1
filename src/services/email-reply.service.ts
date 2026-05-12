@@ -4,11 +4,14 @@ import { createHash } from "crypto";
 
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
-import { EmailService } from "./email.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
 import { ChannelAddressService } from "./channel-address.service";
+import { EmailDebounceConfigService } from "./email-debounce-config.service";
+import { ReplyOrchestratorService } from "./reply-orchestrator.service";
+import { SCHEDULER_SERVICE } from "../types/Scheduler";
+import type { ISchedulerService } from "../types/Scheduler";
 import { ChannelAddressType } from "../types/AccountChannel";
 import {
   EmailReplySendGridInboundFormFields,
@@ -36,16 +39,6 @@ function isConditionalCheckFailed(error: unknown): boolean {
   }
 
   return false;
-}
-
-function wrapInHtml(text: string): string {
-  const paragraphs = text.split("\n\n");
-
-  return paragraphs
-    .map((chunk) => {
-      return `<p>${chunk}</p>`;
-    })
-    .join("\n");
 }
 
 function parseSenderEmail(fromField: string): string {
@@ -104,11 +97,13 @@ export class EmailReplyService {
   constructor(
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
-    private readonly emailService: EmailService,
     private readonly chatSessionService: ChatSessionService,
     private readonly customerService: CustomerService,
     private readonly sessionService: SessionService,
     private readonly channelAddressService: ChannelAddressService,
+    private readonly emailDebounceConfig: EmailDebounceConfigService,
+    @Inject(SCHEDULER_SERVICE) private readonly schedulerService: ISchedulerService,
+    private readonly replyOrchestratorService: ReplyOrchestratorService,
   ) {}
 
   private classifyLocalPart(localPart: string): EmailReplyLocalPartClassification {
@@ -179,7 +174,10 @@ export class EmailReplyService {
     const classification = this.classifyLocalPart(localPart);
 
     if (classification === EmailReplyLocalPartClassification.SESSION_ULID) {
-      return this.handleCase1SessionUlid(localPart, formFields, table);
+      // For Case 1 (session-ULID local-part), the domain is the inbound reply domain
+      // and fromName is unknown at this point — pass empty string so the orchestrator
+      // falls back to the account-default verified sender (acceptable per plan).
+      return this.handleCase1SessionUlid(localPart, formFields, table, domain, "");
     }
 
     // DOMAIN_ROUTED — look up account by domain, then validate local-part
@@ -190,6 +188,8 @@ export class EmailReplyService {
     sessionUlid: string,
     formFields: EmailReplySendGridInboundFormFields,
     table: string,
+    replyDomain: string,
+    fromName: string,
   ): Promise<EmailReplyInboundProcessOutcome> {
     const rawHeaders = formFields.headers ?? "";
     const messageIdMatch = MESSAGE_ID_HEADER_REGEX.exec(rawHeaders);
@@ -259,19 +259,24 @@ export class EmailReplyService {
       return "rejected_malformed";
     }
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(sessionUlid, cleanBody);
-
-    const rawSubject = formFields.subject ?? "";
-    const replySubject = rawSubject.startsWith("Re:") ? rawSubject : `Re: ${rawSubject}`;
-
-    await this.emailService.send({
-      to: senderEmail,
-      subject: replySubject,
-      body: wrapInHtml(assistantText),
-      sessionUlid,
-      inReplyToMessageId: messageId,
-      referencesMessageId: messageId,
+    await this.chatSessionService.appendUserMessage(sessionUlid, "email", cleanBody, {
+      messageId,
+      subject: formFields.subject ?? "",
+      replyDomain,
+      fromName,
     });
+
+    if (this.emailDebounceConfig.enabled) {
+      const windowMs = this.emailDebounceConfig.windowSeconds * 1000;
+
+      await this.schedulerService.createOrResetEmailFlush(sessionUlid, Date.now() + windowMs);
+
+      this.logger.log(`[event=email_debounce_scheduled sessionUlid=${sessionUlid} outcome=deferred]`);
+
+      return "processed";
+    }
+
+    await this.replyOrchestratorService.generateAndSendReply(sessionUlid, "email");
 
     this.logger.log(`Inbound reply processed [sessionUlid=${sessionUlid} outcome=processed]`);
 
@@ -460,21 +465,24 @@ export class EmailReplyService {
       return "rejected_malformed";
     }
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(sessionUlid, cleanBody);
-
-    const rawSubject = formFields.subject ?? "";
-    const replySubject = rawSubject.startsWith("Re:") ? rawSubject : `Re: ${rawSubject}`;
-
-    await this.emailService.send({
-      to: senderEmail,
-      subject: replySubject,
-      body: wrapInHtml(assistantText),
-      sessionUlid,
+    await this.chatSessionService.appendUserMessage(sessionUlid, "email", cleanBody, {
+      messageId,
+      subject: formFields.subject ?? "",
       replyDomain,
       fromName,
-      inReplyToMessageId: messageId,
-      referencesMessageId: messageId,
     });
+
+    if (this.emailDebounceConfig.enabled) {
+      const windowMs = this.emailDebounceConfig.windowSeconds * 1000;
+
+      await this.schedulerService.createOrResetEmailFlush(sessionUlid, Date.now() + windowMs);
+
+      this.logger.log(`[event=email_domain_routed_case2 sessionUlid=${sessionUlid} outcome=deferred]`);
+
+      return "processed";
+    }
+
+    await this.replyOrchestratorService.generateAndSendReply(sessionUlid, "email");
 
     this.logger.log(`[event=email_domain_routed_case2 sessionUlid=${sessionUlid} outcome=processed]`);
 
@@ -526,21 +534,24 @@ export class EmailReplyService {
       return "rejected_malformed";
     }
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(existingSessionUlid, cleanBody);
-
-    const rawSubject = formFields.subject ?? "";
-    const replySubject = rawSubject.startsWith("Re:") ? rawSubject : `Re: ${rawSubject}`;
-
-    await this.emailService.send({
-      to: senderEmail,
-      subject: replySubject,
-      body: wrapInHtml(assistantText),
-      sessionUlid: existingSessionUlid,
+    await this.chatSessionService.appendUserMessage(existingSessionUlid, "email", cleanBody, {
+      messageId,
+      subject: formFields.subject ?? "",
       replyDomain,
       fromName,
-      inReplyToMessageId: messageId,
-      referencesMessageId: messageId,
     });
+
+    if (this.emailDebounceConfig.enabled) {
+      const windowMs = this.emailDebounceConfig.windowSeconds * 1000;
+
+      await this.schedulerService.createOrResetEmailFlush(existingSessionUlid, Date.now() + windowMs);
+
+      this.logger.log(`[event=email_domain_routed_case3_fresh sessionUlid=${existingSessionUlid} outcome=deferred]`);
+
+      return "processed";
+    }
+
+    await this.replyOrchestratorService.generateAndSendReply(existingSessionUlid, "email");
 
     this.logger.log(`[event=email_domain_routed_case3_fresh sessionUlid=${existingSessionUlid} outcome=processed]`);
 
@@ -599,21 +610,24 @@ export class EmailReplyService {
       return "rejected_malformed";
     }
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(newSessionUlid, cleanBody);
-
-    const rawSubject = formFields.subject ?? "";
-    const replySubject = rawSubject.startsWith("Re:") ? rawSubject : `Re: ${rawSubject}`;
-
-    await this.emailService.send({
-      to: senderEmail,
-      subject: replySubject,
-      body: wrapInHtml(assistantText),
-      sessionUlid: newSessionUlid,
+    await this.chatSessionService.appendUserMessage(newSessionUlid, "email", cleanBody, {
+      messageId,
+      subject: formFields.subject ?? "",
       replyDomain,
       fromName,
-      inReplyToMessageId: messageId,
-      referencesMessageId: messageId,
     });
+
+    if (this.emailDebounceConfig.enabled) {
+      const windowMs = this.emailDebounceConfig.windowSeconds * 1000;
+
+      await this.schedulerService.createOrResetEmailFlush(newSessionUlid, Date.now() + windowMs);
+
+      this.logger.log(`[event=email_domain_routed_case3_stale sessionUlid=${newSessionUlid} outcome=deferred]`);
+
+      return "processed";
+    }
+
+    await this.replyOrchestratorService.generateAndSendReply(newSessionUlid, "email");
 
     this.logger.log(`[event=email_domain_routed_case3_stale sessionUlid=${newSessionUlid} outcome=processed]`);
 

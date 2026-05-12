@@ -9,3 +9,4 @@
 - [jest.mock factory hoisting](feedback_jest_mock_hoisting.md) — Don't reference outer `const mockFn = jest.fn()` inside jest.mock factory; create inside factory, retrieve via jest.requireMock after
 - [aws-sdk-client-mock GetCommand chaining](feedback_ddbmock_getcommand_chaining.md) — Chain all resolvesOnce on ONE .on(GetCommand) call; separate calls override each other
 - [Zod v4 API differences](feedback_zod_v4_api.md) — `z.AnyZodObject` gone; `z.record` needs 2 args; project uses Zod 4.3.6
+- [SchedulerClient mock pattern](feedback_scheduler_mock_pattern.md) — Use `mockClient(SchedulerClient)` at module level (outside describe); reset in beforeEach

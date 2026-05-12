@@ -12,3 +12,4 @@
 - [SMS channel phase review](project_sms_channel_review.md) — READY TO SHIP with should-fix: inline const annotation in sms.service.ts; dedupe sessionId never updated; trailing-slash risk in publicWebhookUrl construction
 - [Multi-tenant channel routing phase review](project_multi_tenant_channel_routing_review.md) — READY TO SHIP with should-fix: inline const annotation in channel-address.service.ts; deprovision hardcodes array[0]; dead UNRECOGNIZED enum value; missing bad-pk branch test
 - [E.164 phone normalization review](project_e164_normalization_review.md) — Must-fix: case 10 fixture ("555-0100") breaks under new transform; should-fix: Object(input).phone guard readability; all GSI2 paths confirmed safe
+- [Email debounce cross-channel review](project_email_debounce_review.md) — Should-fix: orchestrator email send omits replyDomain/fromName (silent empty-from); INTERNAL_FLUSH_SECRET optional not required; all chokepoint invariants passed; ready to ship

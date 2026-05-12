@@ -38,6 +38,13 @@ export const envSchema = z
     SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
     SLACK_WEBHOOK_URL: z.string().url().optional(),
     KB_INTERNAL_API_KEY: z.string().min(32),
+    EMAIL_DEBOUNCE_ENABLED: z.preprocess((val) => val === "true", z.boolean()).default(false),
+    EMAIL_DEBOUNCE_WINDOW_SECONDS: z.coerce.number().min(1).default(90),
+    INTERNAL_FLUSH_SECRET: z.string().min(1, "INTERNAL_FLUSH_SECRET is required"),
+    INTERNAL_FLUSH_URL: z.string().url().optional(),
+    SCHEDULER_BACKEND: z.enum(["real", "fake"]).default("fake"),
+    SCHEDULER_ROLE_ARN: z.string().optional(),
+    SCHEDULER_API_DESTINATION_ARN: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.WEB_CHAT_CORS_ALLOW_ALL === true && data.APP_ENV === "prod") {

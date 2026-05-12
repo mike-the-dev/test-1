@@ -16,6 +16,7 @@ import { ChatSessionService } from "../services/chat-session.service";
 import { SessionService } from "../services/session.service";
 import { OriginAllowlistService } from "../services/origin-allowlist.service";
 import { SlackAlertService } from "../services/slack-alert.service";
+import { ReplyOrchestratorService } from "../services/reply-orchestrator.service";
 import {
   WebChatCreateSessionResponse,
   WebChatEmbedAuthorizeResponse,
@@ -46,6 +47,7 @@ export class WebChatController {
     private readonly agentRegistry: AgentRegistryService,
     private readonly originAllowlistService: OriginAllowlistService,
     private readonly slackAlertService: SlackAlertService,
+    private readonly replyOrchestratorService: ReplyOrchestratorService,
   ) {}
 
   @Post("sessions")
@@ -169,7 +171,16 @@ export class WebChatController {
   async sendMessage(
     @Body(new ZodValidationPipe(sendMessageSchema)) body: SendMessageBody,
   ): Promise<WebChatSendMessageResponse> {
-    const { reply, toolOutputs } = await this.chatSessionService.handleMessage(body.sessionId, body.message);
+    await this.chatSessionService.appendUserMessage(body.sessionId, "web", body.message);
+
+    const result = await this.replyOrchestratorService.generateAndSendReply(body.sessionId, "web");
+
+    if (result.outcome === "no_op_nothing_outstanding") {
+      this.logger.debug(`No outstanding messages [sessionUlid=${body.sessionId}]`);
+      return { reply: "" };
+    }
+
+    const { reply, toolOutputs } = result;
 
     this.logger.debug(
       `Message handled [sessionUlid=${body.sessionId} toolOutputCount=${toolOutputs.length}]`,

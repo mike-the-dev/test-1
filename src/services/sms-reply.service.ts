@@ -4,11 +4,11 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from "@
 import { DYNAMO_DB_CLIENT } from "../providers/dynamodb.provider";
 import { DatabaseConfigService } from "./database-config.service";
 import { TwilioConfigService } from "./twilio-config.service";
-import { SmsService } from "./sms.service";
 import { ChatSessionService } from "./chat-session.service";
 import { CustomerService } from "./customer.service";
 import { SessionService } from "./session.service";
 import { ChannelAddressService } from "./channel-address.service";
+import { ReplyOrchestratorService } from "./reply-orchestrator.service";
 import { ChannelAddressType } from "../types/AccountChannel";
 import { SmsReplyTwilioInboundFormFields, SmsReplyInboundProcessOutcome, SmsReplyRecord } from "../types/SmsReply";
 
@@ -52,11 +52,11 @@ export class SmsReplyService {
     @Inject(DYNAMO_DB_CLIENT) private readonly dynamoDb: DynamoDBDocumentClient,
     private readonly databaseConfig: DatabaseConfigService,
     private readonly twilioConfig: TwilioConfigService,
-    private readonly smsService: SmsService,
     private readonly chatSessionService: ChatSessionService,
     private readonly customerService: CustomerService,
     private readonly sessionService: SessionService,
     private readonly channelAddressService: ChannelAddressService,
+    private readonly replyOrchestratorService: ReplyOrchestratorService,
   ) {}
 
   async processInboundMessage(
@@ -215,12 +215,11 @@ export class SmsReplyService {
       }),
     );
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(
-      sessionUlid,
-      formFields.Body,
-    );
+    await this.chatSessionService.appendUserMessage(sessionUlid, "sms", formFields.Body);
 
-    await this.smsService.send({ to: formFields.From, from: formFields.To, body: assistantText, sessionUlid });
+    await this.replyOrchestratorService.generateAndSendReply(sessionUlid, "sms", {
+      sms: { to: formFields.From, from: formFields.To },
+    });
 
     this.logger.log(
       `[event=sms_assistant_entry_case2 sessionUlid=${sessionUlid} outcome=processed]`,
@@ -268,12 +267,11 @@ export class SmsReplyService {
       }),
     );
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(
-      existingSessionUlid,
-      formFields.Body,
-    );
+    await this.chatSessionService.appendUserMessage(existingSessionUlid, "sms", formFields.Body);
 
-    await this.smsService.send({ to: formFields.From, from: formFields.To, body: assistantText, sessionUlid: existingSessionUlid });
+    await this.replyOrchestratorService.generateAndSendReply(existingSessionUlid, "sms", {
+      sms: { to: formFields.From, from: formFields.To },
+    });
 
     this.logger.log(
       `[event=sms_assistant_entry_case3_fresh sessionUlid=${existingSessionUlid} sender=${redacted} outcome=processed]`,
@@ -346,12 +344,11 @@ export class SmsReplyService {
       }),
     );
 
-    const { reply: assistantText } = await this.chatSessionService.handleMessage(
-      newSessionUlid,
-      formFields.Body,
-    );
+    await this.chatSessionService.appendUserMessage(newSessionUlid, "sms", formFields.Body);
 
-    await this.smsService.send({ to: formFields.From, from: formFields.To, body: assistantText, sessionUlid: newSessionUlid });
+    await this.replyOrchestratorService.generateAndSendReply(newSessionUlid, "sms", {
+      sms: { to: formFields.From, from: formFields.To },
+    });
 
     this.logger.log(
       `[event=sms_assistant_entry_case3_stale sessionUlid=${newSessionUlid} outcome=processed]`,
