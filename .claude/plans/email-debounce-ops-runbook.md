@@ -1,5 +1,7 @@
 # Email Debounce — Ops Runbook
 
+> **Architecture note:** Originally planned with EventBridge API Destinations as the scheduler target. Discovered at test time that EventBridge Scheduler does not support API Destination targets. Pivoted to a Lambda relay pattern: EventBridge Scheduler invokes a Lambda function, and the Lambda POSTs to the internal flush endpoint with the bearer token.
+
 Operational steps required to enable the email-reply debounce feature in production. The backend code is already shipped and gated behind a feature flag (default off). This document covers the AWS infrastructure setup and the safe rollout procedure.
 
 **Read-time:** ~10 minutes.
@@ -44,7 +46,7 @@ Store the value as `INTERNAL_FLUSH_SECRET` in your prod secrets manager. **Do no
 
 ## Step 2 — Create IAM roles in AWS
 
-You need TWO roles. The app's role to manage schedules, and the scheduler's role to invoke the API Destination.
+You need TWO roles. The app's role to manage schedules, and the scheduler's role to invoke the Lambda relay.
 
 ### 2a. Application IAM permissions
 
@@ -67,7 +69,7 @@ Attach this policy to your app's IAM principal (ECS task role, EC2 instance prof
     {
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::*:role/SchedulerInvokeApiDestinationRole"
+      "Resource": "arn:aws:iam::*:role/SchedulerInvokeLambdaRole"
     }
   ]
 }
@@ -77,7 +79,7 @@ The `iam:PassRole` is needed because the app passes the scheduler's role ARN whe
 
 ### 2b. EventBridge Scheduler execution role
 
-Create a NEW IAM role named (suggested) `SchedulerInvokeApiDestinationRole`.
+Create a NEW IAM role named (suggested) `SchedulerInvokeLambdaRole`.
 
 **Trust relationship:**
 ```json
@@ -100,8 +102,8 @@ Create a NEW IAM role named (suggested) `SchedulerInvokeApiDestinationRole`.
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": "events:InvokeApiDestination",
-      "Resource": "arn:aws:events:*:*:api-destination/EmailFlushDestination/*"
+      "Action": "lambda:InvokeFunction",
+      "Resource": "arn:aws:lambda:*:*:function:email-flush-relay"
     }
   ]
 }
@@ -111,31 +113,70 @@ Record the role ARN — you'll set it as `SCHEDULER_ROLE_ARN` in app env.
 
 ---
 
-## Step 3 — Create the EventBridge Connection (auth)
+## Step 3 — Create the Lambda relay function
 
-In the AWS Console: **EventBridge → API destinations → Connections → Create connection**.
+EventBridge Scheduler does not support API Destination targets. The scheduler instead invokes a Lambda function that relays the call to the app's internal flush endpoint with the bearer token.
 
-- **Name:** `EmailFlushConnection`
-- **Authorization type:** API Key
-- **API key name:** `X-Internal-Auth`
-- **API key value:** the `INTERNAL_FLUSH_SECRET` value from Step 1
+Create a Lambda function named (suggested) `email-flush-relay` in the same region as your EventBridge Scheduler resources.
 
-Save. AWS creates a Secrets Manager secret automatically to store the value.
+**Runtime:** Node.js 22.x (or latest LTS)
 
----
+**Handler source:**
 
-## Step 4 — Create the EventBridge API Destination
+```js
+const https = require("https");
+const url = require("url");
 
-In the same console section: **API destinations → Create API destination**.
+exports.handler = async (event) => {
+  const { sessionUlid } = event;
 
-- **Name:** `EmailFlushDestination`
-- **API destination endpoint:** `https://<your-prod-app-url>/internal/email-flush/*`
-  (The `*` wildcard is required — EventBridge will substitute the session ULID.)
-- **HTTP method:** `POST`
-- **Invocation rate limit:** start with `1000` per second (well above expected volume)
-- **Connection:** select `EmailFlushConnection` from Step 3
+  if (!sessionUlid) {
+    throw new Error("Missing sessionUlid in event payload");
+  }
 
-Save. Record the API Destination ARN — you'll set it as `SCHEDULER_API_DESTINATION_ARN` in app env.
+  const flushUrlBase = process.env.INTERNAL_FLUSH_URL_BASE;
+  const secret = process.env.INTERNAL_FLUSH_SECRET;
+
+  if (!flushUrlBase || !secret) {
+    throw new Error("INTERNAL_FLUSH_URL_BASE and INTERNAL_FLUSH_SECRET must be set");
+  }
+
+  const targetUrl = `${flushUrlBase}/${sessionUlid}`;
+  const parsed = new url.URL(targetUrl);
+
+  await new Promise((resolve, reject) => {
+    const req = https.request(
+      {
+        hostname: parsed.hostname,
+        path: parsed.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Internal-Auth": secret,
+        },
+      },
+      (res) => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(null);
+        } else {
+          reject(new Error(`Flush endpoint returned ${res.statusCode}`));
+        }
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+};
+```
+
+**Environment variables on the Lambda:**
+
+| Variable | Value |
+|---|---|
+| `INTERNAL_FLUSH_URL_BASE` | `https://<your-prod-app-url>/internal/email-flush` (no trailing slash) |
+| `INTERNAL_FLUSH_SECRET` | the secret from Step 1 |
+
+Record the Lambda function ARN — you'll set it as `SCHEDULER_LAMBDA_ARN` in app env.
 
 ---
 
@@ -150,7 +191,7 @@ Add or update these in your prod env:
 | `INTERNAL_FLUSH_SECRET` | the secret from Step 1 |
 | `SCHEDULER_BACKEND` | `real` |
 | `SCHEDULER_ROLE_ARN` | the role ARN from Step 2b |
-| `SCHEDULER_API_DESTINATION_ARN` | the API Destination ARN from Step 4 |
+| `SCHEDULER_LAMBDA_ARN` | the Lambda function ARN from Step 3 |
 | `INTERNAL_FLUSH_URL` | `https://<your-prod-app-url>/internal/email-flush` (without the trailing wildcard) |
 
 **Important:** `INTERNAL_FLUSH_SECRET` is required at boot — the app will fail to start if it's missing. This is deliberate; it's better than silently 401ing every callback in production.
@@ -190,8 +231,8 @@ Watch logs and metrics closely for the first hour:
 
 - **Healthy signal:** `[event=schedule_created ...]` log lines on each inbound email, `[event=reply_orchestrator_reply_sent ...]` ~90s later, customer replies arriving in correct order with intact threading.
 - **Unhealthy signals:**
-  - 401s from EventBridge → secret mismatch between Connection and `INTERNAL_FLUSH_SECRET` env var
-  - 404s from EventBridge → API Destination URL doesn't match the app's route
+  - 401s from the Lambda relay → `INTERNAL_FLUSH_SECRET` mismatch between the Lambda env var and the app's `INTERNAL_FLUSH_SECRET`
+  - 4xx/5xx from the Lambda relay → check `INTERNAL_FLUSH_URL_BASE` is correct and the app route is reachable from the Lambda's VPC/network
   - Missing replies → check for `[event=reply_orchestrator_no_op_no_outstanding ...]` (means the no-op short-circuit fired when it shouldn't have) or `[event=reply_orchestrator_cancel_failed ...]`
   - Threading broken (replies in new inbox threads instead of replying inline) → check for `[event=email_flush_missing_threading_context ...]` (means metadata wasn't persisted at inbound time)
   - LLM errors → existing Sentry alerts will surface these; cancel-in-finally ensures schedules don't linger
@@ -232,7 +273,7 @@ Add CloudWatch alarms or Sentry monitors for these structured log events:
 
 - `[event=reply_orchestrator_cancel_failed ...]` — repeated occurrences indicate scheduler health issues
 - `[event=email_flush_missing_threading_context ...]` — should never fire in normal operation; if it does, metadata isn't being persisted correctly
-- `[event=internal_flush_auth_rejected ...]` — repeated rejections indicate a misconfigured Connection or someone probing the endpoint
+- `[event=internal_flush_auth_rejected ...]` — repeated rejections indicate a misconfigured `INTERNAL_FLUSH_SECRET` on the Lambda relay or someone probing the endpoint directly
 - HTTP 5xx rate on `POST /internal/email-flush/*` — should be near zero
 - Email inbound webhook rate vs orchestrator reply-sent rate — should track 1:1 over time (with the 90s delay built in)
 

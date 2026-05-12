@@ -4,17 +4,11 @@ import { mockClient } from "aws-sdk-client-mock";
 
 import { SchedulerService } from "./scheduler.service";
 import { SchedulerConfigService } from "./scheduler-config.service";
-import { DatabaseConfigService } from "./database-config.service";
 
 const mockSchedulerConfig = {
   backend: "real",
   roleArn: "arn:aws:iam::123456789012:role/scheduler-role",
-  apiDestinationArn: "arn:aws:events::123456789012:api-destination/flush/abc",
-};
-
-const mockDatabaseConfig = {
-  conversationsTable: "test-conversations-table",
-  region: "us-east-1",
+  lambdaArn: "arn:aws:lambda:us-east-1:123456789012:function:email-flush-relay",
 };
 
 const SESSION_ULID = "01SESSN00000000000000000000";
@@ -32,7 +26,6 @@ describe("SchedulerService", () => {
       providers: [
         SchedulerService,
         { provide: SchedulerConfigService, useValue: mockSchedulerConfig },
-        { provide: DatabaseConfigService, useValue: mockDatabaseConfig },
       ],
     }).compile();
 

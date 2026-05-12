@@ -43,8 +43,9 @@ export const envSchema = z
     INTERNAL_FLUSH_SECRET: z.string().min(1, "INTERNAL_FLUSH_SECRET is required"),
     INTERNAL_FLUSH_URL: z.string().url().optional(),
     SCHEDULER_BACKEND: z.enum(["real", "fake"]).default("fake"),
+    SCHEDULER_REGION: z.string().optional(),
     SCHEDULER_ROLE_ARN: z.string().optional(),
-    SCHEDULER_API_DESTINATION_ARN: z.string().optional(),
+    SCHEDULER_LAMBDA_ARN: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     if (data.WEB_CHAT_CORS_ALLOW_ALL === true && data.APP_ENV === "prod") {

@@ -9,11 +9,15 @@ export class SchedulerConfigService {
     return this.configService.get<string>("scheduler.backend", { infer: true }) ?? "fake";
   }
 
+  get region(): string {
+    return this.configService.get<string>("scheduler.region", { infer: true }) ?? "us-east-1";
+  }
+
   get roleArn(): string {
     return this.configService.get<string>("scheduler.roleArn", { infer: true }) ?? "";
   }
 
-  get apiDestinationArn(): string {
-    return this.configService.get<string>("scheduler.apiDestinationArn", { infer: true }) ?? "";
+  get lambdaArn(): string {
+    return this.configService.get<string>("scheduler.lambdaArn", { infer: true }) ?? "";
   }
 }

@@ -9,7 +9,6 @@ import {
 } from "@aws-sdk/client-scheduler";
 
 import { SchedulerConfigService } from "./scheduler-config.service";
-import { DatabaseConfigService } from "./database-config.service";
 import { SCHEDULER_SERVICE, ISchedulerService } from "../types/Scheduler";
 
 export { SCHEDULER_SERVICE };
@@ -37,11 +36,8 @@ export class SchedulerService implements ISchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
   private readonly client: SchedulerClient;
 
-  constructor(
-    private readonly schedulerConfig: SchedulerConfigService,
-    private readonly databaseConfig: DatabaseConfigService,
-  ) {
-    this.client = new SchedulerClient({ region: this.databaseConfig.region });
+  constructor(private readonly schedulerConfig: SchedulerConfigService) {
+    this.client = new SchedulerClient({});
   }
 
   async createOrResetEmailFlush(sessionUlid: string, fireAtMs: number): Promise<void> {
@@ -58,7 +54,7 @@ export class SchedulerService implements ISchedulerService {
           ScheduleExpressionTimezone: "UTC",
           FlexibleTimeWindow: { Mode: FlexibleTimeWindowMode.OFF },
           Target: {
-            Arn: this.schedulerConfig.apiDestinationArn,
+            Arn: this.schedulerConfig.lambdaArn,
             RoleArn: this.schedulerConfig.roleArn,
             Input: JSON.stringify({ sessionUlid }),
           },
@@ -87,7 +83,7 @@ export class SchedulerService implements ISchedulerService {
           ScheduleExpressionTimezone: "UTC",
           FlexibleTimeWindow: { Mode: FlexibleTimeWindowMode.OFF },
           Target: {
-            Arn: this.schedulerConfig.apiDestinationArn,
+            Arn: this.schedulerConfig.lambdaArn,
             RoleArn: this.schedulerConfig.roleArn,
             Input: JSON.stringify({ sessionUlid }),
           },

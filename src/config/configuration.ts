@@ -66,8 +66,9 @@ const configuration = () => ({
   },
   scheduler: {
     backend: process.env.SCHEDULER_BACKEND ?? "fake",
+    region: process.env.SCHEDULER_REGION ?? process.env.DYNAMODB_REGION ?? "us-east-1",
     roleArn: process.env.SCHEDULER_ROLE_ARN ?? "",
-    apiDestinationArn: process.env.SCHEDULER_API_DESTINATION_ARN ?? "",
+    lambdaArn: process.env.SCHEDULER_LAMBDA_ARN ?? "",
   },
 });
 
