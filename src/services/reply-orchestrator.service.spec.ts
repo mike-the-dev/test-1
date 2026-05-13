@@ -558,6 +558,46 @@ describe("ReplyOrchestratorService", () => {
         { query: "test" },
         expect.objectContaining({ sessionUlid: SESSION_ULID }),
       );
+      // Only the final end_turn text should reach the caller — not intermediate reasoning
+      if (result.outcome === "replied") {
+        expect(result.reply).toBe("Here is the result.");
+      }
+    });
+
+    it("returns only the final end_turn text when iteration 1 emits text alongside tool_use", async () => {
+      // Iteration 1: LLM produces polite preamble + tool_use (internal reasoning, not user-facing)
+      const toolUseResponse = {
+        content: [
+          { type: "text", text: "Let me save that..." },
+          { type: "tool_use", id: "t1", name: "collect_contact_info", input: {} },
+        ],
+        stop_reason: "tool_use",
+      };
+      // Iteration 2: LLM produces the actual user-facing reply
+      const endTurnResponse = makeEndTurnResponse("Done. What else can I help with?");
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce(toolUseResponse)
+        .mockResolvedValueOnce(endTurnResponse);
+
+      mockToolRegistry.getDefinitions.mockReturnValue([{ name: "collect_contact_info" }]);
+      mockToolRegistry.getAll.mockReturnValue([{ name: "collect_contact_info", emitLatestOnly: false }]);
+
+      const agentWithTool = { ...mockAgent, allowedToolNames: ["collect_contact_info"] };
+      mockAgentRegistry.getByName.mockReturnValue(agentWithTool);
+
+      mockToolRegistry.execute.mockResolvedValue({ result: "ok", isError: false });
+
+      stubSessionWithMessages([{ role: "user", content: "Please save my info." }]);
+
+      const result = await service.generateAndSendReply(SESSION_ULID, "web");
+
+      expect(result.outcome).toBe("replied");
+      // Must be ONLY the end_turn text — not a concatenation with intermediate preamble
+      if (result.outcome === "replied") {
+        expect(result.reply).toBe("Done. What else can I help with?");
+        expect(result.reply).not.toContain("Let me save that...");
+      }
     });
   });
 

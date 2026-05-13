@@ -586,11 +586,12 @@ export class ReplyOrchestratorService {
 
         // Step 14 — Extract reply text and tool outputs
         const assistantMessagesThisTurn = newMessages.filter((message) => message.role === "assistant");
+        const lastAssistantMsg = assistantMessagesThisTurn[assistantMessagesThisTurn.length - 1];
 
         const textParts: string[] = [];
 
-        for (const assistantMsg of assistantMessagesThisTurn) {
-          for (const block of assistantMsg.content) {
+        if (lastAssistantMsg) {
+          for (const block of lastAssistantMsg.content) {
             if (block.type === "text" && block.text) {
               textParts.push(block.text);
             }
