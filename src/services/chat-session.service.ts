@@ -60,7 +60,7 @@ export class ChatSessionService {
           TableName: table,
           Key: { PK: sessionPk, SK: METADATA_SK },
           UpdateExpression:
-            "SET #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now, last_inbound_email_message_id = :mid, last_inbound_email_subject = :sub, reply_domain = :rd, from_name = :fn",
+            "SET #createdAt = if_not_exists(#createdAt, :now), #lastUpdated = :now, last_inbound_email_message_id = :mid, last_inbound_email_subject = :sub, from_name = if_not_exists(from_name, :fn), reply_domain = if_not_exists(reply_domain, :rd)",
           ExpressionAttributeNames: {
             "#createdAt": "_createdAt_",
             "#lastUpdated": "_lastUpdated_",

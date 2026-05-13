@@ -114,14 +114,40 @@ describe("ChatSessionService", () => {
       expect(updateCalls).toHaveLength(1);
 
       const input = updateCalls[0].args[0].input;
-      expect(input.UpdateExpression).toContain("last_inbound_email_message_id");
-      expect(input.UpdateExpression).toContain("last_inbound_email_subject");
-      expect(input.UpdateExpression).toContain("reply_domain");
-      expect(input.UpdateExpression).toContain("from_name");
+      expect(input.UpdateExpression).toContain("last_inbound_email_message_id = :mid");
+      expect(input.UpdateExpression).toContain("last_inbound_email_subject = :sub");
+      expect(input.UpdateExpression).toContain("from_name = if_not_exists(from_name, :fn)");
+      expect(input.UpdateExpression).toContain("reply_domain = if_not_exists(reply_domain, :rd)");
       expect(input.ExpressionAttributeValues?.[":mid"]).toBe("<abc123@mail.example.com>");
       expect(input.ExpressionAttributeValues?.[":sub"]).toBe("Help needed");
       expect(input.ExpressionAttributeValues?.[":rd"]).toBe("reply.example.com");
       expect(input.ExpressionAttributeValues?.[":fn"]).toBe("Test Concierge");
+    });
+
+    it("does NOT overwrite existing from_name/reply_domain on METADATA when emailContext provides different values", async () => {
+      ddbMock.on(PutCommand).resolves({});
+      ddbMock.on(UpdateCommand).resolves({});
+
+      await service.appendUserMessage(SESSION_ULID, "email", "Follow-up email", {
+        messageId: "<followup@mail.example.com>",
+        subject: "Re: Help needed",
+        replyDomain: "different.com",
+        fromName: "Different Name",
+      });
+
+      const updateCalls = ddbMock.commandCalls(UpdateCommand);
+      expect(updateCalls).toHaveLength(1);
+
+      const expr = updateCalls[0].args[0].input.UpdateExpression ?? "";
+      // Stable per-account fields must use if_not_exists — DDB will keep the
+      // existing value when the attribute is already present, so a subsequent
+      // inbound email passing empty strings (Case 1) cannot clobber the good
+      // values written at session creation time.
+      expect(expr).toContain("from_name = if_not_exists(from_name, :fn)");
+      expect(expr).toContain("reply_domain = if_not_exists(reply_domain, :rd)");
+      // Per-message threading fields must still be plain SET.
+      expect(expr).toContain("last_inbound_email_message_id = :mid");
+      expect(expr).toContain("last_inbound_email_subject = :sub");
     });
 
     it("issues exactly one PutCommand and one UpdateCommand when emailContext is provided", async () => {
