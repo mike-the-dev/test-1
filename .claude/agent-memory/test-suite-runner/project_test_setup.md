@@ -41,3 +41,5 @@ Prior baselines:
 - Per-agent onboarding phase (commit 14102a92): 704 passed, 0 failed, 45 suites.
 - Email reply debounce / cross-channel coherence phase + spec bug fixes (wrongSecret padded to 32 chars; cross-channel mock Items reordered newest-first): 724 passed, 0 failed, 51 suites. Time: ~1.964 s.
 - Review close-out fixes (replyDomain+fromName threaded to orchestrator via session metadata; INTERNAL_FLUSH_SECRET required at boot via z.string().min(1)+getOrThrow; stale handleMessage comment updated in ChatSession.ts; ISchedulerService import path + SCHEDULER_SERVICE token standardized to src/types/Scheduler.ts): 724 passed, 0 failed, 51 suites. Time: ~2.165 s.
+- Channel-format-rules feature (src/agents/channel-format-rules.ts added with 15 unit tests; reply-orchestrator.service.spec.ts gained 5 new cases; inline type annotation removed from reply-orchestrator.service.ts): 746 passed, 0 failed, 52 suites. Time: ~2.168 s.
+- Channel-format-rules close-out (3-space signoff indentation aligned, signoff rule moved to end of array, 3 new spec cases asserting signoff-at-end + banned vocabulary): 749 passed, 0 failed, 52 suites. Time: ~1.983 s.

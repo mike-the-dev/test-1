@@ -16,6 +16,7 @@ import { ChatContentBlock, ChatToolResultContentBlock, ChatToolUseContentBlock }
 import { WebChatToolOutput } from "../types/WebChat";
 import { ReplyOrchestratorChannel, ReplyOrchestratorOutcome, ReplyOrchestratorSendContext } from "../types/ReplyOrchestrator";
 import { wrapInHtml } from "../utils/email/wrap-in-html";
+import { getChannelFormatRules } from "../agents/channel-format-rules";
 
 const MAX_TOOL_LOOP_ITERATIONS = 10;
 const MAX_HISTORY_MESSAGES = 50;
@@ -119,6 +120,10 @@ export class ReplyOrchestratorService {
           : undefined;
 
       const customerId: string | null = metadataResult.Item?.customer_id ?? null;
+
+      const fromName = metadataResult.Item?.from_name
+        ? String(metadataResult.Item.from_name)
+        : null;
 
       // Step 2 — Resolve agent
       let resolvedAgent = this.agentRegistry.getByName(storedAgentName);
@@ -390,7 +395,13 @@ export class ReplyOrchestratorService {
           }
         }
 
-        // Step 8 — LLM tool loop
+        // Step 8 — Append channel format rules to dynamic system context
+        const channelFormatRules = getChannelFormatRules(channel, fromName);
+        dynamicSystemContext = dynamicSystemContext
+          ? `${dynamicSystemContext}\n\n${channelFormatRules}`
+          : channelFormatRules;
+
+        // Step 9 — LLM tool loop
         let iteration = 0;
 
         while (iteration < MAX_TOOL_LOOP_ITERATIONS) {
@@ -465,7 +476,7 @@ export class ReplyOrchestratorService {
           this.logger.warn(`Tool loop max iterations reached [sessionUlid=${sessionUlid}]`);
         }
 
-        // Step 9 — Persist new messages
+        // Step 10 — Persist new messages
         const now = new Date().toISOString();
 
         for (const message of newMessages) {
@@ -489,7 +500,7 @@ export class ReplyOrchestratorService {
           );
         }
 
-        // Step 10 — Update METADATA _lastUpdated_
+        // Step 11 — Update METADATA _lastUpdated_
         await this.dynamoDb.send(
           new UpdateCommand({
             TableName: table,
@@ -500,7 +511,7 @@ export class ReplyOrchestratorService {
           }),
         );
 
-        // Step 10b — Stamp kickoff_completed_at on first kickoff completion
+        // Step 11b — Stamp kickoff_completed_at on first kickoff completion
         if (isKickoff) {
           try {
             await this.dynamoDb.send(
@@ -520,7 +531,7 @@ export class ReplyOrchestratorService {
           }
         }
 
-        // Step 11 — Update account-scoped session pointer best-effort
+        // Step 12 — Update account-scoped session pointer best-effort
         if (accountUlid) {
           try {
             await this.dynamoDb.send(
@@ -544,7 +555,7 @@ export class ReplyOrchestratorService {
           }
         }
 
-        // Step 12 — Update customer latest_session_id best-effort
+        // Step 13 — Update customer latest_session_id best-effort
         if (customerId !== null) {
           try {
             const customerKey = customerId.startsWith("C#") ? customerId : `C#${customerId}`;
@@ -573,7 +584,7 @@ export class ReplyOrchestratorService {
           }
         }
 
-        // Step 13 — Extract reply text and tool outputs
+        // Step 14 — Extract reply text and tool outputs
         const assistantMessagesThisTurn = newMessages.filter((message) => message.role === "assistant");
 
         const textParts: string[] = [];
@@ -655,7 +666,7 @@ export class ReplyOrchestratorService {
           });
         }
 
-        // Step 14 — Send outbound reply via the channel
+        // Step 15 — Send outbound reply via the channel
         await this.sendOutbound(sessionUlid, channel, finalText, sendContext, metadataResult.Item);
 
         this.logger.log(
@@ -664,7 +675,7 @@ export class ReplyOrchestratorService {
 
         return { outcome: "replied", reply: finalText, toolOutputs };
       } finally {
-        // Step 15 — Cancel any pending email schedule (always fires, all channels, success or failure)
+        // Step 16 — Cancel any pending email schedule (always fires, all channels, success or failure)
         try {
           await this.schedulerService.cancelEmailFlush(sessionUlid);
         } catch (cancelError: unknown) {

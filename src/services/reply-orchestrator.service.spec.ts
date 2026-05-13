@@ -560,4 +560,90 @@ describe("ReplyOrchestratorService", () => {
       );
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // Channel format rules injected into LLM system context
+  // ---------------------------------------------------------------------------
+
+  describe("generateAndSendReply — channel format rules in LLM system context", () => {
+    it("passes email channel format rules to anthropicService.sendMessage", async () => {
+      stubSessionWithMessages(
+        [{ role: "user", content: "Hello via email.", channel: "email" }],
+        {
+          last_inbound_email_message_id: "<id@mail.example.com>",
+          last_inbound_email_subject: "Subject",
+          from_name: "Happy Paws",
+        },
+      );
+      stubContactInfo("user@example.com");
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("Email reply!"));
+      mockEmailService.send.mockResolvedValue({});
+
+      await service.generateAndSendReply(SESSION_ULID, "email");
+
+      const [, , , dynamicSystemContext] = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(dynamicSystemContext).toContain("replying via the email channel");
+    });
+
+    it("includes the practice name in the email signoff instruction when from_name is set", async () => {
+      stubSessionWithMessages(
+        [{ role: "user", content: "Hello via email.", channel: "email" }],
+        {
+          last_inbound_email_message_id: "<id@mail.example.com>",
+          last_inbound_email_subject: "Subject",
+          from_name: "Happy Paws",
+        },
+      );
+      stubContactInfo("user@example.com");
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("Email reply!"));
+      mockEmailService.send.mockResolvedValue({});
+
+      await service.generateAndSendReply(SESSION_ULID, "email");
+
+      const [, , , dynamicSystemContext] = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(dynamicSystemContext).toContain("Happy Paws team");
+    });
+
+    it("falls back to 'The team' in the email signoff instruction when from_name is absent", async () => {
+      stubSessionWithMessages(
+        [{ role: "user", content: "Hello via email.", channel: "email" }],
+        {
+          last_inbound_email_message_id: "<id@mail.example.com>",
+          last_inbound_email_subject: "Subject",
+          // from_name intentionally absent
+        },
+      );
+      stubContactInfo("user@example.com");
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("Email reply!"));
+      mockEmailService.send.mockResolvedValue({});
+
+      await service.generateAndSendReply(SESSION_ULID, "email");
+
+      const [, , , dynamicSystemContext] = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(dynamicSystemContext).toContain("The team");
+    });
+
+    it("passes SMS channel format rules to anthropicService.sendMessage", async () => {
+      stubSessionWithMessages([{ role: "user", content: "Text me.", channel: "sms" }]);
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("SMS reply!"));
+      mockSmsService.send.mockResolvedValue({ messageSid: "SMxxx" });
+
+      await service.generateAndSendReply(SESSION_ULID, "sms", {
+        sms: { to: "+15551234567", from: "+18885550000" },
+      });
+
+      const [, , , dynamicSystemContext] = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(dynamicSystemContext).toContain("replying via the SMS channel");
+    });
+
+    it("passes web channel format rules to anthropicService.sendMessage", async () => {
+      stubSessionWithMessages([{ role: "user", content: "Hello!" }]);
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("Web reply!"));
+
+      await service.generateAndSendReply(SESSION_ULID, "web");
+
+      const [, , , dynamicSystemContext] = mockAnthropicService.sendMessage.mock.calls[0];
+      expect(dynamicSystemContext).toContain("replying via the web chat channel");
+    });
+  });
 });
