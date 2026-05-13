@@ -438,6 +438,89 @@ describe("ReplyOrchestratorService", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // channel field on persisted message rows
+  // ---------------------------------------------------------------------------
+
+  describe("generateAndSendReply — channel written onto assistant rows only", () => {
+    it("sets channel: 'email' on the assistant PutCommand item", async () => {
+      stubSessionWithMessages(
+        [{ role: "user", content: "Hello via email.", channel: "email" }],
+        {
+          last_inbound_email_message_id: "<id@mail.example.com>",
+          last_inbound_email_subject: "Subject",
+        },
+      );
+      stubContactInfo("user@example.com");
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("Email reply!"));
+      mockEmailService.send.mockResolvedValue({});
+
+      await service.generateAndSendReply(SESSION_ULID, "email");
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      const assistantPut = putCalls.find((call) => call.args[0].input.Item?.role === "assistant");
+      expect(assistantPut).toBeDefined();
+      expect(assistantPut!.args[0].input.Item?.channel).toBe("email");
+    });
+
+    it("sets channel: 'web' on the assistant PutCommand item", async () => {
+      stubSessionWithMessages([{ role: "user", content: "Hello via web." }]);
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("Web reply!"));
+
+      await service.generateAndSendReply(SESSION_ULID, "web");
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      const assistantPut = putCalls.find((call) => call.args[0].input.Item?.role === "assistant");
+      expect(assistantPut).toBeDefined();
+      expect(assistantPut!.args[0].input.Item?.channel).toBe("web");
+    });
+
+    it("sets channel: 'sms' on the assistant PutCommand item", async () => {
+      stubSessionWithMessages([{ role: "user", content: "Hello via sms.", channel: "sms" }]);
+      mockAnthropicService.sendMessage.mockResolvedValue(makeEndTurnResponse("SMS reply!"));
+      mockSmsService.send.mockResolvedValue({ messageSid: "SMxxx" });
+
+      await service.generateAndSendReply(SESSION_ULID, "sms", {
+        sms: { to: "+15551234567", from: "+18885550000" },
+      });
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      const assistantPut = putCalls.find((call) => call.args[0].input.Item?.role === "assistant");
+      expect(assistantPut).toBeDefined();
+      expect(assistantPut!.args[0].input.Item?.channel).toBe("sms");
+    });
+
+    it("does NOT set channel on tool_result (user-role) PutCommand items", async () => {
+      const toolUseResponse = {
+        content: [
+          { type: "text", text: "Calling the tool." },
+          { type: "tool_use", id: "tool_01", name: "some_tool", input: { q: "x" } },
+        ],
+        stop_reason: "tool_use",
+      };
+      const endTurnResponse = makeEndTurnResponse("Done.");
+
+      mockAnthropicService.sendMessage
+        .mockResolvedValueOnce(toolUseResponse)
+        .mockResolvedValueOnce(endTurnResponse);
+
+      mockToolRegistry.getDefinitions.mockReturnValue([{ name: "some_tool" }]);
+      mockToolRegistry.getAll.mockReturnValue([{ name: "some_tool", emitLatestOnly: false }]);
+      const agentWithTool = { ...mockAgent, allowedToolNames: ["some_tool"] };
+      mockAgentRegistry.getByName.mockReturnValue(agentWithTool);
+      mockToolRegistry.execute.mockResolvedValue({ result: "ok", isError: false });
+
+      stubSessionWithMessages([{ role: "user", content: "Run it." }]);
+
+      await service.generateAndSendReply(SESSION_ULID, "web");
+
+      const putCalls = ddbMock.commandCalls(PutCommand);
+      const toolResultPut = putCalls.find((call) => call.args[0].input.Item?.role === "user");
+      expect(toolResultPut).toBeDefined();
+      expect(toolResultPut!.args[0].input.Item?.channel).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Tool-use loop
   // ---------------------------------------------------------------------------
 

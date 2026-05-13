@@ -469,16 +469,22 @@ export class ReplyOrchestratorService {
         const now = new Date().toISOString();
 
         for (const message of newMessages) {
+          const baseItem: ChatSessionMessageRecord = {
+            PK: sessionPk,
+            SK: `${MESSAGE_SK_PREFIX}${ulid()}`,
+            role: message.role,
+            content: JSON.stringify(message.content),
+            _createdAt_: now,
+          };
+
+          if (message.role === "assistant") {
+            baseItem.channel = channel;
+          }
+
           await this.dynamoDb.send(
             new PutCommand({
               TableName: table,
-              Item: {
-                PK: sessionPk,
-                SK: `${MESSAGE_SK_PREFIX}${ulid()}`,
-                role: message.role,
-                content: JSON.stringify(message.content),
-                _createdAt_: now,
-              } satisfies ChatSessionMessageRecord,
+              Item: baseItem,
             }),
           );
         }
